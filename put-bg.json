@@ -1,0 +1,9 @@
+﻿{
+  "Item": {
+    "pk": {"S": "BG"},
+    "sk": {"S": "IMG#0001"},
+    "url": {"S": "https://YOUR_PUBLIC_IMAGE_URL/bg1.jpg"},
+    "enabled": {"BOOL": true},
+    "order": {"N": "1"}
+  }
+}
