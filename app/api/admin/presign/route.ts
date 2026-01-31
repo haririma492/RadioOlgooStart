@@ -1,64 +1,83 @@
-// app/api/admin/presign/route.ts
 import { NextResponse } from "next/server";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 export const runtime = "nodejs";
 
-type SetKind = "CENTER" | "BG";
+type SetKind = "CENTER" | "SLIDES" | "BG";
+
+function json(status: number, obj: any) {
+  return NextResponse.json(obj, { status, headers: { "cache-control": "no-store" } });
+}
 
 function requireAdmin(req: Request) {
-  const token = (req.headers.get("x-admin-token") || "").trim();
-  return !!process.env.ADMIN_TOKEN && token === process.env.ADMIN_TOKEN;
+  const incoming = (req.headers.get("x-admin-token") || "").trim();
+  const expected = (process.env.ADMIN_TOKEN || "").trim();
+  if (!expected) return false;
+  return incoming && incoming === expected;
 }
 
-function bad(status: number, message: string, extra?: Record<string, any>) {
-  return NextResponse.json({ error: message, ...(extra || {}) }, { status });
+function badRequest(message: string) {
+  return json(400, { error: message });
 }
 
-function sanitizeFilename(name: string) {
-  // keep simple safe chars, replace others with _
-  return name.replace(/[^a-zA-Z0-9._-]/g, "_");
+function isAllowed(set: SetKind, contentType: string) {
+  const ct = (contentType || "").toLowerCase();
+  if (set === "CENTER") return ct === "video/mp4";
+  if (set === "SLIDES") return ct.startsWith("image/");
+  if (set === "BG") return ct.startsWith("image/") || ct === "video/mp4";
+  return false;
+}
+
+function parseSet(raw: string | null): SetKind | null {
+  const s = (raw || "").trim().toUpperCase();
+  if (s === "CENTER" || s === "SLIDES" || s === "BG") return s as SetKind;
+  return null;
+}
+
+function sanitizeFilename(filename: string) {
+  // keep extension, replace unsafe chars
+  return filename.replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+
+// Properly encode S3 key for URL while keeping "/" separators
+function encodeS3KeyForUrl(key: string) {
+  return encodeURIComponent(key).replace(/%2F/g, "/");
 }
 
 export async function GET(req: Request) {
-  if (!requireAdmin(req)) return bad(401, "Unauthorized");
+  if (!requireAdmin(req)) return json(401, { error: "Unauthorized" });
+
+  const region =
+    (process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || "").trim();
+  const bucket = (process.env.S3_BUCKET_NAME || "").trim();
+
+  if (!region) return json(500, { error: "Missing AWS_REGION (or AWS_DEFAULT_REGION) in env" });
+  if (!bucket) return json(500, { error: "Missing S3_BUCKET_NAME in env" });
 
   const url = new URL(req.url);
-  const set = (url.searchParams.get("set") || "").toUpperCase() as SetKind;
-  const filenameRaw = url.searchParams.get("filename") || "";
+  const set = parseSet(url.searchParams.get("set"));
+  const filename = (url.searchParams.get("filename") || "").trim();
   const contentType = (url.searchParams.get("contentType") || "").trim();
 
-  if (set !== "CENTER" && set !== "BG") {
-    return bad(400, "Missing/invalid set. Use ?set=CENTER or ?set=BG");
-  }
-  if (!filenameRaw) return bad(400, "Missing filename");
-  if (!contentType) return bad(400, "Missing contentType");
+  if (!set) return badRequest("Missing/invalid set. Use ?set=CENTER or ?set=SLIDES or ?set=BG");
+  if (!filename) return badRequest("Missing filename");
+  if (!contentType) return badRequest("Missing contentType");
 
-  // Enforce your rule: CENTER = mp4 videos, BG = images (you can expand later)
-  if (set === "CENTER" && !/^video\//i.test(contentType)) {
-    return bad(400, "CENTER only accepts video/* (mp4 recommended).", { contentType });
-  }
-  if (set === "BG" && !/^image\//i.test(contentType)) {
-    return bad(400, "BG only accepts image/*", { contentType });
-  }
-
-  const region = (process.env.AWS_REGION || "ca-central-1").trim();
-
-  // IMPORTANT: bucket must exist in env
-  const bucket = (process.env.S3_BUCKET || "").trim();
-  if (!bucket) {
-    return bad(500, "Missing S3_BUCKET in env. Add S3_BUCKET=... to .env.local then restart npm run dev");
+  if (!isAllowed(set, contentType)) {
+    return badRequest(
+      set === "CENTER"
+        ? "CENTER accepts only video/mp4"
+        : set === "SLIDES"
+        ? "SLIDES accepts only image/*"
+        : "BG accepts image/* or video/mp4"
+    );
   }
 
-  // Public base URL: your app uses this for thumbnails/video playback
-  // Prefer NEXT_PUBLIC_S3_PUBLIC_BASE if provided, else derive from bucket+region.
-  const publicBase =
-    (process.env.NEXT_PUBLIC_S3_PUBLIC_BASE || "").trim() ||
-    `https://${bucket}.s3.${region}.amazonaws.com`;
+  const safeName = sanitizeFilename(filename);
 
-  const filename = sanitizeFilename(filenameRaw);
-  const key = `${set}/${Date.now()}-${filename}`;
+  // Key format: <SET>/<timestamp>-<safeName>
+  const key = `${set}/${Date.now()}-${safeName}`;
 
   try {
     const s3 = new S3Client({ region });
@@ -67,24 +86,20 @@ export async function GET(req: Request) {
       Bucket: bucket,
       Key: key,
       ContentType: contentType,
-      // optional but nice:
-      // ACL: "public-read", // DON'T use if your bucket blocks ACLs (recommended). Use bucket policy instead.
+      // cache for public viewing (even if bucket is private, this header is fine)
+      CacheControl: "public, max-age=31536000, immutable",
+      // NOTE: do NOT set ACL here unless you intentionally allow public-read.
+      // ACL: "public-read",
     });
 
-    // 5 minutes
+    // presigned PUT url (upload only)
     const uploadUrl = await getSignedUrl(s3, cmd, { expiresIn: 300 });
 
-    const publicUrl = `${publicBase.replace(/\/+$/, "")}/${key}`;
+    // clean URL for viewing (NO X-Amz params)
+    const publicUrl = `https://${bucket}.s3.${region}.amazonaws.com/${encodeS3KeyForUrl(key)}`;
 
-    return NextResponse.json({
-      ok: true,
-      bucket,
-      region,
-      uploadUrl,
-      publicUrl,
-      key,
-    });
+    return json(200, { ok: true, set, key, uploadUrl, publicUrl });
   } catch (e: any) {
-    return bad(500, "Presign failed", { detail: e?.message ?? String(e) });
+    return json(500, { error: "Presign failed", detail: e?.message ?? String(e) });
   }
 }

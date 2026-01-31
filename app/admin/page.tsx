@@ -1,661 +1,696 @@
 // app/admin/page.tsx
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
-type SetKind = "CENTER" | "BG";
+type TargetSet = "CENTER" | "SLIDES" | "BG";
 
-type SlideItem = {
-  pk: SetKind;
+type MediaItem = {
+  pk: TargetSet;
   sk: string;
   url: string;
-  enabled?: boolean;
-  order?: number;
-  createdAt?: string;
-
-  // New fields you asked for (optional)
-  mediaType?: string; // e.g. "video/mp4" or "image/jpeg"
+  mediaType?: string; // "video/mp4" | "image/jpeg" etc
+  enabled: boolean;
+  order: number;
   category1?: string;
   category2?: string;
   description?: string;
+  createdAt?: string;
 };
 
-type SlidesResp = {
-  ok: boolean;
-  set: SetKind;
-  items: SlideItem[];
-};
-
-type PresignResp = {
-  ok: boolean;
-  uploadUrl: string; // PUT to this
-  publicUrl: string; // store this in DynamoDB + use in UI
-  key?: string;
-};
-
-const isVideoUrl = (url: string) => /\.mp4(\?|#|$)/i.test(url) || url.toLowerCase().includes("video");
-const isImageUrl = (url: string) => /\.(png|jpe?g|webp|gif)(\?|#|$)/i.test(url) || url.toLowerCase().includes("image");
+type SlidesGetResponse =
+  | { ok: true; set: TargetSet; items: MediaItem[]; count?: number }
+  | { error: string; detail?: string };
 
 function nowTime() {
-  const d = new Date();
-  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return new Date().toLocaleTimeString([], { hour12: true });
 }
 
 export default function AdminPage() {
   const [token, setToken] = useState("");
-  const [authed, setAuthed] = useState(false);
-  const [authMsg, setAuthMsg] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [authorized, setAuthorized] = useState(false);
 
-  // Upload form
-  const [uploadSet, setUploadSet] = useState<SetKind>("CENTER");
-  const [files, setFiles] = useState<FileList | null>(null);
+  // IMPORTANT: Separate "upload target" from "library view tab"
+  const [uploadTarget, setUploadTarget] = useState<TargetSet>("CENTER");
+  const [viewTarget, setViewTarget] = useState<TargetSet>("CENTER");
+
+  // optional metadata (stored in DynamoDB)
   const [category1, setCategory1] = useState("");
   const [category2, setCategory2] = useState("");
   const [description, setDescription] = useState("");
 
-  // Lists
-  const [centerItems, setCenterItems] = useState<SlideItem[]>([]);
-  const [bgItems, setBgItems] = useState<SlideItem[]>([]);
-  const [viewSet, setViewSet] = useState<SetKind>("CENTER");
+  // selected files
+  const [files, setFiles] = useState<File[]>([]);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Log
-  const [logs, setLogs] = useState<string[]>([]);
-  const addLog = (line: string) => setLogs((x) => [`${nowTime()}  ${line}`, ...x].slice(0, 250));
+  // lists
+  const [centerItems, setCenterItems] = useState<MediaItem[]>([]);
+  const [slidesItems, setSlidesItems] = useState<MediaItem[]>([]);
+  const [bgItems, setBgItems] = useState<MediaItem[]>([]);
 
-  const s3BaseOk = useMemo(() => {
-    // purely UI display; upload uses presigned URL anyway
-    return true;
-  }, []);
+  const [busy, setBusy] = useState(false);
+  const [log, setLog] = useState<string[]>([]);
 
-  const headers = useMemo(() => {
-    return {
-      "x-admin-token": token.trim(),
-    };
-  }, [token]);
+  const accepts = useMemo(() => {
+    if (uploadTarget === "CENTER") return "video/mp4";
+    if (uploadTarget === "SLIDES") return "image/*";
+    return "image/*,video/mp4"; // BG
+  }, [uploadTarget]);
 
-  async function loadSet(set: SetKind, t: string) {
-    const res = await fetch(`/api/admin/slides?set=${encodeURIComponent(set)}`, {
-      method: "GET",
-      headers: { "x-admin-token": t.trim() },
-      cache: "no-store",
-    });
-    if (!res.ok) {
-      const txt = await safeText(res);
-      throw new Error(`HTTP ${res.status} ${txt || ""}`.trim());
-    }
-    const data = (await res.json()) as SlidesResp | SlideItem[];
-    const items = Array.isArray(data) ? data : Array.isArray(data.items) ? data.items : [];
-    // Normalize + sort
-    return items
-      .map((it) => ({
-        pk: it.pk as SetKind,
-        sk: String(it.sk),
-        url: String(it.url),
-        enabled: it.enabled ?? true,
-        order: Number(it.order ?? 0),
-        createdAt: it.createdAt,
-        mediaType: it.mediaType,
-        category1: it.category1,
-        category2: it.category2,
-        description: it.description,
-      }))
-      .filter((it) => !!it.url && it.enabled !== false)
-      .sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || String(a.sk).localeCompare(String(b.sk)));
+  function pushLog(line: string) {
+    setLog((prev) => [`${nowTime()}  ${line}`, ...prev].slice(0, 400));
   }
 
-  async function loadAll(t = token) {
-    const [c, b] = await Promise.all([loadSet("CENTER", t), loadSet("BG", t)]);
-    setCenterItems(c);
-    setBgItems(b);
-    addLog(`Loaded: CENTER=${c.length}, BG=${b.length}`);
+  async function apiJson(url: string, init?: RequestInit) {
+    const res = await fetch(url, init);
+    const text = await res.text();
+    let data: any = null;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      // keep null
+    }
+    return { ok: res.ok, status: res.status, text, data };
+  }
+
+  function clearFiles() {
+    setFiles([]);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  function guessContentType(file: File) {
+    // Some Windows/OneDrive selections can come with empty file.type.
+    if (file.type) return file.type;
+
+    const name = file.name.toLowerCase();
+    if (name.endsWith(".mp4")) return "video/mp4";
+    if (name.endsWith(".jpg") || name.endsWith(".jpeg")) return "image/jpeg";
+    if (name.endsWith(".png")) return "image/png";
+    if (name.endsWith(".webp")) return "image/webp";
+    if (name.endsWith(".gif")) return "image/gif";
+    return "application/octet-stream";
+  }
+
+  function isImage(file: File) {
+    const ct = guessContentType(file).toLowerCase();
+    const name = file.name.toLowerCase();
+    return ct.startsWith("image/") || /\.(jpg|jpeg|png|webp|gif)$/.test(name);
+  }
+
+  function isMp4(file: File) {
+    const ct = guessContentType(file).toLowerCase();
+    const name = file.name.toLowerCase();
+    return ct === "video/mp4" || name.endsWith(".mp4");
   }
 
   async function verifyToken() {
-    setAuthMsg("");
     const t = token.trim();
     if (!t) {
-      setAuthMsg("❌ Please enter your admin token.");
+      setAuthorized(false);
+      pushLog("❌ Missing token");
       return;
     }
-    setBusy(true);
-    try {
-      // Any protected endpoint works (this requires token)
-      await loadSet("CENTER", t);
-      setAuthed(true);
-      setAuthMsg("");
-      addLog("✅ Token accepted");
-      await loadAll(t);
-    } catch (e: any) {
-      setAuthed(false);
-      setAuthMsg("❌ Invalid admin token (or API error).");
-      addLog(`Auth failed: ${e?.message ?? String(e)}`);
-    } finally {
-      setBusy(false);
-    }
-  }
 
-  function logout() {
-    setAuthed(false);
-    setAuthMsg("");
-    setFiles(null);
-    addLog("Logged out");
-  }
-
-  async function presignOne(file: File, set: SetKind) {
-    // Your presign route should exist: /api/admin/presign
-    // Expected to return { ok, uploadUrl, publicUrl }
-    const qs = new URLSearchParams({
-      set,
-      filename: file.name,
-      contentType: file.type || "application/octet-stream",
+    const out = await apiJson("/api/admin/validate", {
+      method: "POST",
+      headers: { "x-admin-token": t },
     });
-    const res = await fetch(`/api/admin/presign?${qs.toString()}`, {
+
+    if (!out.ok) {
+      setAuthorized(false);
+      pushLog(`❌ Invalid admin token (HTTP ${out.status})`);
+      return;
+    }
+
+    setAuthorized(true);
+    pushLog("✅ Token accepted");
+    // NOTE: refresh happens via useEffect below (authorized -> true)
+  }
+
+  async function loadSet(set: TargetSet, t: string) {
+    const out = await apiJson(`/api/admin/slides?set=${encodeURIComponent(set)}`, {
       method: "GET",
-      headers,
+      headers: { "x-admin-token": t },
       cache: "no-store",
     });
-    if (!res.ok) {
-      const txt = await safeText(res);
-      throw new Error(`Presign failed (HTTP ${res.status}) ${txt || ""}`.trim());
+
+    if (!out.ok) {
+      const msg = out.data?.detail || out.data?.error || out.text || "Load failed";
+      throw new Error(`Load failed for ${set} (HTTP ${out.status}) ${msg}`);
     }
-    const data = (await res.json()) as PresignResp;
-    if (!data?.uploadUrl || !data?.publicUrl) throw new Error("Presign response missing uploadUrl/publicUrl");
-    return data;
+
+    const data = out.data as SlidesGetResponse;
+    if (!data || (data as any).error) {
+      throw new Error(`Load failed for ${set} (HTTP ${out.status}) ${out.text}`);
+    }
+
+    const items = (data as any).items as MediaItem[];
+    return Array.isArray(items) ? items : [];
   }
 
-  async function registerInDdb(set: SetKind, publicUrl: string, file: File) {
-    const body: any = {
-      set,
-      url: publicUrl,
-      mediaType: file.type || (set === "CENTER" ? "video/mp4" : "image/jpeg"),
-      category1: category1.trim() || undefined,
-      category2: category2.trim() || undefined,
-      description: description.trim() || undefined,
-    };
+  async function refreshAll() {
+    const t = token.trim();
 
-    const res = await fetch(`/api/admin/slides`, {
+    // IMPORTANT FIX:
+    // Don't gate on `authorized` here (it can be stale right after setAuthorized(true)).
+    // Gate on the actual token presence instead.
+    if (!t) return;
+
+    try {
+      const [c, s, b] = await Promise.all([loadSet("CENTER", t), loadSet("SLIDES", t), loadSet("BG", t)]);
+      setCenterItems(c);
+      setSlidesItems(s);
+      setBgItems(b);
+      pushLog(`Loaded: CENTER=${c.length}, SLIDES=${s.length}, BG=${b.length}`);
+    } catch (e: any) {
+      pushLog(`❌ ${e?.message ?? String(e)}`);
+    }
+  }
+
+  // Auto-refresh immediately after authorization flips to true
+  useEffect(() => {
+    if (!authorized) return;
+    refreshAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authorized]);
+
+  function onPickFiles(e: React.ChangeEvent<HTMLInputElement>) {
+    const list = Array.from(e.target.files || []);
+    setFiles(list);
+    if (list.length) pushLog(`Selected ${list.length} file(s) for ${uploadTarget}`);
+  }
+
+  async function presignOne(set: TargetSet, file: File) {
+    const t = token.trim();
+    const contentType = encodeURIComponent(guessContentType(file));
+    const filename = encodeURIComponent(file.name);
+
+    const out = await apiJson(
+      `/api/admin/presign?set=${encodeURIComponent(set)}&filename=${filename}&contentType=${contentType}`,
+      {
+        method: "GET",
+        headers: { "x-admin-token": t },
+        cache: "no-store",
+      }
+    );
+
+    if (!out.ok) {
+      const msg = out.data?.detail || out.data?.error || out.text || "Presign failed";
+      throw new Error(`Presign failed for ${set} (HTTP ${out.status}) ${msg}`);
+    }
+    return out.data as { ok: true; uploadUrl: string; publicUrl: string; key: string };
+  }
+
+  async function registerOne(item: {
+    set: TargetSet;
+    url: string;
+    mediaType: string;
+    category1?: string;
+    category2?: string;
+    description?: string;
+  }) {
+    const t = token.trim();
+    const out = await apiJson("/api/admin/slides", {
       method: "POST",
-      headers: { ...headers, "content-type": "application/json" },
-      body: JSON.stringify(body),
+      headers: {
+        "content-type": "application/json",
+        "x-admin-token": t,
+      },
+      body: JSON.stringify(item),
     });
 
-    if (!res.ok) {
-      const txt = await safeText(res);
-      throw new Error(`DDB register failed (HTTP ${res.status}) ${txt || ""}`.trim());
+    if (!out.ok) {
+      const msg = out.data?.detail || out.data?.error || out.text || "Register failed";
+      throw new Error(`Register failed (HTTP ${out.status}) ${msg}`);
     }
-    return res.json();
   }
 
-  function validateFilesForSet(set: SetKind, list: FileList) {
-    const arr = Array.from(list);
-    if (set === "CENTER") {
-      // videos only
-      const bad = arr.find((f) => !f.type || !f.type.toLowerCase().includes("video"));
-      if (bad) throw new Error(`CENTER must be videos. "${bad.name}" looks like "${bad.type || "unknown"}"`);
-    } else {
-      // BG images only
-      const bad = arr.find((f) => !f.type || !f.type.toLowerCase().includes("image"));
-      if (bad) throw new Error(`BG must be images. "${bad.name}" looks like "${bad.type || "unknown"}"`);
+  function validateFilesForTarget(target: TargetSet, list: File[]) {
+    if (!list.length) return { ok: false, message: "No files selected" };
+
+    if (target === "CENTER") {
+      const bad = list.find((f) => !isMp4(f));
+      if (bad) return { ok: false, message: `CENTER accepts only .mp4. Bad: ${bad.name}` };
+      return { ok: true as const };
     }
+
+    if (target === "SLIDES") {
+      const bad = list.find((f) => !isImage(f));
+      if (bad) return { ok: false, message: `SLIDES accepts only images. Bad: ${bad.name}` };
+      return { ok: true as const };
+    }
+
+    // BG
+    const bad = list.find((f) => !(isImage(f) || isMp4(f)));
+    if (bad) return { ok: false, message: `BG accepts image or .mp4. Bad: ${bad.name}` };
+    return { ok: true as const };
   }
 
   async function uploadAll() {
-    if (!authed) return setAuthMsg("❌ Verify token first.");
-    if (!files || files.length === 0) return addLog("No files selected.");
+    if (!authorized) {
+      pushLog("❌ Not authorized");
+      return;
+    }
+
+    const check = validateFilesForTarget(uploadTarget, files);
+    if (!check.ok) {
+      pushLog(`❌ ${check.message}`);
+      return;
+    }
 
     setBusy(true);
     try {
-      validateFilesForSet(uploadSet, files);
+      pushLog(`Uploading ${files.length} file(s) to ${uploadTarget}...`);
 
-      const list = Array.from(files);
-      addLog(`Uploading ${list.length} file(s) to ${uploadSet}...`);
+      for (const f of files) {
+        const pres = await presignOne(uploadTarget, f);
+        const contentType = guessContentType(f);
 
-      for (const f of list) {
-        // 1) Presign
-        const { uploadUrl, publicUrl } = await presignOne(f, uploadSet);
-
-        // 2) PUT file to S3
-        const put = await fetch(uploadUrl, {
+        // PUT to S3
+        const putRes = await fetch(pres.uploadUrl, {
           method: "PUT",
+          headers: { "content-type": contentType },
           body: f,
-          headers: {
-            "content-type": f.type || "application/octet-stream",
-          },
         });
-
-        if (!put.ok) {
-          const txt = await safeText(put);
-          throw new Error(`S3 PUT failed for "${f.name}" (HTTP ${put.status}) ${txt || ""}`.trim());
+        if (!putRes.ok) {
+          throw new Error(`S3 upload failed (HTTP ${putRes.status}) ${f.name}`);
         }
 
-        // 3) Register in DynamoDB
-        await registerInDdb(uploadSet, publicUrl, f);
-        addLog(`✅ Uploaded: ${f.name} → ${uploadSet}`);
+        // Register in DynamoDB
+        await registerOne({
+          set: uploadTarget,
+          url: pres.publicUrl,
+          mediaType: contentType,
+          category1: category1.trim(),
+          category2: category2.trim(),
+          description: description.trim(),
+        });
+
+        pushLog(`✅ Uploaded: ${f.name} → ${uploadTarget}`);
       }
 
-      // reload lists
-      await loadAll();
-      setFiles(null);
-      // keep metadata fields (category/desc) so you can upload multiple with same tags if you want
+      clearFiles();
+      await refreshAll();
     } catch (e: any) {
-      addLog(`❌ Upload failed: ${e?.message ?? String(e)}`);
+      pushLog(`❌ Upload failed: ${e?.message ?? String(e)}`);
     } finally {
       setBusy(false);
     }
   }
 
-  async function deleteOne(set: SetKind, sk: string) {
-    if (!authed) return;
-    if (!confirm(`Delete this item?\n\n${set} / ${sk}`)) return;
+  async function deleteItem(it: MediaItem) {
+    if (!authorized) {
+      pushLog("❌ Not authorized");
+      return;
+    }
 
     setBusy(true);
     try {
-      const res = await fetch(`/api/admin/slides?set=${encodeURIComponent(set)}&sk=${encodeURIComponent(sk)}`, {
-        method: "DELETE",
-        headers,
-      });
-      if (!res.ok) {
-        const txt = await safeText(res);
-        throw new Error(`Delete failed (HTTP ${res.status}) ${txt || ""}`.trim());
+      const t = token.trim();
+      const out = await apiJson(
+        `/api/admin/slides?set=${encodeURIComponent(it.pk)}&sk=${encodeURIComponent(it.sk)}`,
+        {
+          method: "DELETE",
+          headers: { "x-admin-token": t },
+        }
+      );
+      if (!out.ok) {
+        const msg = out.data?.detail || out.data?.error || out.text || "Delete failed";
+        throw new Error(`Delete failed (HTTP ${out.status}) ${msg}`);
       }
-      addLog(`🗑️ Deleted: ${set} / ${sk}`);
-      await loadAll();
+      pushLog(`🗑️ Deleted: ${it.pk} / ${it.sk}`);
+      await refreshAll();
     } catch (e: any) {
-      addLog(`❌ Delete error: ${e?.message ?? String(e)}`);
+      pushLog(`❌ ${e?.message ?? String(e)}`);
     } finally {
       setBusy(false);
     }
   }
 
-  const items = viewSet === "CENTER" ? centerItems : bgItems;
+  function renderPreview(it: MediaItem) {
+    const mt = (it.mediaType || "").toLowerCase();
+    const isVideo = mt.startsWith("video/") || it.url.toLowerCase().endsWith(".mp4");
+    if (isVideo) {
+      return (
+        <video
+          src={it.url}
+          controls
+          preload="metadata"
+          style={{
+            width: "100%",
+            height: 180,
+            objectFit: "cover",
+            borderRadius: 10,
+            background: "#111",
+          }}
+        />
+      );
+    }
+    return (
+      <img
+        src={it.url}
+        alt={it.sk}
+        style={{
+          width: "100%",
+          height: 180,
+          objectFit: "cover",
+          borderRadius: 10,
+          background: "#111",
+        }}
+      />
+    );
+  }
+
+  const listFor = (set: TargetSet) => {
+    if (set === "CENTER") return centerItems;
+    if (set === "SLIDES") return slidesItems;
+    return bgItems;
+  };
 
   return (
     <div style={styles.page}>
       <div style={styles.header}>
         <div>
-          <div style={styles.hTitle}>📻 Radio Olgoo Admin</div>
-          <div style={styles.hSub}>Upload, list, and delete media for <b>CENTER</b> (videos) + <b>BG</b> (images).</div>
+          <div style={styles.h1}>Radio Olgoo Admin</div>
+          <div style={styles.sub}>Upload, list, and delete media for CENTER + SLIDES + BG.</div>
         </div>
-        <div style={styles.badge(authed ? "ok" : "locked")}>{authed ? "AUTHORIZED" : "LOCKED"}</div>
-      </div>
-
-      {/* AUTH */}
-      <div style={styles.card}>
-        <div style={styles.cardTitle}>Admin token</div>
-        <div style={styles.row}>
-          <input
-            type="password"
-            value={token}
-            onChange={(e) => setToken(e.target.value)}
-            placeholder="Paste ADMIN_TOKEN here"
-            style={styles.input}
-            disabled={busy}
-          />
-          <button onClick={verifyToken} style={styles.btnPrimary} disabled={busy}>
-            {authed ? "Re-Verify" : "Enter Dashboard"}
-          </button>
-          <button onClick={logout} style={styles.btn} disabled={busy}>
-            Log out
-          </button>
-          <button
-            onClick={() => authed && loadAll()}
-            style={styles.btn}
-            disabled={busy || !authed}
-            title="Reload lists"
-          >
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          <span style={{ ...styles.badge, background: authorized ? "#1f8f4e" : "#a11" }}>
+            {authorized ? "AUTHORIZED" : "NOT AUTHORIZED"}
+          </span>
+          <button style={styles.btn} onClick={refreshAll} disabled={!authorized || busy}>
             Refresh
           </button>
         </div>
-        {authMsg ? <div style={styles.authMsg}>{authMsg}</div> : null}
-        <div style={styles.hint}>Tip: if you edit <code>.env.local</code>, restart <code>npm run dev</code>.</div>
       </div>
 
-      <div style={styles.grid2}>
-        {/* UPLOAD */}
+      <div style={styles.card}>
+        <div style={styles.cardTitle}>Admin token</div>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <input
+            type="password"
+            placeholder="Paste ADMIN_TOKEN from .env.local (no quotes)"
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            style={styles.input}
+          />
+          <button style={styles.btnPrimary} onClick={verifyToken} disabled={busy}>
+            Verify
+          </button>
+          <button
+            style={styles.btn}
+            onClick={() => {
+              setToken("");
+              setAuthorized(false);
+              clearFiles();
+              setCenterItems([]);
+              setSlidesItems([]);
+              setBgItems([]);
+              pushLog("Logged out");
+            }}
+            disabled={busy}
+          >
+            Log out
+          </button>
+        </div>
+        <div style={styles.tip}>
+          Tip: if you edit .env.local, restart <code>npm run dev</code>.
+        </div>
+      </div>
+
+      <div style={styles.grid}>
         <div style={styles.card}>
-          <div style={styles.cardTopRow}>
-            <div style={styles.cardTitle}>⬆️ Upload media</div>
-            <div style={styles.miniTag}>{s3BaseOk ? "S3 base OK" : "S3 base missing"}</div>
+          <div style={styles.cardTitle}>Upload media</div>
+
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+            <div style={{ minWidth: 240 }}>
+              <label style={styles.label}>Target</label>
+              <select
+                value={uploadTarget}
+                onChange={(e) => setUploadTarget(e.target.value as TargetSet)}
+                style={styles.select}
+                disabled={busy}
+              >
+                <option value="CENTER">CENTER (video slideshow)</option>
+                <option value="SLIDES">SLIDES (left slideshow)</option>
+                <option value="BG">BG (wallpaper — ONLY ONE ACTIVE)</option>
+              </select>
+            </div>
           </div>
 
-          <label style={styles.label}>Target set</label>
-          <select value={uploadSet} onChange={(e) => setUploadSet(e.target.value as SetKind)} style={styles.select} disabled={busy || !authed}>
-            <option value="CENTER">CENTER (videos)</option>
-            <option value="BG">BG (images)</option>
-          </select>
-
-          <label style={styles.label}>Choose files</label>
-          <input
-            type="file"
-            multiple
-            onChange={(e) => setFiles(e.target.files)}
-            style={styles.file}
-            disabled={busy || !authed}
-            accept={uploadSet === "CENTER" ? "video/mp4,video/*" : "image/*"}
-          />
-
-          <div style={styles.metaGrid}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
             <div>
-              <label style={styles.labelSmall}>Category 1</label>
+              <label style={styles.label}>Category 1</label>
               <input
                 value={category1}
                 onChange={(e) => setCategory1(e.target.value)}
-                style={styles.inputSmall}
-                placeholder="optional"
-                disabled={busy || !authed}
+                placeholder="e.g. Iran"
+                style={styles.input}
+                disabled={busy}
               />
             </div>
             <div>
-              <label style={styles.labelSmall}>Category 2</label>
+              <label style={styles.label}>Category 2</label>
               <input
                 value={category2}
                 onChange={(e) => setCategory2(e.target.value)}
-                style={styles.inputSmall}
-                placeholder="optional"
-                disabled={busy || !authed}
+                placeholder="e.g. Toronto"
+                style={styles.input}
+                disabled={busy}
+              />
+            </div>
+            <div style={{ gridColumn: "1 / -1" }}>
+              <label style={styles.label}>Description</label>
+              <input
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="Short description"
+                style={styles.input}
+                disabled={busy}
               />
             </div>
           </div>
 
-          <label style={styles.labelSmall}>Description</label>
-          <textarea
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            style={styles.textarea}
-            placeholder="optional"
-            disabled={busy || !authed}
-          />
-
-          <button onClick={uploadAll} style={styles.btnPrimaryWide} disabled={busy || !authed}>
-            Upload to S3 + Register
-          </button>
-
-          <div style={styles.hint}>
-            CENTER accepts <b>.mp4</b>. BG accepts <b>images</b>. Upload uses presigned S3 PUT (your AWS creds stay server-side).
-          </div>
-
           <div style={{ marginTop: 14 }}>
-            <div style={styles.cardTitle}>Log</div>
-            <div style={styles.logBox}>
-              {logs.length ? logs.map((l, i) => <div key={i} style={styles.logLine}>{l}</div>) : <div style={styles.logLine}>No actions yet.</div>}
+            <label style={styles.label}>Choose file(s)</label>
+            <div style={styles.fileRow}>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple={uploadTarget !== "BG"} // BG typically 1 file
+                accept={accepts}
+                onChange={onPickFiles}
+                disabled={busy}
+              />
+              <div style={styles.accepts}>Accepts: {accepts || "any"}</div>
+              {!!files.length && (
+                <div style={{ fontSize: 12, opacity: 0.8, fontWeight: 800 }}>Selected: {files.length}</div>
+              )}
             </div>
-            <button onClick={() => setLogs([])} style={styles.btnSmall} disabled={busy}>
-              Clear
-            </button>
+            <div style={styles.smallMuted}>
+              CENTER accepts <b>.mp4</b>. SLIDES accepts <b>images</b>. BG accepts <b>image/video</b> and should
+              keep only one active.
+            </div>
           </div>
+
+          <button style={styles.bigBtn} onClick={uploadAll} disabled={!authorized || busy}>
+            {busy ? "Working..." : "Upload to S3 + Register"}
+          </button>
         </div>
 
-        {/* LISTS */}
         <div style={styles.card}>
-          <div style={styles.cardTopRow}>
-            <div style={styles.cardTitle}>🗂️ Items</div>
-            <div style={styles.rightControls}>
-              <select value={viewSet} onChange={(e) => setViewSet(e.target.value as SetKind)} style={styles.selectSmall} disabled={busy || !authed}>
-                <option value="CENTER">CENTER</option>
-                <option value="BG">BG</option>
-              </select>
-              <button onClick={() => authed && loadAll()} style={styles.btn} disabled={busy || !authed}>
-                Refresh
+          <div style={styles.cardTitle}>Library</div>
+
+          <div style={styles.tabs}>
+            {(["CENTER", "SLIDES", "BG"] as TargetSet[]).map((set) => (
+              <button
+                key={set}
+                style={{
+                  ...styles.tab,
+                  ...(set === viewTarget ? styles.tabActive : {}),
+                }}
+                onClick={() => setViewTarget(set)}
+                disabled={busy}
+              >
+                {set} ({listFor(set).length})
               </button>
-            </div>
+            ))}
           </div>
 
-          <div style={styles.stats}>
-            Showing <b>{viewSet}</b> — {items.length} item(s)
-          </div>
-
-          <div style={styles.cardsGrid}>
-            {!items.length ? (
-              <div style={styles.empty}>No items yet.</div>
-            ) : (
-              items.map((it) => (
-                <div key={it.sk} style={styles.itemCard}>
-                  <div style={styles.thumb}>
-                    {isVideoUrl(it.url) || it.mediaType?.includes("video") ? (
-                      <video
-                        src={it.url}
-                        style={styles.media}
-                        muted
-                        playsInline
-                        preload="metadata"
-                      />
-                    ) : (
-                      <img
-                        src={it.url}
-                        alt={it.sk}
-                        style={styles.media}
-                      />
-                    )}
-                  </div>
-
-                  <div style={styles.itemMeta}>
-                    <div style={styles.sk}>{it.sk}</div>
-                    <div style={styles.smallMuted}>
-                      {it.mediaType ? <span>{it.mediaType}</span> : null}
-                      {it.category1 ? <span> • {it.category1}</span> : null}
-                      {it.category2 ? <span> • {it.category2}</span> : null}
-                    </div>
-                    {it.description ? <div style={styles.desc}>{it.description}</div> : null}
-                  </div>
-
-                  <div style={styles.itemBtns}>
-                    <button onClick={() => window.open(it.url, "_blank", "noopener,noreferrer")} style={styles.btn}>
-                      Open
-                    </button>
-                    <button onClick={() => deleteOne(it.pk, it.sk)} style={styles.btnDanger} disabled={busy}>
-                      Delete
-                    </button>
+          <div style={styles.itemsGrid}>
+            {listFor(viewTarget).map((it) => (
+              <div key={it.sk} style={styles.itemCard}>
+                {renderPreview(it)}
+                <div style={styles.itemMeta}>
+                  <div style={styles.itemSk}>{it.sk}</div>
+                  <div style={styles.itemDesc}>
+                    {[it.category1, it.category2].filter(Boolean).join(" · ")}
+                    {it.description ? ` — ${it.description}` : ""}
                   </div>
                 </div>
-              ))
-            )}
-          </div>
-
-          <div style={styles.hint}>
-            If thumbnails don’t show: for videos we preview with <code>&lt;video&gt;</code> (muted). For images we use <code>&lt;img&gt;</code>.
+                <div style={styles.itemBtns}>
+                  <a href={it.url} target="_blank" rel="noreferrer" style={styles.btn}>
+                    Open
+                  </a>
+                  <button style={styles.btnDanger} onClick={() => deleteItem(it)} disabled={busy}>
+                    Delete
+                  </button>
+                </div>
+              </div>
+            ))}
+            {!listFor(viewTarget).length ? <div style={styles.empty}>No items in {viewTarget}.</div> : null}
           </div>
         </div>
+      </div>
+
+      <div style={styles.card}>
+        <div style={styles.cardTitle}>Log</div>
+        <button style={styles.btn} onClick={() => setLog([])} disabled={busy}>
+          Clear
+        </button>
+        <pre style={styles.logBox}>{log.join("\n")}</pre>
       </div>
     </div>
   );
 }
 
-async function safeText(res: Response) {
-  try {
-    return await res.text();
-  } catch {
-    return "";
-  }
-}
-
-const styles: Record<string, any> = {
+const styles: Record<string, React.CSSProperties> = {
   page: {
     minHeight: "100vh",
     padding: 18,
-    background: "#f6f7fb",
-    color: "#111",
     fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
+    background: "#f6f7fb",
   },
   header: {
     display: "flex",
-    alignItems: "flex-start",
     justifyContent: "space-between",
     gap: 12,
+    alignItems: "center",
     marginBottom: 14,
   },
-  hTitle: { fontSize: 30, fontWeight: 900, letterSpacing: 0.2 },
-  hSub: { marginTop: 4, opacity: 0.8, fontWeight: 600 },
-
-  badge: (kind: "ok" | "locked") => ({
-    padding: "8px 12px",
-    borderRadius: 999,
-    fontWeight: 900,
-    fontSize: 12,
-    letterSpacing: 0.6,
-    border: "1px solid " + (kind === "ok" ? "rgba(0,160,70,0.35)" : "rgba(200,0,0,0.25)"),
-    background: kind === "ok" ? "rgba(0,160,70,0.12)" : "rgba(200,0,0,0.08)",
-    color: kind === "ok" ? "#086a34" : "#8b0000",
-  }),
-
-  grid2: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, alignItems: "start" },
-
-  card: {
-    background: "#fff",
-    borderRadius: 18,
-    border: "1px solid rgba(0,0,0,0.08)",
-    boxShadow: "0 10px 30px rgba(0,0,0,0.06)",
-    padding: 16,
-  },
-
-  cardTopRow: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 10 },
-  cardTitle: { fontSize: 16, fontWeight: 900, marginBottom: 8 },
-  miniTag: {
-    fontSize: 12,
-    fontWeight: 800,
-    opacity: 0.8,
+  h1: { fontSize: 28, fontWeight: 900 },
+  sub: { opacity: 0.7, marginTop: 2 },
+  badge: {
+    color: "white",
     padding: "6px 10px",
     borderRadius: 999,
-    border: "1px solid rgba(0,0,0,0.10)",
-    background: "rgba(0,0,0,0.03)",
+    fontWeight: 900,
+    fontSize: 12,
+    letterSpacing: 0.5,
   },
-
-  row: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" },
-
+  grid: {
+    display: "grid",
+    gridTemplateColumns: "minmax(320px, 420px) 1fr",
+    gap: 14,
+    alignItems: "start",
+  },
+  card: {
+    background: "white",
+    borderRadius: 16,
+    border: "1px solid rgba(0,0,0,0.08)",
+    boxShadow: "0 12px 30px rgba(0,0,0,0.05)",
+    padding: 14,
+    marginBottom: 14,
+  },
+  cardTitle: { fontWeight: 900, fontSize: 18, marginBottom: 10 },
+  label: { display: "block", fontWeight: 800, marginBottom: 6, fontSize: 13 },
   input: {
-    flex: 1,
-    minWidth: 240,
-    padding: "12px 12px",
-    borderRadius: 12,
-    border: "1px solid rgba(0,0,0,0.18)",
-    outline: "none",
-    fontSize: 14,
-  },
-
-  inputSmall: {
-    width: "100%",
-    padding: "10px 10px",
-    borderRadius: 12,
-    border: "1px solid rgba(0,0,0,0.18)",
-    outline: "none",
-    fontSize: 13,
-  },
-
-  textarea: {
-    width: "100%",
-    minHeight: 70,
-    resize: "vertical" as const,
-    padding: "10px 10px",
-    borderRadius: 12,
-    border: "1px solid rgba(0,0,0,0.18)",
-    outline: "none",
-    fontSize: 13,
-  },
-
-  btnPrimary: {
-    padding: "12px 14px",
-    borderRadius: 12,
-    border: "1px solid rgba(0,0,0,0.20)",
-    background: "#111",
-    color: "#fff",
-    fontWeight: 900,
-    cursor: "pointer",
-  },
-  btnPrimaryWide: {
-    width: "100%",
-    marginTop: 10,
-    padding: "14px 14px",
-    borderRadius: 14,
-    border: "1px solid rgba(0,0,0,0.20)",
-    background: "#111",
-    color: "#fff",
-    fontWeight: 900,
-    cursor: "pointer",
-    fontSize: 15,
-  },
-  btn: {
-    padding: "12px 14px",
-    borderRadius: 12,
-    border: "1px solid rgba(0,0,0,0.18)",
-    background: "#fff",
-    color: "#111",
-    fontWeight: 800,
-    cursor: "pointer",
-  },
-  btnSmall: {
-    marginTop: 10,
+    width: "min(720px, 100%)",
     padding: "10px 12px",
     borderRadius: 12,
     border: "1px solid rgba(0,0,0,0.18)",
-    background: "#fff",
-    color: "#111",
-    fontWeight: 800,
-    cursor: "pointer",
+    outline: "none",
   },
-  btnDanger: {
-    padding: "12px 14px",
-    borderRadius: 12,
-    border: "1px solid rgba(180,0,32,0.35)",
-    background: "rgba(180,0,32,0.10)",
-    color: "#8b001a",
-    fontWeight: 900,
-    cursor: "pointer",
-  },
-
-  authMsg: { marginTop: 10, fontWeight: 900, color: "#b00020" },
-  hint: { marginTop: 8, opacity: 0.75, fontWeight: 600, fontSize: 12 },
-
-  label: { display: "block", marginTop: 10, marginBottom: 6, fontWeight: 900 },
-  labelSmall: { display: "block", marginTop: 10, marginBottom: 6, fontWeight: 900, fontSize: 12, opacity: 0.85 },
   select: {
     width: "100%",
-    padding: "12px 12px",
+    padding: "10px 12px",
     borderRadius: 12,
     border: "1px solid rgba(0,0,0,0.18)",
+    background: "white",
     fontWeight: 800,
-    background: "#fff",
   },
-  selectSmall: {
-    padding: "10px 10px",
+  btn: {
+    padding: "10px 12px",
     borderRadius: 12,
     border: "1px solid rgba(0,0,0,0.18)",
+    background: "white",
+    cursor: "pointer",
     fontWeight: 800,
-    background: "#fff",
+    textDecoration: "none",
+    color: "black",
+    display: "inline-flex",
+    justifyContent: "center",
+    alignItems: "center",
   },
-  file: { width: "100%", marginTop: 4 },
-
-  metaGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 6 },
-
-  rightControls: { display: "flex", gap: 10, alignItems: "center" },
-  stats: { opacity: 0.75, fontWeight: 700, fontSize: 13, marginBottom: 10 },
-
-  cardsGrid: { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 12 },
-  empty: { padding: 14, borderRadius: 12, border: "1px dashed rgba(0,0,0,0.18)", opacity: 0.7, fontWeight: 800 },
-
-  itemCard: {
-    borderRadius: 16,
-    border: "1px solid rgba(0,0,0,0.08)",
-    overflow: "hidden",
-    background: "#fff",
+  btnPrimary: {
+    padding: "10px 14px",
+    borderRadius: 12,
+    border: "1px solid rgba(0,0,0,0.18)",
+    background: "black",
+    color: "white",
+    cursor: "pointer",
+    fontWeight: 900,
   },
-  thumb: { width: "100%", height: 160, background: "rgba(0,0,0,0.04)" },
-  media: { width: "100%", height: "100%", objectFit: "cover" as const, display: "block" },
-
-  itemMeta: { padding: 10 },
-  sk: { fontWeight: 900, fontSize: 12, wordBreak: "break-all" as const },
-  smallMuted: { marginTop: 4, fontSize: 12, opacity: 0.7, fontWeight: 700 },
-  desc: { marginTop: 6, fontSize: 12, opacity: 0.9, fontWeight: 700 },
-
-  itemBtns: { display: "flex", gap: 10, padding: 10 },
-
-  logBox: {
-    marginTop: 8,
-    padding: 10,
+  btnDanger: {
+    padding: "10px 12px",
+    borderRadius: 12,
+    border: "1px solid rgba(0,0,0,0.18)",
+    background: "#b00020",
+    color: "white",
+    cursor: "pointer",
+    fontWeight: 900,
+  },
+  bigBtn: {
+    marginTop: 14,
+    width: "100%",
+    padding: "14px 14px",
     borderRadius: 14,
-    border: "1px solid rgba(0,0,0,0.10)",
-    background: "rgba(0,0,0,0.03)",
-    maxHeight: 240,
-    overflow: "auto",
+    border: "1px solid rgba(0,0,0,0.18)",
+    background: "black",
+    color: "white",
+    fontWeight: 950,
+    cursor: "pointer",
+    fontSize: 16,
   },
-  logLine: { fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace", fontSize: 12, whiteSpace: "pre-wrap" as const },
+  tip: { marginTop: 10, opacity: 0.75, fontSize: 13 },
+  smallMuted: { marginTop: 8, opacity: 0.75, fontSize: 13 },
+  fileRow: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" },
+  accepts: { fontSize: 12, opacity: 0.7, fontWeight: 800 },
+  tabs: { display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 },
+  tab: {
+    padding: "8px 10px",
+    borderRadius: 999,
+    border: "1px solid rgba(0,0,0,0.18)",
+    background: "white",
+    cursor: "pointer",
+    fontWeight: 900,
+  },
+  tabActive: { background: "black", color: "white" },
+  itemsGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))",
+    gap: 12,
+  },
+  itemCard: {
+    border: "1px solid rgba(0,0,0,0.10)",
+    borderRadius: 14,
+    padding: 10,
+    background: "white",
+  },
+  itemMeta: { marginTop: 8 },
+  itemSk: { fontWeight: 900, fontSize: 12, opacity: 0.85, wordBreak: "break-all" },
+  itemDesc: { fontSize: 12, opacity: 0.75, marginTop: 4, wordBreak: "break-word" },
+  itemBtns: { display: "flex", gap: 10, marginTop: 10 },
+  empty: { opacity: 0.7, fontWeight: 800, padding: 10 },
+  logBox: {
+    marginTop: 10,
+    background: "#0b1020",
+    color: "#d8e1ff",
+    padding: 12,
+    borderRadius: 12,
+    overflow: "auto",
+    maxHeight: 340,
+    fontSize: 12,
+    lineHeight: 1.35,
+  },
 };

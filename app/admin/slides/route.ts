@@ -20,14 +20,18 @@ function getEnv(name: string) {
   return v;
 }
 
+function getAdminTokenFromHeaders(req: Request) {
+  return (req.headers.get("x-admin-token") || "").trim();
+}
+
 function requireAdmin(req: Request) {
-  const incoming = (req.headers.get("x-admin-token") || "").trim();
+  const incoming = getAdminTokenFromHeaders(req);
   const expected = (process.env.ADMIN_TOKEN || "").trim();
   if (!expected) throw new Error("Missing ADMIN_TOKEN in env");
   if (!incoming || incoming !== expected) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  return null;
+  return null; // ok
 }
 
 function parseSet(raw: string | null): TargetSet | null {
@@ -36,7 +40,11 @@ function parseSet(raw: string | null): TargetSet | null {
   return null;
 }
 
-function skPrefixFor(set: TargetSet) {
+function skPrefixFor(set: TargetSet, mediaType?: string) {
+  // Keep your historical style:
+  // CENTER => VID#...
+  // SLIDES => SLD#...
+  // BG => BG#...
   if (set === "CENTER") return "VID#";
   if (set === "SLIDES") return "SLD#";
   return "BG#";
@@ -50,30 +58,33 @@ function jsonOk(obj: any, status = 200) {
 }
 
 function jsonErr(error: string, status = 400, detail?: any) {
-  return jsonOk({ error, ...(detail ? { detail: String(detail) } : {}) }, status);
+  return jsonOk(
+    { error, ...(detail ? { detail: String(detail) } : {}) },
+    status
+  );
 }
 
-const ddb = DynamoDBDocumentClient.from(
-  new DynamoDBClient({
-    region:
-      process.env.AWS_REGION ||
-      process.env.AWS_DEFAULT_REGION ||
-      "ca-central-1",
-  }),
-  { marshallOptions: { removeUndefinedValues: true } }
-);
+// DynamoDB
+const client = new DynamoDBClient({});
+const ddb = DynamoDBDocumentClient.from(client, {
+  marshallOptions: { removeUndefinedValues: true },
+});
 
 function tableName() {
-  const v = (process.env.DDB_TABLE_NAME || "").trim();
-  if (!v) throw new Error("Missing DDB_TABLE_NAME in env");
-  return v;
+  // Use whatever you already have in .env.local; support common names
+  return (
+    process.env.DDB_TABLE_NAME ||
+    process.env.MEDIA_TABLE_NAME ||
+    process.env.TABLE_NAME ||
+    ""
+  ).trim();
 }
-
 
 async function listBySet(set: TargetSet) {
   const TableName = tableName();
   if (!TableName) throw new Error("Missing DDB table name env (DDB_TABLE_NAME)");
 
+  // Assumes pk is the partition key, like your returned items show: pk="CENTER"/"SLIDES"/"BG"
   const out = await ddb.send(
     new QueryCommand({
       TableName,
@@ -83,6 +94,7 @@ async function listBySet(set: TargetSet) {
   );
 
   const items = (out.Items || []) as any[];
+  // Optional: stable ordering
   items.sort((a, b) => String(a.sk).localeCompare(String(b.sk)));
   return items;
 }
@@ -122,26 +134,29 @@ export async function POST(req: Request) {
 
     const mediaType = String(body.mediaType || "").trim();
 
-    const incomingSk = String(body.sk || "").trim();
     const ts = Date.now();
     const id = randomUUID().replace(/-/g, "").slice(0, 14);
-    const sk = incomingSk || `${skPrefixFor(set)}${ts}#${id}`;
+    const sk = `${skPrefixFor(set, mediaType)}${ts}#${id}`;
 
     const item = {
       pk: set,
       sk,
       url: urlStr,
       mediaType,
-      enabled: body.enabled ?? true,
-      order: Number(body.order ?? 0),
+      enabled: true,
+      order: 0,
       category1: String(body.category1 || ""),
       category2: String(body.category2 || ""),
       description: String(body.description || ""),
-      createdAt: String(body.createdAt || new Date().toISOString()),
-      updatedAt: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
     };
 
-    await ddb.send(new PutCommand({ TableName, Item: item }));
+    await ddb.send(
+      new PutCommand({
+        TableName,
+        Item: item,
+      })
+    );
 
     return jsonOk({ ok: true, pk: set, sk });
   } catch (e: any) {
@@ -164,7 +179,12 @@ export async function DELETE(req: Request) {
     if (!set) return jsonErr("Invalid set. Must be CENTER, SLIDES, or BG", 400);
     if (!sk) return jsonErr("Missing sk", 400);
 
-    await ddb.send(new DeleteCommand({ TableName, Key: { pk: set, sk } }));
+    await ddb.send(
+      new DeleteCommand({
+        TableName,
+        Key: { pk: set, sk },
+      })
+    );
 
     return jsonOk({ ok: true });
   } catch (e: any) {
