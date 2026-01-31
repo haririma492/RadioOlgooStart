@@ -43,19 +43,10 @@ function isVideo(item: Slide | { url: string; mediaType?: string } | string): bo
 
 async function fetchSlides(set: SetKind): Promise<Slide[]> {
   // NOTE: this is USER UI (public). Admin uses /api/admin/*
-  const url = `/api/slides?set=${encodeURIComponent(set)}`;
-  console.log(`Fetching ${set} from:`, url);
-  
-  const res = await fetch(url, {
+  const res = await fetch(`/api/slides?set=${encodeURIComponent(set)}`, {
     cache: "no-store",
   });
-  
-  console.log(`Response for ${set}:`, res.status, res.statusText);
-  
-  if (!res.ok) {
-    const errorText = await res.text().catch(() => "");
-    throw new Error(`Failed to load slides for ${set} (HTTP ${res.status}): ${errorText}`);
-  }
+  if (!res.ok) throw new Error(`Failed to load slides for ${set} (HTTP ${res.status})`);
 
   const data = (await res.json()) as SlidesGetResponse;
 
@@ -101,23 +92,6 @@ function useRotator(urls: string[], intervalMs: number) {
   return urls.length ? urls[idx % urls.length] : "";
 }
 
-// Hook to detect mobile
-function useIsMobile() {
-  const [isMobile, setIsMobile] = useState(false);
-
-  useEffect(() => {
-    const checkMobile = () => {
-      setIsMobile(window.innerWidth < 768);
-    };
-
-    checkMobile();
-    window.addEventListener("resize", checkMobile);
-    return () => window.removeEventListener("resize", checkMobile);
-  }, []);
-
-  return isMobile;
-}
-
 export default function HomePage() {
   // BACKGROUND: single active BG item (photo/video)
   const [bgItem, setBgItem] = useState<Slide | null>(null);
@@ -132,7 +106,6 @@ export default function HomePage() {
   const [err, setErr] = useState("");
 
   const centerVideoRef = useRef<HTMLVideoElement | null>(null);
-  const isMobile = useIsMobile();
 
   useEffect(() => {
     let cancelled = false;
@@ -201,9 +174,6 @@ export default function HomePage() {
     v.currentTime = 0;
     v.play().catch(() => {});
   }, [currentCenter?.url]);
-
-  // Get responsive styles
-  const styles = getStyles(isMobile);
 
   return (
     <div style={styles.page}>
@@ -292,168 +262,144 @@ export default function HomePage() {
   );
 }
 
-function getStyles(isMobile: boolean): Record<string, React.CSSProperties> {
-  return {
-    page: {
-      position: "relative",
-      minHeight: "100vh",
-      color: "white",
-      overflow: "hidden",
-      fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
-    },
+const styles: Record<string, React.CSSProperties> = {
+  page: {
+    position: "relative",
+    minHeight: "100vh",
+    color: "white",
+    overflow: "hidden",
+    fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
+  },
 
-    // BACKGROUND ENGINE
-    bgLayer: {
-      position: "absolute",
-      inset: 0,
-      zIndex: 0,
-    },
-    bgMedia: {
-      position: "absolute",
-      inset: 0,
-      width: "100%",
-      height: "100%",
-      objectFit: "contain",
-      background: "black",
-      transform: isMobile ? "scale(1)" : "scale(0.95)",
-    },
-    bgOverlay: {
-      position: "absolute",
-      inset: 0,
-      background:
-        "linear-gradient(180deg, rgba(0,0,0,0.45) 0%, rgba(0,0,0,0.65) 55%, rgba(0,0,0,0.82) 100%)",
-    },
+  // BACKGROUND ENGINE
+  bgLayer: {
+    position: "absolute",
+    inset: 0,
+    zIndex: 0,
+  },
+  bgMedia: {
+    position: "absolute",
+    inset: 0,
+    width: "100%",
+    height: "100%",
+    objectFit: "contain", // show more of the photo
+    background: "black",
+    transform: "scale(0.95)", // ~30% zoomed out (adjust 0.7–0.85 if you want)
+  },
+  bgOverlay: {
+    position: "absolute",
+    inset: 0,
+    background:
+      "linear-gradient(180deg, rgba(0,0,0,0.45) 0%, rgba(0,0,0,0.65) 55%, rgba(0,0,0,0.82) 100%)",
+  },
 
-    // FOREGROUND
-    shell: {
-      position: "relative",
-      zIndex: 2,
-      maxWidth: isMobile ? "100%" : 1400,
-      margin: "0 auto",
-      padding: isMobile ? "16px 12px 20px" : "22px 16px 26px",
-    },
+  // FOREGROUND
+  shell: {
+    position: "relative",
+    zIndex: 2,
+    maxWidth: 1400,
+    margin: "0 auto",
+    padding: "22px 16px 26px",
+  },
 
-    // HEADER: right-justified + slightly lower
-    header: {
-      display: "flex",
-      justifyContent: "flex-end",
-      marginBottom: isMobile ? 12 : 18,
-      paddingTop: isMobile ? 8 : 14,
-    },
-    headerText: {
-      textAlign: "right",
-      display: "flex",
-      flexDirection: "column",
-      alignItems: "flex-end",
-      gap: isMobile ? 4 : 6,
-      marginTop: isMobile ? 4 : 8,
-    },
+  // HEADER: right-justified + slightly lower
+  header: {
+    display: "flex",
+    justifyContent: "flex-end",
+    marginBottom: 18,
+    paddingTop: 14,
+  },
+  headerText: {
+    textAlign: "right",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "flex-end",
+    gap: 6,
+    marginTop: 8,
+  },
 
-    title: {
-      fontSize: isMobile ? 32 : 56,
-      fontWeight: 900,
-      lineHeight: 1.05,
-    },
-    subtitle: {
-      fontSize: isMobile ? 20 : 34,
-      fontWeight: 900,
-      opacity: 0.95,
-    },
-    subsubtitle: {
-      fontSize: isMobile ? 14 : 18,
-      fontWeight: 800,
-      opacity: 0.9,
-    },
+  title: { fontSize: 56, fontWeight: 900, lineHeight: 1.05 },
+  subtitle: { fontSize: 34, fontWeight: 900, opacity: 0.95 },
+  subsubtitle: { fontSize: 18, fontWeight: 800, opacity: 0.9 },
 
-    // GRID: stacks on mobile, side-by-side on desktop
-    grid: {
-      display: "grid",
-      gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr",
-      columnGap: isMobile ? 0 : 192,
-      rowGap: isMobile ? 20 : 16,
-      alignItems: "start",
-      marginTop: isMobile ? 24 : 150,
-      paddingInline: isMobile ? 0 : 24,
-    },
+  // GRID: identical panel sizes + middle space (~2 inches) + moved down
+  grid: {
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
+    columnGap: 192, // ~2 inches at 96dpi
+    rowGap: 16,
+    alignItems: "start",
+    marginTop: 150, // moves both blocks down
+    paddingInline: 24,
+  },
 
-    panel: {
-      borderRadius: isMobile ? 12 : 18,
-      border: "1px solid rgba(255,255,255,0.18)",
-      background: "rgba(0,0,0,0.22)",
-      backdropFilter: "blur(10px)",
-      padding: isMobile ? 10 : 14,
-      minHeight: 0,
-    },
-    panelHeader: {
-      fontWeight: 900,
-      opacity: 0.9,
-      marginBottom: isMobile ? 8 : 10,
-      textAlign: "center",
-      minHeight: 0,
-    },
+  panel: {
+    borderRadius: 18,
+    border: "1px solid rgba(255,255,255,0.18)",
+    background: "rgba(0,0,0,0.22)",
+    backdropFilter: "blur(10px)",
+    padding: 14,
+    minHeight: 0,
+  },
+  panelHeader: {
+    fontWeight: 900,
+    opacity: 0.9,
+    marginBottom: 10,
+    textAlign: "center",
+    minHeight: 0,
+  },
 
-    frame: {
-      width: "100%",
-      aspectRatio: "16 / 9",
-      borderRadius: isMobile ? 10 : 16,
-      overflow: "hidden",
-      border: "1px solid rgba(255,255,255,0.18)",
-      background: "rgba(0,0,0,0.55)",
-    },
+  frame: {
+    width: "100%",
+    aspectRatio: "16 / 9",
+    borderRadius: 16,
+    overflow: "hidden",
+    border: "1px solid rgba(255,255,255,0.18)",
+    background: "rgba(0,0,0,0.55)",
+  },
 
-    media: {
-      width: "100%",
-      height: "100%",
-      objectFit: "contain",
-      background: "black",
-      display: "block",
-    },
+  media: {
+    width: "100%",
+    height: "100%",
+    objectFit: "contain",
+    background: "black",
+    display: "block",
+  },
 
-    empty: {
-      height: "100%",
-      display: "grid",
-      placeItems: "center",
-      opacity: 0.85,
-      fontWeight: 800,
-      fontSize: isMobile ? 14 : 16,
-      padding: isMobile ? "0 12px" : 0,
-    },
+  empty: {
+    height: "100%",
+    display: "grid",
+    placeItems: "center",
+    opacity: 0.85,
+    fontWeight: 800,
+  },
 
-    actionsRow: {
-      display: "flex",
-      justifyContent: "center",
-      paddingTop: isMobile ? 8 : 10,
-    },
-    btn: {
-      appearance: "none",
-      border: "1px solid rgba(255,255,255,0.25)",
-      background: "rgba(255,255,255,0.10)",
-      color: "white",
-      padding: isMobile ? "12px 20px" : "10px 16px",
-      borderRadius: isMobile ? 10 : 12,
-      cursor: "pointer",
-      fontWeight: 900,
-      fontSize: isMobile ? 16 : 14,
-      minHeight: 44, // Better touch target for mobile
-    },
+  actionsRow: { display: "flex", justifyContent: "center", paddingTop: 10 },
+  btn: {
+    appearance: "none",
+    border: "1px solid rgba(255,255,255,0.25)",
+    background: "rgba(255,255,255,0.10)",
+    color: "white",
+    padding: "10px 16px",
+    borderRadius: 12,
+    cursor: "pointer",
+    fontWeight: 900,
+  },
 
-    hint: {
-      marginTop: isMobile ? 8 : 10,
-      textAlign: "center",
-      opacity: 0.75,
-      fontSize: isMobile ? 11 : 12,
-      fontWeight: 700,
-      padding: isMobile ? "0 8px" : 0,
-    },
+  hint: {
+    marginTop: 10,
+    textAlign: "center",
+    opacity: 0.75,
+    fontSize: 12,
+    fontWeight: 700,
+  },
 
-    error: {
-      marginTop: 12,
-      padding: isMobile ? "8px 10px" : "10px 12px",
-      borderRadius: isMobile ? 10 : 12,
-      background: "rgba(176,0,32,0.25)",
-      border: "1px solid rgba(255,255,255,0.18)",
-      fontWeight: 800,
-      fontSize: isMobile ? 13 : 14,
-    },
-  };
-}
+  error: {
+    marginTop: 12,
+    padding: "10px 12px",
+    borderRadius: 12,
+    background: "rgba(176,0,32,0.25)",
+    border: "1px solid rgba(255,255,255,0.18)",
+    fontWeight: 800,
+  },
+};
