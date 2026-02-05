@@ -1,7 +1,7 @@
 // app/api/slides/route.ts
 import { NextResponse } from "next/server";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, ScanCommand } from "@aws-sdk/lib-dynamodb";
 import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
@@ -24,28 +24,21 @@ function getEnv(name: string) {
   return v;
 }
 
-const region =
-  process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || "ca-central-1";
-
-const bucket = (process.env.S3_BUCKET_NAME || "").trim(); // needed for GET presign
+const region = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || "ca-central-1";
+const bucket = (process.env.S3_BUCKET_NAME || "").trim();
 const bucketHost = bucket ? `${bucket}.s3.${region}.amazonaws.com` : "";
 
 const s3 = new S3Client({ region });
-
 const ddb = DynamoDBDocumentClient.from(
   new DynamoDBClient({ region }),
   { marshallOptions: { removeUndefinedValues: true } }
 );
 
-// If url is https://<bucket>.s3.<region>.amazonaws.com/<key...>
-// return <key...>
 function keyFromS3PublicUrl(urlStr: string): string | null {
   try {
     const u = new URL(urlStr);
     if (!bucketHost) return null;
     if (u.hostname !== bucketHost) return null;
-
-    // pathname starts with "/"
     const key = decodeURIComponent(u.pathname.replace(/^\//, ""));
     return key || null;
   } catch {
@@ -53,58 +46,48 @@ function keyFromS3PublicUrl(urlStr: string): string | null {
   }
 }
 
+/**
+ * GET /api/slides?section=Video+Archives&group=Conference
+ * Returns items filtered by section and optionally group
+ */
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
-    const set = (searchParams.get("set") || "").toUpperCase();
+    const section = searchParams.get("section") || "";
+    const group = searchParams.get("group") || "";
 
-    if (!["SLIDES", "CENTER", "BG"].includes(set)) {
-      return json(
-        { error: "Invalid set. Use ?set=SLIDES or ?set=CENTER or ?set=BG" },
-        400
-      );
+    if (!section) {
+      return json({ error: "Missing section parameter" }, 400);
     }
 
     const TableName = getEnv("DDB_TABLE_NAME");
 
-    const out = await ddb.send(
-      new QueryCommand({
-        TableName,
-        KeyConditionExpression: "pk = :pk",
-        ExpressionAttributeValues: { ":pk": set },
-      })
-    );
+    // Scan table and filter by section/group
+    const result = await ddb.send(new ScanCommand({ TableName }));
+    const allItems = (result.Items || []) as any[];
 
-    const itemsRaw = (out.Items || []) as any[];
+    // Filter out counters and apply section/group filters
+    let items = allItems.filter((x) => {
+      if (!x.PK || x.PK.startsWith("COUNTER#")) return false;
+      if (!x.url || !x.section) return false;
+      if (x.section !== section) return false;
+      if (group && x.group !== group) return false;
+      return true;
+    });
 
-const filtered = itemsRaw
-  .filter((x) => {
-    if (!x || typeof x.url !== "string" || x.url.length === 0) return false;
+    // Sort by createdAt descending (newest first)
+    items.sort((a, b) => {
+      const dateA = a.createdAt || "";
+      const dateB = b.createdAt || "";
+      return dateB.localeCompare(dateA);
+    });
 
-    // BG: allow even if enabled is missing/false (so one BG still shows)
-    if (set === "BG") return true;
-
-    // CENTER/SLIDES: keep your enabled filter
-    return x.enabled !== false;
-  })
-
-      .sort(
-        (a, b) =>
-          Number(a.order ?? 0) - Number(b.order ?? 0) ||
-          String(a.sk ?? "").localeCompare(String(b.sk ?? ""))
-      );
-
-    // If bucket is configured, convert S3 public URLs into GET-presigned URLs
-    const items = await Promise.all(
-      filtered.map(async (x) => {
-        let urlStr = String(x.url || "");
-
-        // If your bucket is private, raw S3 url won't load in browser.
-        // Turn it into GET-presigned url when possible.
-        if (bucket) {
-          const key = (typeof x.s3Key === "string" && x.s3Key.trim())
-            ? x.s3Key.trim()
-            : keyFromS3PublicUrl(urlStr);
+    // Convert S3 URLs to presigned URLs if bucket is private
+    if (bucket) {
+      items = await Promise.all(
+        items.map(async (item) => {
+          let urlStr = String(item.url || "");
+          const key = keyFromS3PublicUrl(urlStr);
 
           if (key) {
             urlStr = await getSignedUrl(
@@ -113,24 +96,24 @@ const filtered = itemsRaw
               { expiresIn: 60 * 60 } // 1 hour
             );
           }
-        }
 
-        return {
-          pk: x.pk,
-          sk: x.sk,
-          url: urlStr,
-          mediaType: x.mediaType || "",
-          enabled: x.enabled !== false,
-          order: Number(x.order ?? 0),
-          category1: x.category1 ?? "",
-          category2: x.category2 ?? "",
-          description: x.description ?? "",
-          createdAt: x.createdAt ?? "",
-        };
-      })
-    );
+          return {
+            PK: item.PK,
+            url: urlStr,
+            section: item.section,
+            group: item.group || "",
+            title: item.title || "",
+            person: item.person || "",
+            date: item.date || "",
+            description: item.description || "",
+            active: item.active ?? true,
+            createdAt: item.createdAt || "",
+          };
+        })
+      );
+    }
 
-    return json({ ok: true, set, count: items.length, items });
+    return json({ ok: true, section, group, count: items.length, items });
   } catch (e: any) {
     return json({ error: "Server error", detail: e?.message || String(e) }, 500);
   }

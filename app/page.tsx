@@ -1,115 +1,72 @@
 // app/page.tsx
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 
-type SetKind = "CENTER" | "SLIDES" | "BG";
-
-type Slide = {
-  pk: SetKind;
-  sk: string;
+type MediaItem = {
+  PK: string;
   url: string;
-  enabled?: boolean;
-  order?: number;
-  createdAt?: string;
-
-  mediaType?: string; // e.g. "video/mp4", "image/jpeg"
-  category1?: string;
-  category2?: string;
+  section: string;
+  title: string;
+  group?: string;
+  person?: string;
+  date?: string;
   description?: string;
+  active?: boolean;
+  createdAt?: string;
 };
 
-type SlidesGetResponse = { ok: true; set: SetKind; items: Slide[] } | Slide[];
+type Section = 
+  | "Video Archives"
+  | "Single Videos-Songs"
+  | "National Anthems"
+  | "Photo Albums"
+  | "Live Channels"
+  | "Social Media Profiles"
+  | "Great-National-Songs-Videos"
+  | "In-Transition";
 
-function inferMediaTypeFromUrl(url: string): string {
-  const u = (url || "").toLowerCase().split("?")[0];
-  if (u.endsWith(".mp4") || u.endsWith(".m4v")) return "video/mp4";
-  if (u.endsWith(".webm")) return "video/webm";
-  if (u.endsWith(".mov")) return "video/quicktime";
-  if (u.endsWith(".jpg") || u.endsWith(".jpeg")) return "image/jpeg";
-  if (u.endsWith(".png")) return "image/png";
-  if (u.endsWith(".gif")) return "image/gif";
-  if (u.endsWith(".webp")) return "image/webp";
-  return "application/octet-stream";
+const SECTIONS: Section[] = [
+  "Video Archives",
+  "Single Videos-Songs",
+  "National Anthems",
+  "Photo Albums",
+  "Live Channels",
+  "Social Media Profiles",
+  "Great-National-Songs-Videos",
+  "In-Transition",
+];
+
+function isVideo(url: string): boolean {
+  const u = (url || "").toLowerCase();
+  return u.includes(".mp4") || u.includes("video");
 }
 
-function isVideo(item: Slide | { url: string; mediaType?: string } | string): boolean {
-  const mt =
-    typeof item === "string"
-      ? inferMediaTypeFromUrl(item)
-      : item.mediaType || inferMediaTypeFromUrl(item.url);
-  return mt.startsWith("video/");
+function isImage(url: string): boolean {
+  const u = (url || "").toLowerCase();
+  return u.includes(".jpg") || u.includes(".jpeg") || u.includes(".png") || u.includes(".webp");
 }
 
-async function fetchSlides(set: SetKind): Promise<Slide[]> {
-  // NOTE: this is USER UI (public). Admin uses /api/admin/*
-  const url = `/api/slides?set=${encodeURIComponent(set)}`;
-  console.log(`Fetching ${set} from:`, url);
+async function fetchItems(section: Section): Promise<MediaItem[]> {
+  const url = `/api/slides?section=${encodeURIComponent(section)}`;
   
-  const res = await fetch(url, {
-    cache: "no-store",
-  });
-  
-  console.log(`Response for ${set}:`, res.status, res.statusText);
+  const res = await fetch(url, { cache: "no-store" });
   
   if (!res.ok) {
-    const errorText = await res.text().catch(() => "");
-    throw new Error(`Failed to load slides for ${set} (HTTP ${res.status}): ${errorText}`);
+    throw new Error(`Failed to load items for ${section} (HTTP ${res.status})`);
   }
 
-  const data = (await res.json()) as SlidesGetResponse;
+  const data = await res.json();
+  const items = Array.isArray(data.items) ? data.items : [];
 
-  const items = Array.isArray(data)
-    ? data
-    : Array.isArray((data as any).items)
-      ? (data as any).items
-      : [];
-
-  // IMPORTANT FIX:
-  // - Always require url
-  // - Respect enabled for CENTER/SLIDES
-  // - DO NOT filter BG out just because enabled is false/missing (BG should still show)
-  const cleaned = (items || []).filter((x: Slide) => x?.url);
-
-  const filtered =
-    set === "BG" ? cleaned : cleaned.filter((x: Slide) => x.enabled !== false);
-
-  return filtered.sort(
-    (a, b) =>
-      Number(a.order ?? 0) - Number(b.order ?? 0) || String(a.sk).localeCompare(String(b.sk))
-  );
+  return items.filter((x: MediaItem) => x.url && x.active !== false);
 }
 
-// rotates through URLs every intervalMs (only if >1)
-function useRotator(urls: string[], intervalMs: number) {
-  const [idx, setIdx] = useState(0);
-
-  useEffect(() => {
-    setIdx(0);
-  }, [urls.join("|")]);
-
-  useEffect(() => {
-    if (!urls || urls.length <= 1) return;
-
-    const t = window.setInterval(() => {
-      setIdx((x) => (x + 1) % urls.length);
-    }, intervalMs);
-
-    return () => window.clearInterval(t);
-  }, [urls, intervalMs]);
-
-  return urls.length ? urls[idx % urls.length] : "";
-}
-
-// Hook to detect mobile
 function useIsMobile() {
   const [isMobile, setIsMobile] = useState(false);
 
   useEffect(() => {
-    const checkMobile = () => {
-      setIsMobile(window.innerWidth < 768);
-    };
-
+    const checkMobile = () => setIsMobile(window.innerWidth < 768);
     checkMobile();
     window.addEventListener("resize", checkMobile);
     return () => window.removeEventListener("resize", checkMobile);
@@ -119,174 +76,170 @@ function useIsMobile() {
 }
 
 export default function HomePage() {
-  // BACKGROUND: single active BG item (photo/video)
-  const [bgItem, setBgItem] = useState<Slide | null>(null);
+  const [selectedSection, setSelectedSection] = useState<Section>("Video Archives");
+  const [items, setItems] = useState<MediaItem[]>([]);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
-  // LEFT: SLIDES rotating every 10s
-  const [slideUrls, setSlideUrls] = useState<string[]>([]);
-
-  // RIGHT: CENTER videos play full length, rotate on ended or Next
-  const [centerItems, setCenterItems] = useState<Slide[]>([]);
-  const [centerIdx, setCenterIdx] = useState(0);
-
-  const [err, setErr] = useState("");
-
-  const centerVideoRef = useRef<HTMLVideoElement | null>(null);
   const isMobile = useIsMobile();
 
   useEffect(() => {
     let cancelled = false;
 
     (async () => {
+      setLoading(true);
+      setError("");
       try {
-        setErr("");
-        const [bg, slides, center] = await Promise.all([
-          fetchSlides("BG"),
-          fetchSlides("SLIDES"),
-          fetchSlides("CENTER"),
-        ]);
+        const data = await fetchItems(selectedSection);
         if (cancelled) return;
-
-        // BACKGROUND: choose ONE (first/lowest order).
-        setBgItem(bg.length ? bg[0] : null);
-
-        // LEFT SLIDES: rotate URLs
-        setSlideUrls(slides.map((x) => x.url));
-
-        // RIGHT CENTER: playlist
-        setCenterItems(center);
-        setCenterIdx(0);
+        setItems(data);
+        setCurrentIndex(0);
       } catch (e: any) {
         if (cancelled) return;
-        setErr(e?.message ?? String(e));
+        setError(e?.message ?? String(e));
+      } finally {
+        if (!cancelled) setLoading(false);
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [selectedSection]);
 
-  // LEFT rotates every 10 seconds
-  const leftSlide = useRotator(slideUrls, 10000);
+  const currentItem = items.length > 0 ? items[currentIndex % items.length] : null;
 
-  const currentCenter = useMemo(() => {
-    if (!centerItems.length) return null;
-    return centerItems[centerIdx % centerItems.length];
-  }, [centerItems, centerIdx]);
-
-  function stopCenterVideo() {
-    const v = centerVideoRef.current;
-    if (!v) return;
-    try {
-      v.pause();
-      v.currentTime = 0;
-    } catch {}
+  function nextItem() {
+    if (items.length === 0) return;
+    setCurrentIndex((x) => (x + 1) % items.length);
   }
 
-  function nextCenter() {
-    if (!centerItems.length) return;
-    stopCenterVideo();
-    setCenterIdx((x) => (x + 1) % centerItems.length);
+  function prevItem() {
+    if (items.length === 0) return;
+    setCurrentIndex((x) => (x - 1 + items.length) % items.length);
   }
 
-  // best-effort autoplay on center change
-  useEffect(() => {
-    if (!currentCenter) return;
-    if (!isVideo(currentCenter)) return;
-
-    const v = centerVideoRef.current;
-    if (!v) return;
-
-    v.currentTime = 0;
-    v.play().catch(() => {});
-  }, [currentCenter?.url]);
-
-  // Get responsive styles
   const styles = getStyles(isMobile);
 
   return (
     <div style={styles.page}>
-      {/* BACKGROUND LAYER (full screen) */}
-      <div style={styles.bgLayer} aria-hidden="true">
-        {bgItem ? (
-          isVideo(bgItem) ? (
-            <video
-              key={bgItem.url}
-              src={bgItem.url}
-              style={styles.bgMedia}
-              autoPlay
-              loop
-              muted
-              playsInline
-            />
-          ) : (
-            <img src={bgItem.url} alt="" style={styles.bgMedia} />
-          )
-        ) : null}
-
-        {/* dark overlay so text/panels readable */}
+      {/* Background */}
+      <div style={styles.bgLayer}>
+        {currentItem && (
+          <>
+            {isVideo(currentItem.url) ? (
+              <video
+                key={currentItem.url}
+                src={currentItem.url}
+                style={styles.bgMedia}
+                autoPlay
+                loop
+                muted
+                playsInline
+              />
+            ) : isImage(currentItem.url) ? (
+              <img src={currentItem.url} alt="" style={styles.bgMedia} />
+            ) : null}
+          </>
+        )}
         <div style={styles.bgOverlay} />
       </div>
 
-      {/* FOREGROUND CONTENT */}
+      {/* Content */}
       <div style={styles.shell}>
-        <div style={styles.header}>
+        <header style={styles.header}>
           <div style={styles.headerText}>
             <div style={styles.title}>رادیو الگو</div>
             <div style={styles.subtitle}>آوی تمدن ایرانی</div>
             <div style={styles.subsubtitle}>Echo of Iranian Civilization</div>
-            <div style={styles.subtitle}>به زودی</div>
           </div>
+        </header>
+
+        {/* Section Selector */}
+        <div style={styles.sectionSelector}>
+          <label style={styles.sectionLabel}>Browse by Section:</label>
+          <select
+            value={selectedSection}
+            onChange={(e) => setSelectedSection(e.target.value as Section)}
+            style={styles.sectionSelect}
+            disabled={loading}
+          >
+            {SECTIONS.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
         </div>
 
-        <div style={styles.grid}>
-          {/* LEFT: SLIDES */}
+        {/* Current Item Display */}
+        {loading ? (
           <div style={styles.panel}>
-            <div style={styles.panelHeader}></div>
-            <div style={styles.frame}>
-              {leftSlide ? (
-                <img src={leftSlide} alt="Slide" style={styles.media} />
-              ) : (
-                <div style={styles.empty}>هیچ اسلایدی ثبت نشده</div>
+            <div style={styles.loading}>Loading...</div>
+          </div>
+        ) : error ? (
+          <div style={styles.panel}>
+            <div style={styles.error}>⚠️ {error}</div>
+          </div>
+        ) : !currentItem ? (
+          <div style={styles.panel}>
+            <div style={styles.empty}>No items found in {selectedSection}</div>
+          </div>
+        ) : (
+          <div style={styles.panel}>
+            <div style={styles.itemInfo}>
+              <h2 style={styles.itemTitle}>{currentItem.title}</h2>
+              {currentItem.person && (
+                <div style={styles.itemMeta}>
+                  <span style={styles.metaLabel}>Person:</span> {currentItem.person}
+                </div>
+              )}
+              {currentItem.date && (
+                <div style={styles.itemMeta}>
+                  <span style={styles.metaLabel}>Date:</span> {currentItem.date}
+                </div>
+              )}
+              {currentItem.group && (
+                <div style={styles.itemMeta}>
+                  <span style={styles.metaLabel}>Category:</span> {currentItem.group}
+                </div>
+              )}
+              {currentItem.description && (
+                <div style={styles.itemDescription}>{currentItem.description}</div>
               )}
             </div>
-            <div style={styles.hint}>
-              {slideUrls.length > 1 ? `تعویض هر ۱۰ ثانیه` : `برای تعویض خودکار، حداقل ۲ اسلاید لازم است`}
-            </div>
-          </div>
 
-          {/* RIGHT: CENTER VIDEOS */}
-          <div style={styles.panel}>
-            <div style={styles.panelHeader}></div>
             <div style={styles.frame}>
-              {!currentCenter ? (
-                <div style={styles.empty}>هیچ ویدیویی ثبت نشده</div>
-              ) : isVideo(currentCenter) ? (
+              {isVideo(currentItem.url) ? (
                 <video
-                  key={`center-${centerIdx}-${currentCenter.url}`}
-                  ref={centerVideoRef}
-                  src={currentCenter.url}
+                  key={currentItem.url}
+                  src={currentItem.url}
                   style={styles.media}
+                  controls
                   autoPlay
                   playsInline
-                  controls
-                  onEnded={nextCenter}
                 />
+              ) : isImage(currentItem.url) ? (
+                <img src={currentItem.url} alt={currentItem.title} style={styles.media} />
               ) : (
-                <img src={currentCenter.url} alt="Center" style={styles.media} />
+                <div style={styles.empty}>Unsupported media type</div>
               )}
             </div>
 
-            <div style={styles.actionsRow}>
-              <button style={styles.btn} onClick={nextCenter} disabled={centerItems.length <= 1}>
-                بعدی
+            <div style={styles.controls}>
+              <button style={styles.btn} onClick={prevItem} disabled={items.length <= 1}>
+                ← Previous
+              </button>
+              <div style={styles.counter}>
+                {currentIndex + 1} / {items.length}
+              </div>
+              <button style={styles.btn} onClick={nextItem} disabled={items.length <= 1}>
+                Next →
               </button>
             </div>
           </div>
-        </div>
-
-        {err ? <div style={styles.error}>⚠️ {err}</div> : null}
+        )}
       </div>
     </div>
   );
@@ -301,8 +254,6 @@ function getStyles(isMobile: boolean): Record<string, React.CSSProperties> {
       overflow: "hidden",
       fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
     },
-
-    // BACKGROUND ENGINE
     bgLayer: {
       position: "absolute",
       inset: 0,
@@ -313,44 +264,34 @@ function getStyles(isMobile: boolean): Record<string, React.CSSProperties> {
       inset: 0,
       width: "100%",
       height: "100%",
-      objectFit: "contain",
-      background: "black",
-      transform: isMobile ? "scale(1)" : "scale(0.95)",
+      objectFit: "cover",
+      filter: "blur(20px) brightness(0.4)",
     },
     bgOverlay: {
       position: "absolute",
       inset: 0,
-      background:
-        "linear-gradient(180deg, rgba(0,0,0,0.45) 0%, rgba(0,0,0,0.65) 55%, rgba(0,0,0,0.82) 100%)",
+      background: "linear-gradient(180deg, rgba(0,0,0,0.5) 0%, rgba(0,0,0,0.7) 100%)",
     },
-
-    // FOREGROUND
     shell: {
       position: "relative",
       zIndex: 2,
-      maxWidth: isMobile ? "100%" : 1400,
+      maxWidth: isMobile ? "100%" : 1000,
       margin: "0 auto",
-      padding: isMobile ? "16px 12px 20px" : "22px 16px 26px",
+      padding: isMobile ? "16px 12px" : "24px 20px",
     },
-
-    // HEADER: right-justified + slightly lower
     header: {
       display: "flex",
       justifyContent: "flex-end",
-      marginBottom: isMobile ? 12 : 18,
-      paddingTop: isMobile ? 8 : 14,
+      marginBottom: isMobile ? 20 : 30,
     },
     headerText: {
       textAlign: "right",
       display: "flex",
       flexDirection: "column",
-      alignItems: "flex-end",
       gap: isMobile ? 4 : 6,
-      marginTop: isMobile ? 4 : 8,
     },
-
     title: {
-      fontSize: isMobile ? 32 : 56,
+      fontSize: isMobile ? 36 : 56,
       fontWeight: 900,
       lineHeight: 1.05,
     },
@@ -364,34 +305,62 @@ function getStyles(isMobile: boolean): Record<string, React.CSSProperties> {
       fontWeight: 800,
       opacity: 0.9,
     },
-
-    // GRID: stacks on mobile, side-by-side on desktop
-    grid: {
-      display: "grid",
-      gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr",
-      columnGap: isMobile ? 0 : 192,
-      rowGap: isMobile ? 20 : 16,
-      alignItems: "start",
-      marginTop: isMobile ? 24 : 150,
-      paddingInline: isMobile ? 0 : 24,
+    sectionSelector: {
+      marginBottom: isMobile ? 20 : 30,
+      padding: isMobile ? 16 : 20,
+      borderRadius: isMobile ? 12 : 18,
+      border: "1px solid rgba(255,255,255,0.18)",
+      background: "rgba(0,0,0,0.3)",
+      backdropFilter: "blur(10px)",
     },
-
+    sectionLabel: {
+      display: "block",
+      fontWeight: 900,
+      fontSize: isMobile ? 14 : 16,
+      marginBottom: 10,
+      opacity: 0.9,
+    },
+    sectionSelect: {
+      width: "100%",
+      padding: isMobile ? "12px 14px" : "14px 16px",
+      borderRadius: isMobile ? 10 : 12,
+      border: "1px solid rgba(255,255,255,0.3)",
+      background: "rgba(255,255,255,0.15)",
+      color: "white",
+      fontSize: isMobile ? 16 : 18,
+      fontWeight: 800,
+      cursor: "pointer",
+    },
     panel: {
       borderRadius: isMobile ? 12 : 18,
       border: "1px solid rgba(255,255,255,0.18)",
-      background: "rgba(0,0,0,0.22)",
+      background: "rgba(0,0,0,0.25)",
       backdropFilter: "blur(10px)",
-      padding: isMobile ? 10 : 14,
-      minHeight: 0,
+      padding: isMobile ? 16 : 20,
     },
-    panelHeader: {
+    itemInfo: {
+      marginBottom: isMobile ? 16 : 20,
+    },
+    itemTitle: {
+      fontSize: isMobile ? 20 : 26,
       fontWeight: 900,
-      opacity: 0.9,
-      marginBottom: isMobile ? 8 : 10,
-      textAlign: "center",
-      minHeight: 0,
+      marginBottom: 12,
     },
-
+    itemMeta: {
+      fontSize: isMobile ? 13 : 14,
+      opacity: 0.85,
+      marginBottom: 6,
+    },
+    metaLabel: {
+      fontWeight: 900,
+      opacity: 0.7,
+    },
+    itemDescription: {
+      fontSize: isMobile ? 14 : 15,
+      opacity: 0.9,
+      marginTop: 10,
+      lineHeight: 1.5,
+    },
     frame: {
       width: "100%",
       aspectRatio: "16 / 9",
@@ -399,8 +368,8 @@ function getStyles(isMobile: boolean): Record<string, React.CSSProperties> {
       overflow: "hidden",
       border: "1px solid rgba(255,255,255,0.18)",
       background: "rgba(0,0,0,0.55)",
+      marginBottom: isMobile ? 16 : 20,
     },
-
     media: {
       width: "100%",
       height: "100%",
@@ -408,52 +377,48 @@ function getStyles(isMobile: boolean): Record<string, React.CSSProperties> {
       background: "black",
       display: "block",
     },
-
-    empty: {
-      height: "100%",
-      display: "grid",
-      placeItems: "center",
-      opacity: 0.85,
-      fontWeight: 800,
-      fontSize: isMobile ? 14 : 16,
-      padding: isMobile ? "0 12px" : 0,
-    },
-
-    actionsRow: {
+    controls: {
       display: "flex",
-      justifyContent: "center",
-      paddingTop: isMobile ? 8 : 10,
+      justifyContent: "space-between",
+      alignItems: "center",
+      gap: 12,
     },
     btn: {
-      appearance: "none",
+      padding: isMobile ? "12px 20px" : "12px 24px",
+      borderRadius: isMobile ? 10 : 12,
       border: "1px solid rgba(255,255,255,0.25)",
       background: "rgba(255,255,255,0.10)",
       color: "white",
-      padding: isMobile ? "12px 20px" : "10px 16px",
-      borderRadius: isMobile ? 10 : 12,
       cursor: "pointer",
       fontWeight: 900,
-      fontSize: isMobile ? 16 : 14,
-      minHeight: 44, // Better touch target for mobile
+      fontSize: isMobile ? 14 : 16,
+      minHeight: 44,
     },
-
-    hint: {
-      marginTop: isMobile ? 8 : 10,
+    counter: {
+      fontWeight: 900,
+      fontSize: isMobile ? 14 : 16,
+      opacity: 0.8,
+    },
+    loading: {
       textAlign: "center",
-      opacity: 0.75,
-      fontSize: isMobile ? 11 : 12,
-      fontWeight: 700,
-      padding: isMobile ? "0 8px" : 0,
-    },
-
-    error: {
-      marginTop: 12,
-      padding: isMobile ? "8px 10px" : "10px 12px",
-      borderRadius: isMobile ? 10 : 12,
-      background: "rgba(176,0,32,0.25)",
-      border: "1px solid rgba(255,255,255,0.18)",
+      fontSize: isMobile ? 16 : 18,
       fontWeight: 800,
-      fontSize: isMobile ? 13 : 14,
+      padding: isMobile ? 40 : 60,
+      opacity: 0.85,
+    },
+    error: {
+      textAlign: "center",
+      fontSize: isMobile ? 14 : 16,
+      fontWeight: 800,
+      padding: isMobile ? 30 : 40,
+      color: "#ff6b6b",
+    },
+    empty: {
+      textAlign: "center",
+      fontSize: isMobile ? 14 : 16,
+      fontWeight: 800,
+      padding: isMobile ? 30 : 40,
+      opacity: 0.75,
     },
   };
 }
