@@ -1,3 +1,4 @@
+﻿// Original: app\admin\page.tsx
 // app/admin/page.tsx
 "use client";
 
@@ -130,7 +131,7 @@ export default function AdminPage() {
     if (!t) {
       setAuthorized(false);
       setAuthError("Token is required.");
-      pushLog("❌ Missing token");
+      pushLog("âŒ Missing token");
       return;
     }
 
@@ -154,13 +155,13 @@ export default function AdminPage() {
         (body && typeof body === "object" && (body.detail || body.error || body.message)) ||
         `Invalid admin token (HTTP ${out.status})`;
       setAuthError(String(msg));
-      pushLog(`❌ ${msg}`);
+      pushLog(`âŒ ${msg}`);
       return;
     }
 
     setAuthorized(true);
     setAuthError("");
-    pushLog("✅ Token accepted");
+    pushLog("âœ… Token accepted");
     await refreshAll();
   }
 
@@ -196,7 +197,7 @@ export default function AdminPage() {
       setBgItems(b);
       pushLog(`Loaded: CENTER=${c.length}, SLIDES=${s.length}, BG=${b.length}`);
     } catch (e: any) {
-      pushLog(`❌ ${e?.message ?? String(e)}`);
+      pushLog(`âŒ ${e?.message ?? String(e)}`);
     } finally {
       setBusy(false);
     }
@@ -209,7 +210,7 @@ export default function AdminPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [section]);
 
-  const headerTitle = `${section} → ${group}`;
+  const headerTitle = `${section} â†’ ${group}`;
 
   const filteredItems: MediaItem[] = useMemo(() => {
     let base: MediaItem[] = [];
@@ -280,20 +281,20 @@ export default function AdminPage() {
 
   async function uploadMovies() {
     if (!authorized) {
-      pushLog("❌ Not authorized");
+      pushLog("âŒ Not authorized");
       return;
     }
     if (section === "Old") {
-      pushLog("❌ Choose a real SECTION (not Old) for uploading movies");
+      pushLog("âŒ Choose a real SECTION (not Old) for uploading movies");
       return;
     }
     if (!uploadFiles.length) {
-      pushLog("❌ Select at least one file");
+      pushLog("âŒ Select at least one file");
       return;
     }
     const bad = uploadFiles.find((f) => !isMp4(f));
     if (bad) {
-      pushLog(`❌ Only .mp4 allowed. Bad file: ${bad.name}`);
+      pushLog(`âŒ Only .mp4 allowed. Bad file: ${bad.name}`);
       return;
     }
 
@@ -321,13 +322,13 @@ export default function AdminPage() {
           description: uploadDesc.trim(),
         });
 
-        pushLog(`✅ Uploaded: ${f.name}`);
+        pushLog(`âœ… Uploaded: ${f.name}`);
       }
 
       clearUpload();
       await refreshAll();
     } catch (e: any) {
-      pushLog(`❌ Upload failed: ${e?.message ?? String(e)}`);
+      pushLog(`âŒ Upload failed: ${e?.message ?? String(e)}`);
     } finally {
       setBusy(false);
     }
@@ -335,7 +336,7 @@ export default function AdminPage() {
 
   async function deleteItem(it: MediaItem) {
     if (!authorized) {
-      pushLog("❌ Not authorized");
+      pushLog("âŒ Not authorized");
       return;
     }
 
@@ -352,10 +353,10 @@ export default function AdminPage() {
         throw new Error(`Delete failed (HTTP ${out.status}) ${msg}`);
       }
 
-      pushLog(`🗑️ Deleted: ${it.pk} / ${it.sk}`);
+      pushLog(`ðŸ—‘ï¸ Deleted: ${it.pk} / ${it.sk}`);
       await refreshAll();
     } catch (e: any) {
-      pushLog(`❌ ${e?.message ?? String(e)}`);
+      pushLog(`âŒ ${e?.message ?? String(e)}`);
     } finally {
       setBusy(false);
     }
@@ -373,7 +374,7 @@ export default function AdminPage() {
 
   async function saveDescription(it: MediaItem) {
     if (!authorized) {
-      pushLog("❌ Not authorized");
+      pushLog("âŒ Not authorized");
       return;
     }
 
@@ -395,12 +396,12 @@ export default function AdminPage() {
         throw new Error(`Update failed (HTTP ${out.status}) ${msg}`);
       }
 
-      pushLog(`✏️ Updated description: ${it.sk}`);
+      pushLog(`âœï¸ Updated description: ${it.sk}`);
       setEditingDescSk("");
       setEditingDescValue("");
       await refreshAll();
     } catch (e: any) {
-      pushLog(`❌ ${e?.message ?? String(e)}`);
+      pushLog(`âŒ ${e?.message ?? String(e)}`);
     } finally {
       setBusy(false);
     }
@@ -472,7 +473,7 @@ export default function AdminPage() {
             </button>
           </div>
 
-          {authError ? <div style={styles.authError}>⚠️ {authError}</div> : null}
+          {authError ? <div style={styles.authError}>âš ï¸ {authError}</div> : null}
         </section>
 
         {/* Cloudy overlay + blur until authorized */}
@@ -518,7 +519,7 @@ export default function AdminPage() {
                   <input
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
-                    placeholder="key / URL / description…"
+                    placeholder="key / URL / descriptionâ€¦"
                     style={styles.filterInput}
                     disabled={busy || !authorized}
                   />
@@ -577,7 +578,7 @@ export default function AdminPage() {
               </div>
 
               <div style={styles.note}>
-                Uploading is for <b>mp4</b> movies only. (Old → BG/SLIDES/CENTER is browse-only here.)
+                Uploading is for <b>mp4</b> movies only. (Old â†’ BG/SLIDES/CENTER is browse-only here.)
               </div>
             </section>
 
@@ -586,7 +587,7 @@ export default function AdminPage() {
               <div style={styles.cardHeader}>
                 <div>
                   <div style={styles.cardTitle}>
-                    Uploaded items in {section} → {group}
+                    Uploaded items in {section} â†’ {group}
                   </div>
                   <div style={styles.cardHint}>
                     Videos are rendered inline. Click "Edit" to update description, or "Delete" to remove.
@@ -645,7 +646,7 @@ export default function AdminPage() {
                     <div style={styles.itemMeta}>
                       <div style={styles.itemLine}>
                         <span style={styles.dim}>Category:</span>{" "}
-                        {[it.category1, it.category2].filter(Boolean).join(" · ") || "—"}
+                        {[it.category1, it.category2].filter(Boolean).join(" Â· ") || "â€”"}
                       </div>
 
                       {/* Description editing */}
