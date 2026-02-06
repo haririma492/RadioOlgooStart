@@ -1,4 +1,9 @@
+// Original: app\api\slides\route.ts
 // app/api/slides/route.ts
+//
+// PUBLIC API: Returns media items filtered by section/group.
+// Updated for generic MEDIA#<ts>#<random> PK system.
+//
 import { NextResponse } from "next/server";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, ScanCommand } from "@aws-sdk/lib-dynamodb";
@@ -66,9 +71,9 @@ export async function GET(req: Request) {
     const result = await ddb.send(new ScanCommand({ TableName }));
     const allItems = (result.Items || []) as any[];
 
-    // Filter out counters and apply section/group filters
+    // Filter: only MEDIA# items with matching section/group
     let items = allItems.filter((x) => {
-      if (!x.PK || x.PK.startsWith("COUNTER#")) return false;
+      if (!x.PK || !String(x.PK).startsWith("MEDIA#")) return false;
       if (!x.url || !x.section) return false;
       if (x.section !== section) return false;
       if (group && x.group !== group) return false;

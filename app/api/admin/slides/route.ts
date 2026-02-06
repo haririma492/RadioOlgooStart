@@ -1,13 +1,17 @@
+// Original: app\api\admin\slides\route.ts
 // app/api/admin/slides/route.ts
+//
+// GENERIC PK SYSTEM: PK = MEDIA#<timestamp>#<random14>
+// Section/group are just attributes — items can move freely between them.
+//
 import { NextResponse } from "next/server";
+import { randomUUID } from "crypto";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import {
   DynamoDBDocumentClient,
   PutCommand,
-  QueryCommand,
   DeleteCommand,
   UpdateCommand,
-  GetCommand,
   ScanCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
@@ -16,17 +20,8 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// Section to PK prefix mapping
-const SECTION_PREFIX: Record<string, string> = {
-  "Video Archives": "VIDEOARCHIVE",
-  "Single Videos-Songs": "SINGLEVIDEO",
-  "National Anthems": "ANTHEM",
-  "Photo Albums": "PHOTOALBUM",
-  "Live Channels": "LIVECHANNEL",
-  "Social Media Profiles": "SOCIAL",
-  "Great-National-Songs-Videos": "GREATSONG",
-  "In-Transition": "TRANSITION",
-};
+// Sections are fully dynamic — no hardcoded validation list.
+// Any non-empty string is accepted as a valid section name.
 
 function requireAdmin(req: Request) {
   const incoming = (req.headers.get("x-admin-token") || "").trim();
@@ -49,6 +44,7 @@ function jsonErr(error: string, status = 400, detail?: any) {
   return jsonOk({ error, ...(detail ? { detail: String(detail) } : {}) }, status);
 }
 
+// ── DynamoDB ───────────────────────────────────────────────────────────
 const ddb = DynamoDBDocumentClient.from(
   new DynamoDBClient({
     region: process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || "ca-central-1",
@@ -79,40 +75,35 @@ function tableName() {
   return v;
 }
 
-/**
- * Get next sequence number for a section using atomic counter
- */
-async function getNextId(prefix: string): Promise<number> {
-  const TableName = tableName();
-  const counterKey = `COUNTER#${prefix}`;
-
-  const result = await ddb.send(
-    new UpdateCommand({
-      TableName,
-      Key: { PK: counterKey },
-      UpdateExpression: "SET nextId = if_not_exists(nextId, :start) + :inc",
-      ExpressionAttributeValues: {
-        ":start": 0,
-        ":inc": 1,
-      },
-      ReturnValues: "UPDATED_NEW",
-    })
-  );
-
-  return result.Attributes?.nextId || 1;
+// ── Generic PK generator ───────────────────────────────────────────────
+// Format: MEDIA#<timestamp>#<random14>
+// Example: MEDIA#1738704123456#a1b2c3d4e5f6ab
+function generatePK(): string {
+  const ts = Date.now();
+  const rand = randomUUID().replace(/-/g, "").slice(0, 14);
+  return `MEDIA#${ts}#${rand}`;
 }
 
-/**
- * Generate PK like VIDEOARCHIVE#0001
- */
-async function generatePK(section: string): Promise<string> {
-  const prefix = SECTION_PREFIX[section];
-  if (!prefix) throw new Error(`Unknown section: ${section}`);
+// ── Helper: presign S3 URLs in items ───────────────────────────────────
+async function presignItems(items: any[]): Promise<any[]> {
+  if (!bucket) return items;
 
-  const nextId = await getNextId(prefix);
-  const paddedId = String(nextId).padStart(4, "0");
+  return Promise.all(
+    items.map(async (item) => {
+      let urlStr = String(item.url || "");
+      const key = keyFromS3PublicUrl(urlStr);
 
-  return `${prefix}#${paddedId}`;
+      if (key) {
+        urlStr = await getSignedUrl(
+          s3,
+          new GetObjectCommand({ Bucket: bucket, Key: key }),
+          { expiresIn: 60 * 60 } // 1 hour
+        );
+      }
+
+      return { ...item, url: urlStr };
+    })
+  );
 }
 
 /**
@@ -131,68 +122,38 @@ export async function GET(req: Request) {
     const sectionFilter = url.searchParams.get("section");
     const groupFilter = url.searchParams.get("group");
 
-    // If no filters, scan entire table (excluding counters)
-    if (!sectionFilter) {
-      const result = await ddb.send(new ScanCommand({ TableName }));
-      let items = (result.Items || []).filter((item) => !item.PK.startsWith("COUNTER#"));
-      
-      // Convert S3 URLs to presigned URLs
-      if (bucket) {
-        items = await Promise.all(
-          items.map(async (item) => {
-            let urlStr = String(item.url || "");
-            const key = keyFromS3PublicUrl(urlStr);
-            
-            if (key) {
-              urlStr = await getSignedUrl(
-                s3,
-                new GetObjectCommand({ Bucket: bucket, Key: key }),
-                { expiresIn: 60 * 60 } // 1 hour
-              );
-            }
-            
-            return { ...item, url: urlStr };
-          })
-        );
-      }
-      
-      return jsonOk({ ok: true, count: items.length, items });
-    }
-
-    // With section filter, we need to scan with filter expression
-    // because our PK is now VIDEOARCHIVE#0001 format, not a direct partition key
     const result = await ddb.send(new ScanCommand({ TableName }));
-    let items = (result.Items || []).filter((item) => !item.PK.startsWith("COUNTER#"));
+    let items = (result.Items || []).filter(
+      (item) => item.PK && String(item.PK).startsWith("MEDIA#")
+    );
 
     // Filter by section
-    items = items.filter((item) => item.section === sectionFilter);
+    if (sectionFilter) {
+      items = items.filter((item) => item.section === sectionFilter);
+    }
 
-    // Filter by group if provided
+    // Filter by group
     if (groupFilter) {
       items = items.filter((item) => item.group === groupFilter);
     }
 
-    // Convert S3 URLs to presigned URLs
-    if (bucket) {
-      items = await Promise.all(
-        items.map(async (item) => {
-          let urlStr = String(item.url || "");
-          const key = keyFromS3PublicUrl(urlStr);
-          
-          if (key) {
-            urlStr = await getSignedUrl(
-              s3,
-              new GetObjectCommand({ Bucket: bucket, Key: key }),
-              { expiresIn: 60 * 60 } // 1 hour
-            );
-          }
-          
-          return { ...item, url: urlStr };
-        })
-      );
-    }
+    // Sort by createdAt descending
+    items.sort((a, b) => {
+      const da = a.createdAt || "";
+      const db = b.createdAt || "";
+      return db.localeCompare(da);
+    });
 
-    return jsonOk({ ok: true, section: sectionFilter, group: groupFilter, count: items.length, items });
+    // Presign S3 URLs
+    items = await presignItems(items);
+
+    return jsonOk({
+      ok: true,
+      section: sectionFilter,
+      group: groupFilter,
+      count: items.length,
+      items,
+    });
   } catch (e: any) {
     return jsonErr("Load failed", 500, e?.message ?? e);
   }
@@ -211,8 +172,8 @@ export async function POST(req: Request) {
     if (!body) return jsonErr("Bad JSON body", 400);
 
     const section = String(body.section || "").trim();
-    if (!section || !SECTION_PREFIX[section]) {
-      return jsonErr(`Invalid section. Must be one of: ${Object.keys(SECTION_PREFIX).join(", ")}`, 400);
+    if (!section) {
+      return jsonErr("Missing section", 400);
     }
 
     const url = String(body.url || "").trim();
@@ -221,8 +182,8 @@ export async function POST(req: Request) {
     const title = String(body.title || "").trim();
     if (!title) return jsonErr("Missing title", 400);
 
-    // Generate PK with atomic counter
-    const PK = await generatePK(section);
+    // Generate generic PK — not tied to any section
+    const PK = generatePK();
 
     const item: any = {
       PK,
@@ -249,7 +210,8 @@ export async function POST(req: Request) {
 }
 
 /**
- * PATCH - Update item (description, title, etc.)
+ * PATCH - Update item (title, description, section, group, etc.)
+ * Now supports moving items between sections and groups!
  */
 export async function PATCH(req: Request) {
   const auth = requireAdmin(req);
@@ -266,6 +228,7 @@ export async function PATCH(req: Request) {
     // Build update expression dynamically
     const updates: string[] = ["updatedAt = :upd"];
     const values: any = { ":upd": new Date().toISOString() };
+    const names: Record<string, string> = {};
 
     if (body.title !== undefined) {
       updates.push("title = :title");
@@ -282,14 +245,34 @@ export async function PATCH(req: Request) {
     if (body.date !== undefined) {
       updates.push("#dt = :date");
       values[":date"] = String(body.date).trim();
+      names["#dt"] = "date";
     }
     if (body.active !== undefined) {
       updates.push("active = :active");
       values[":active"] = Boolean(body.active);
     }
 
+    // ── NEW: Allow moving between sections ─────────────────────────────
+    if (body.section !== undefined) {
+      const newSection = String(body.section).trim();
+      if (!newSection) {
+        return jsonErr("Section cannot be empty", 400);
+      }
+      updates.push("#sec = :section");
+      values[":section"] = newSection;
+      names["#sec"] = "section";
+    }
+
+    // ── NEW: Allow moving between groups ───────────────────────────────
+    if (body.group !== undefined) {
+      updates.push("#grp = :group");
+      values[":group"] = String(body.group).trim();
+      names["#grp"] = "group";
+    }
+
     const updateExpression = `SET ${updates.join(", ")}`;
-    const expressionAttributeNames = body.date !== undefined ? { "#dt": "date" } : undefined;
+    const expressionAttributeNames =
+      Object.keys(names).length > 0 ? names : undefined;
 
     await ddb.send(
       new UpdateCommand({
@@ -297,7 +280,9 @@ export async function PATCH(req: Request) {
         Key: { PK },
         UpdateExpression: updateExpression,
         ExpressionAttributeValues: values,
-        ...(expressionAttributeNames && { ExpressionAttributeNames: expressionAttributeNames }),
+        ...(expressionAttributeNames && {
+          ExpressionAttributeNames: expressionAttributeNames,
+        }),
       })
     );
 

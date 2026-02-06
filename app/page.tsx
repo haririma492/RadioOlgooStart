@@ -1,7 +1,8 @@
-// app/page.tsx
+// Original: app\admin\page.tsx
+// app/admin/page.tsx
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
 type MediaItem = {
   PK: string;
@@ -16,26 +17,27 @@ type MediaItem = {
   createdAt?: string;
 };
 
-type Section = 
-  | "Video Archives"
-  | "Single Videos-Songs"
-  | "National Anthems"
-  | "Photo Albums"
-  | "Live Channels"
-  | "Social Media Profiles"
-  | "Great-National-Songs-Videos"
-  | "In-Transition";
+type ItemsGetResponse = { ok: true; items: MediaItem[]; count?: number } | { error: string };
 
-const SECTIONS: Section[] = [
-  "Video Archives",
-  "Single Videos-Songs",
-  "National Anthems",
-  "Photo Albums",
-  "Live Channels",
-  "Social Media Profiles",
-  "Great-National-Songs-Videos",
-  "In-Transition",
-];
+function nowTime() {
+  return new Date().toLocaleTimeString([], { hour12: true });
+}
+
+// Section to Groups mapping
+const SECTION_GROUPS: Record<string, string[]> = {
+  "Video Archives": ["Conference", "Interview", "Workshop", "Lecture", "Panel Discussion"],
+  "Single Videos-Songs": ["Pop", "Classical", "Jazz", "Rock", "Traditional", "Folk"],
+  "National Anthems": ["Iran", "Canada", "USA", "France", "Germany", "Other"],
+  "Photo Albums": [],
+  "Live Channels": ["News", "Music", "Entertainment", "Sports"],
+  "Social Media Profiles": ["X", "YouTube", "Instagram", "Facebook", "TikTok"],
+  "Great-National-Songs-Videos": ["Patriotic", "Historical", "Contemporary"],
+  "In-Transition": ["Pending", "Review", "Archive"],
+};
+
+type Section = keyof typeof SECTION_GROUPS;
+
+const ALL_SECTIONS = Object.keys(SECTION_GROUPS) as Section[];
 
 function isVideo(url: string): boolean {
   const u = (url || "").toLowerCase();
@@ -47,378 +49,1067 @@ function isImage(url: string): boolean {
   return u.includes(".jpg") || u.includes(".jpeg") || u.includes(".png") || u.includes(".webp");
 }
 
-async function fetchItems(section: Section): Promise<MediaItem[]> {
-  const url = `/api/slides?section=${encodeURIComponent(section)}`;
-  
-  const res = await fetch(url, { cache: "no-store" });
-  
-  if (!res.ok) {
-    throw new Error(`Failed to load items for ${section} (HTTP ${res.status})`);
-  }
+export default function AdminPage() {
+  const [token, setToken] = useState<string>("");
+  const [authorized, setAuthorized] = useState<boolean>(false);
+  const [authError, setAuthError] = useState<string>("");
 
-  const data = await res.json();
-  const items = Array.isArray(data.items) ? data.items : [];
+  const [busy, setBusy] = useState<boolean>(false);
+  const [log, setLog] = useState<string[]>([]);
 
-  return items.filter((x: MediaItem) => x.url && x.active !== false);
-}
+  // Filters
+  const [section, setSection] = useState<Section>("Video Archives");
+  const [group, setGroup] = useState<string>("");
+  const [search, setSearch] = useState<string>("");
 
-function useIsMobile() {
-  const [isMobile, setIsMobile] = useState(false);
+  // Upload fields
+  const [uploadFiles, setUploadFiles] = useState<File[]>([]);
+  const [uploadTitle, setUploadTitle] = useState<string>("");
+  const [uploadPerson, setUploadPerson] = useState<string>("");
+  const [uploadDate, setUploadDate] = useState<string>("");
+  const [uploadDescription, setUploadDescription] = useState<string>("");
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Data
+  const [items, setItems] = useState<MediaItem[]>([]);
+
+  // Editing state — now includes section and group
+  const [editingPK, setEditingPK] = useState<string>("");
+  const [editingFields, setEditingFields] = useState<Partial<MediaItem>>({});
 
   useEffect(() => {
-    const checkMobile = () => setIsMobile(window.innerWidth < 768);
-    checkMobile();
-    window.addEventListener("resize", checkMobile);
-    return () => window.removeEventListener("resize", checkMobile);
+    setToken("");
+    setAuthorized(false);
+    setAuthError("");
   }, []);
 
-  return isMobile;
-}
+  function pushLog(line: string) {
+    setLog((prev) => [`${nowTime()}  ${line}`, ...prev].slice(0, 400));
+  }
 
-export default function HomePage() {
-  const [selectedSection, setSelectedSection] = useState<Section>("Video Archives");
-  const [items, setItems] = useState<MediaItem[]>([]);
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  async function apiJson(url: string, init?: RequestInit) {
+    const res = await fetch(url, init);
+    const text = await res.text();
+    let data: any = null;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {}
+    return { ok: res.ok, status: res.status, text, data };
+  }
 
-  const isMobile = useIsMobile();
+  function clearUpload() {
+    setUploadFiles([]);
+    setUploadTitle("");
+    setUploadPerson("");
+    setUploadDate("");
+    setUploadDescription("");
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  function guessContentType(file: File) {
+    if (file.type) return file.type;
+    const name = file.name.toLowerCase();
+    if (name.endsWith(".mp4")) return "video/mp4";
+    if (name.endsWith(".jpg") || name.endsWith(".jpeg")) return "image/jpeg";
+    if (name.endsWith(".png")) return "image/png";
+    if (name.endsWith(".webp")) return "image/webp";
+    return "application/octet-stream";
+  }
+
+  async function verifyToken() {
+    const t = token.trim();
+    setAuthError("");
+
+    if (!t) {
+      setAuthorized(false);
+      setAuthError("Token is required.");
+      pushLog("\u274C Missing token");
+      return;
+    }
+
+    const out = await apiJson("/api/admin/validate", {
+      method: "POST",
+      headers: { "x-admin-token": t },
+      cache: "no-store",
+    });
+
+    const body = out.data;
+    const bodyOk = body && typeof body === "object" && body.ok === true && !body.error;
+
+    if (!out.ok || !bodyOk) {
+      setAuthorized(false);
+      const msg = (body && (body.detail || body.error || body.message)) || `Invalid token (HTTP ${out.status})`;
+      setAuthError(String(msg));
+      pushLog(`\u274C ${msg}`);
+      return;
+    }
+
+    setAuthorized(true);
+    setAuthError("");
+    pushLog("\u2705 Token accepted");
+    await refreshAll();
+  }
+
+  async function refreshAll() {
+    const t = token.trim();
+    if (!t) return;
+
+    setBusy(true);
+    try {
+      const out = await apiJson(`/api/admin/slides?section=${encodeURIComponent(section)}${group ? `&group=${encodeURIComponent(group)}` : ""}`, {
+        method: "GET",
+        headers: { "x-admin-token": t },
+        cache: "no-store",
+      });
+
+      if (!out.ok) {
+        throw new Error(`Load failed (HTTP ${out.status})`);
+      }
+
+      const data = out.data as ItemsGetResponse;
+      if ((data as any).error) {
+        throw new Error((data as any).error);
+      }
+
+      const loadedItems = (data as any).items || [];
+      setItems(loadedItems);
+      pushLog(`Loaded: ${loadedItems.length} items`);
+    } catch (e: any) {
+      pushLog(`\u274C ${e?.message ?? String(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const groupOptions = useMemo(() => SECTION_GROUPS[section] || [], [section]);
 
   useEffect(() => {
-    let cancelled = false;
+    setGroup(groupOptions[0] || "");
+  }, [section]);
 
-    (async () => {
-      setLoading(true);
-      setError("");
-      try {
-        const data = await fetchItems(selectedSection);
-        if (cancelled) return;
-        setItems(data);
-        setCurrentIndex(0);
-      } catch (e: any) {
-        if (cancelled) return;
-        setError(e?.message ?? String(e));
-      } finally {
-        if (!cancelled) setLoading(false);
+  // ── Auto-refresh when section or group filter changes ────────────────
+  // Debounced: when section changes it also resets group, so we wait
+  // briefly to avoid a double-fetch.
+  useEffect(() => {
+    if (!authorized || !token.trim()) return;
+
+    const timer = setTimeout(() => {
+      refreshAll();
+    }, 150);
+
+    return () => clearTimeout(timer);
+  }, [section, group]);
+
+  const filteredItems: MediaItem[] = useMemo(() => {
+    let result = items;
+
+    // ── Client-side section/group filter (safety net) ──────────────────
+    // The API already filters server-side, but between dropdown changes
+    // and the next API response, stale items may be in state.
+    // This ensures the UI NEVER shows items from the wrong section/group.
+    if (section) {
+      result = result.filter((it) => it.section === section);
+    }
+    if (group) {
+      result = result.filter((it) => it.group === group);
+    }
+
+    // Text search
+    const q = search.trim().toLowerCase();
+    if (q) {
+      result = result.filter((it) => {
+        const hay = [it.PK, it.url, it.title, it.description, it.person]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        return hay.includes(q);
+      });
+    }
+
+    return result;
+  }, [items, search, section, group]);
+
+  function onPickUploadFiles(e: React.ChangeEvent<HTMLInputElement>) {
+    const list = Array.from(e.target.files || []);
+    setUploadFiles(list);
+    if (list.length) pushLog(`Selected ${list.length} file(s)`);
+  }
+
+  async function presignOne(file: File) {
+    const t = token.trim();
+    const contentType = encodeURIComponent(guessContentType(file));
+    const filename = encodeURIComponent(file.name);
+
+    const out = await apiJson(
+      `/api/admin/presign?section=${encodeURIComponent(section)}&filename=${filename}&contentType=${contentType}`,
+      { method: "GET", headers: { "x-admin-token": t }, cache: "no-store" }
+    );
+
+    if (!out.ok) {
+      const msg = out.data?.detail || out.data?.error || "Presign failed";
+      throw new Error(`Presign failed (HTTP ${out.status}) ${msg}`);
+    }
+    return out.data as { ok: true; uploadUrl: string; publicUrl: string; key: string };
+  }
+
+  async function registerOne(item: {
+    url: string;
+    section: string;
+    title: string;
+    group?: string;
+    person?: string;
+    date?: string;
+    description?: string;
+  }) {
+    const t = token.trim();
+    const out = await apiJson("/api/admin/slides", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-admin-token": t },
+      body: JSON.stringify(item),
+    });
+
+    if (!out.ok) {
+      const msg = out.data?.detail || out.data?.error || "Register failed";
+      throw new Error(`Register failed (HTTP ${out.status}) ${msg}`);
+    }
+  }
+
+  async function uploadMedia() {
+    if (!authorized) {
+      pushLog("\u274C Not authorized");
+      return;
+    }
+    if (!uploadTitle.trim()) {
+      pushLog("\u274C Title is required");
+      return;
+    }
+    if (!uploadFiles.length) {
+      pushLog("\u274C Select at least one file");
+      return;
+    }
+
+    setBusy(true);
+    try {
+      pushLog(`Uploading ${uploadFiles.length} file(s)...`);
+
+      for (const f of uploadFiles) {
+        const pres = await presignOne(f);
+        const contentType = guessContentType(f);
+
+        const putRes = await fetch(pres.uploadUrl, {
+          method: "PUT",
+          headers: { "content-type": contentType },
+          body: f,
+        });
+        if (!putRes.ok) throw new Error(`S3 upload failed (HTTP ${putRes.status}) ${f.name}`);
+
+        await registerOne({
+          url: pres.publicUrl,
+          section,
+          title: uploadTitle.trim(),
+          group: group || undefined,
+          person: uploadPerson.trim() || undefined,
+          date: uploadDate.trim() || undefined,
+          description: uploadDescription.trim() || undefined,
+        });
+
+        pushLog(`\u2705 Uploaded: ${f.name}`);
       }
-    })();
 
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedSection]);
-
-  const currentItem = items.length > 0 ? items[currentIndex % items.length] : null;
-
-  function nextItem() {
-    if (items.length === 0) return;
-    setCurrentIndex((x) => (x + 1) % items.length);
+      clearUpload();
+      await refreshAll();
+    } catch (e: any) {
+      pushLog(`\u274C Upload failed: ${e?.message ?? String(e)}`);
+    } finally {
+      setBusy(false);
+    }
   }
 
-  function prevItem() {
-    if (items.length === 0) return;
-    setCurrentIndex((x) => (x - 1 + items.length) % items.length);
+  async function deleteItem(it: MediaItem) {
+    if (!authorized) return;
+
+    setBusy(true);
+    try {
+      const t = token.trim();
+      const out = await apiJson(`/api/admin/slides?PK=${encodeURIComponent(it.PK)}`, {
+        method: "DELETE",
+        headers: { "x-admin-token": t },
+      });
+
+      if (!out.ok) {
+        const msg = out.data?.detail || out.data?.error || "Delete failed";
+        throw new Error(`Delete failed (HTTP ${out.status}) ${msg}`);
+      }
+
+      pushLog(`\uD83D\uDDD1\uFE0F Deleted: ${it.PK}`);
+      await refreshAll();
+    } catch (e: any) {
+      pushLog(`\u274C ${e?.message ?? String(e)}`);
+    } finally {
+      setBusy(false);
+    }
   }
 
-  const styles = getStyles(isMobile);
+  // ── Editing: now includes section + group ────────────────────────────
+  function startEditing(it: MediaItem) {
+    setEditingPK(it.PK);
+    setEditingFields({
+      title: it.title,
+      description: it.description || "",
+      person: it.person || "",
+      date: it.date || "",
+      section: it.section || section,
+      group: it.group || "",
+    });
+  }
+
+  function cancelEditing() {
+    setEditingPK("");
+    setEditingFields({});
+  }
+
+  // Groups available for the section being edited (may differ from filter section)
+  const editingGroupOptions = useMemo(() => {
+    const sec = editingFields.section || "";
+    return SECTION_GROUPS[sec] || [];
+  }, [editingFields.section]);
+
+  async function saveEditing(it: MediaItem) {
+    if (!authorized) return;
+
+    setBusy(true);
+    try {
+      const t = token.trim();
+
+      // Detect if section/group changed — log it for visibility
+      const sectionChanged = editingFields.section && editingFields.section !== it.section;
+      const groupChanged = editingFields.group !== undefined && editingFields.group !== (it.group || "");
+
+      const out = await apiJson("/api/admin/slides", {
+        method: "PATCH",
+        headers: { "content-type": "application/json", "x-admin-token": t },
+        body: JSON.stringify({
+          PK: it.PK,
+          ...editingFields,
+        }),
+      });
+
+      if (!out.ok) {
+        const msg = out.data?.detail || out.data?.error || "Update failed";
+        throw new Error(`Update failed (HTTP ${out.status}) ${msg}`);
+      }
+
+      if (sectionChanged) {
+        pushLog(`\u27A1\uFE0F Moved ${it.PK}: ${it.section} \u2192 ${editingFields.section}`);
+      } else if (groupChanged) {
+        pushLog(`\u27A1\uFE0F Moved ${it.PK}: group ${it.group || "(none)"} \u2192 ${editingFields.group || "(none)"}`);
+      } else {
+        pushLog(`\u270F\uFE0F Updated: ${it.PK}`);
+      }
+
+      setEditingPK("");
+      setEditingFields({});
+      await refreshAll();
+    } catch (e: any) {
+      pushLog(`\u274C ${e?.message ?? String(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <div style={styles.page}>
-      {/* Background */}
-      <div style={styles.bgLayer}>
-        {currentItem && (
-          <>
-            {isVideo(currentItem.url) ? (
-              <video
-                key={currentItem.url}
-                src={currentItem.url}
-                style={styles.bgMedia}
-                autoPlay
-                loop
-                muted
-                playsInline
-              />
-            ) : isImage(currentItem.url) ? (
-              <img src={currentItem.url} alt="" style={styles.bgMedia} />
-            ) : null}
-          </>
-        )}
-        <div style={styles.bgOverlay} />
-      </div>
-
-      {/* Content */}
       <div style={styles.shell}>
         <header style={styles.header}>
-          <div style={styles.headerText}>
-            <div style={styles.title}>رادیو الگو</div>
-            <div style={styles.subtitle}>آوی تمدن ایرانی</div>
-            <div style={styles.subsubtitle}>Echo of Iranian Civilization</div>
+          <div>
+            <div style={styles.title}>Radio Olgoo Admin</div>
+            <div style={styles.subtitle}>Upload and manage media across all sections.</div>
+          </div>
+
+          <div style={styles.headerRight}>
+            <span
+              style={{
+                ...styles.pill,
+                background: authorized ? "rgba(22,163,74,0.14)" : "rgba(220,38,38,0.14)",
+                color: authorized ? "#166534" : "#991b1b",
+              }}
+            >
+              {authorized ? "Authorized" : "Locked"}
+            </span>
+
+            <button style={styles.button} onClick={refreshAll} disabled={!authorized || busy}>
+              Refresh
+            </button>
           </div>
         </header>
 
-        {/* Section Selector */}
-        <div style={styles.sectionSelector}>
-          <label style={styles.sectionLabel}>Browse by Section:</label>
-          <select
-            value={selectedSection}
-            onChange={(e) => setSelectedSection(e.target.value as Section)}
-            style={styles.sectionSelect}
-            disabled={loading}
-          >
-            {SECTIONS.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {/* Current Item Display */}
-        {loading ? (
-          <div style={styles.panel}>
-            <div style={styles.loading}>Loading...</div>
-          </div>
-        ) : error ? (
-          <div style={styles.panel}>
-            <div style={styles.error}>⚠️ {error}</div>
-          </div>
-        ) : !currentItem ? (
-          <div style={styles.panel}>
-            <div style={styles.empty}>No items found in {selectedSection}</div>
-          </div>
-        ) : (
-          <div style={styles.panel}>
-            <div style={styles.itemInfo}>
-              <h2 style={styles.itemTitle}>{currentItem.title}</h2>
-              {currentItem.person && (
-                <div style={styles.itemMeta}>
-                  <span style={styles.metaLabel}>Person:</span> {currentItem.person}
-                </div>
-              )}
-              {currentItem.date && (
-                <div style={styles.itemMeta}>
-                  <span style={styles.metaLabel}>Date:</span> {currentItem.date}
-                </div>
-              )}
-              {currentItem.group && (
-                <div style={styles.itemMeta}>
-                  <span style={styles.metaLabel}>Category:</span> {currentItem.group}
-                </div>
-              )}
-              {currentItem.description && (
-                <div style={styles.itemDescription}>{currentItem.description}</div>
-              )}
+        {/* Token Section */}
+        <section style={styles.tokenCard}>
+          <div style={styles.cardHeader}>
+            <div>
+              <div style={styles.cardTitle}>Admin token</div>
+              <div style={styles.cardHint}>Enter the admin token to unlock this screen.</div>
             </div>
+          </div>
 
-            <div style={styles.frame}>
-              {isVideo(currentItem.url) ? (
-                <video
-                  key={currentItem.url}
-                  src={currentItem.url}
-                  style={styles.media}
-                  controls
-                  autoPlay
-                  playsInline
-                />
-              ) : isImage(currentItem.url) ? (
-                <img src={currentItem.url} alt={currentItem.title} style={styles.media} />
-              ) : (
-                <div style={styles.empty}>Unsupported media type</div>
-              )}
-            </div>
+          <div style={styles.row}>
+            <input
+              type="password"
+              placeholder="ADMIN_TOKEN"
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              style={styles.input}
+              autoComplete="off"
+              spellCheck={false}
+            />
+            <button style={styles.buttonPrimary} onClick={verifyToken} disabled={busy}>
+              Verify
+            </button>
+            <button
+              style={styles.buttonGhost}
+              onClick={() => {
+                setToken("");
+                setAuthorized(false);
+                setAuthError("");
+                clearUpload();
+                setItems([]);
+                pushLog("Logged out");
+              }}
+              disabled={busy}
+            >
+              Log out
+            </button>
+          </div>
 
-            <div style={styles.controls}>
-              <button style={styles.btn} onClick={prevItem} disabled={items.length <= 1}>
-                ← Previous
-              </button>
-              <div style={styles.counter}>
-                {currentIndex + 1} / {items.length}
+          {authError ? <div style={styles.authError}>{"\u26A0\uFE0F"} {authError}</div> : null}
+        </section>
+
+        {/* Gated Content */}
+        <div style={styles.gatedWrap}>
+          <div style={{ ...styles.gatedContent, ...(authorized ? styles.gateOn : styles.gateOff) }}>
+            {/* Filter Bar */}
+            <section style={styles.filterBar}>
+              <div style={styles.filterRow}>
+                <div style={styles.filterField}>
+                  <label style={styles.filterLabel}>SECTION</label>
+                  <select
+                    value={section}
+                    onChange={(e) => setSection(e.target.value as Section)}
+                    style={styles.filterSelect}
+                    disabled={busy || !authorized}
+                  >
+                    {Object.keys(SECTION_GROUPS).map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {groupOptions.length > 0 && (
+                  <div style={styles.filterField}>
+                    <label style={styles.filterLabel}>GROUP</label>
+                    <select
+                      value={group}
+                      onChange={(e) => setGroup(e.target.value)}
+                      style={styles.filterSelect}
+                      disabled={busy || !authorized}
+                    >
+                      {groupOptions.map((g) => (
+                        <option key={g} value={g}>
+                          {g}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                <div style={styles.filterSearch}>
+                  <label style={styles.filterLabel}>SEARCH</label>
+                  <input
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    placeholder="PK / title / description\u2026"
+                    style={styles.filterInput}
+                    disabled={busy || !authorized}
+                  />
+                </div>
+
+                <div style={styles.filterMeta}>
+                  <div style={styles.filterCount}>{filteredItems.length} item(s)</div>
+                  <div style={styles.filterViewing}>
+                    Viewing: <b>{section}{group ? ` \u2192 ${group}` : ""}</b>
+                  </div>
+                </div>
               </div>
-              <button style={styles.btn} onClick={nextItem} disabled={items.length <= 1}>
-                Next →
+            </section>
+
+            {/* Upload Section */}
+            <section style={styles.uploadCard}>
+              <div style={styles.cardHeader}>
+                <div>
+                  <div style={styles.cardTitle}>Upload media</div>
+                  <div style={styles.cardHint}>Files are tagged with current section/group.</div>
+                </div>
+              </div>
+
+              <div style={styles.uploadGrid}>
+                <div style={styles.fieldBlock}>
+                  <label style={styles.label}>Title (required)</label>
+                  <input
+                    value={uploadTitle}
+                    onChange={(e) => setUploadTitle(e.target.value)}
+                    placeholder="Enter title"
+                    style={styles.input}
+                    disabled={busy || !authorized}
+                  />
+                </div>
+
+                <div style={styles.fieldBlock}>
+                  <label style={styles.label}>Person (optional)</label>
+                  <input
+                    value={uploadPerson}
+                    onChange={(e) => setUploadPerson(e.target.value)}
+                    placeholder="Speaker/Artist name"
+                    style={styles.input}
+                    disabled={busy || !authorized}
+                  />
+                </div>
+
+                <div style={styles.fieldBlock}>
+                  <label style={styles.label}>Date (optional)</label>
+                  <input
+                    type="date"
+                    value={uploadDate}
+                    onChange={(e) => setUploadDate(e.target.value)}
+                    style={styles.input}
+                    disabled={busy || !authorized}
+                  />
+                </div>
+              </div>
+
+              <div style={styles.fieldBlock}>
+                <label style={styles.label}>Description (optional)</label>
+                <textarea
+                  value={uploadDescription}
+                  onChange={(e) => setUploadDescription(e.target.value)}
+                  placeholder="Brief description"
+                  style={{ ...styles.input, minHeight: 60, resize: "vertical" } as React.CSSProperties}
+                  disabled={busy || !authorized}
+                />
+              </div>
+
+              <div style={styles.fieldBlock}>
+                <label style={styles.label}>Choose file(s)</label>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  accept="video/*,image/*"
+                  onChange={onPickUploadFiles}
+                  disabled={busy || !authorized}
+                />
+                {uploadFiles.length > 0 && <div style={styles.miniNote}>Selected: {uploadFiles.length}</div>}
+              </div>
+
+              <button style={styles.bigButton} onClick={uploadMedia} disabled={!authorized || busy}>
+                {busy ? "Working..." : "Upload"}
               </button>
-            </div>
+            </section>
+
+            {/* Items List */}
+            <section style={styles.card}>
+              <div style={styles.cardHeader}>
+                <div>
+                  <div style={styles.cardTitle}>Items in {section}{group ? ` \u2192 ${group}` : ""}</div>
+                  <div style={styles.cardHint}>Edit details, move between sections, or delete items below.</div>
+                </div>
+              </div>
+
+              <div style={styles.items}>
+                {filteredItems.map((it) => (
+                  <div key={it.PK} style={styles.item}>
+                    <div style={styles.itemTop}>
+                      <div style={styles.itemLeft}>
+                        <div style={styles.itemPK}>{it.PK}</div>
+                        <div style={styles.itemTitle}>{it.title}</div>
+                      </div>
+
+                      <div style={styles.itemActions}>
+                        {editingPK === it.PK ? (
+                          <>
+                            <button style={styles.saveButton} onClick={() => saveEditing(it)} disabled={busy}>
+                              Save
+                            </button>
+                            <button style={styles.cancelButton} onClick={cancelEditing} disabled={busy}>
+                              Cancel
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button style={styles.editButton} onClick={() => startEditing(it)} disabled={busy}>
+                              Edit
+                            </button>
+                            <button style={styles.dangerSmall} onClick={() => deleteItem(it)} disabled={busy}>
+                              Delete
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+
+                    <div style={styles.itemMeta}>
+                      {editingPK === it.PK ? (
+                        <>
+                          {/* ── MOVE: Section + Group selectors ──────────── */}
+                          <div style={styles.moveBox}>
+                            <div style={styles.moveBoxTitle}>{"\u27A1\uFE0F"} Move to Section / Group</div>
+                            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                              <div style={{ flex: 1, minWidth: 200 }}>
+                                <label style={styles.label}>Section</label>
+                                <select
+                                  value={editingFields.section || ""}
+                                  onChange={(e) => {
+                                    const newSec = e.target.value;
+                                    const newGroups = SECTION_GROUPS[newSec] || [];
+                                    setEditingFields({
+                                      ...editingFields,
+                                      section: newSec,
+                                      group: newGroups[0] || "",
+                                    });
+                                  }}
+                                  style={styles.editSelect}
+                                >
+                                  {ALL_SECTIONS.map((s) => (
+                                    <option key={s} value={s}>
+                                      {s}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                              {editingGroupOptions.length > 0 && (
+                                <div style={{ flex: 1, minWidth: 200 }}>
+                                  <label style={styles.label}>Group</label>
+                                  <select
+                                    value={editingFields.group || ""}
+                                    onChange={(e) =>
+                                      setEditingFields({ ...editingFields, group: e.target.value })
+                                    }
+                                    style={styles.editSelect}
+                                  >
+                                    <option value="">(none)</option>
+                                    {editingGroupOptions.map((g) => (
+                                      <option key={g} value={g}>
+                                        {g}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          <div style={styles.fieldBlock}>
+                            <label style={styles.label}>Title</label>
+                            <input
+                              value={editingFields.title || ""}
+                              onChange={(e) => setEditingFields({ ...editingFields, title: e.target.value })}
+                              style={styles.input}
+                            />
+                          </div>
+                          <div style={styles.fieldBlock}>
+                            <label style={styles.label}>Person</label>
+                            <input
+                              value={editingFields.person || ""}
+                              onChange={(e) => setEditingFields({ ...editingFields, person: e.target.value })}
+                              style={styles.input}
+                            />
+                          </div>
+                          <div style={styles.fieldBlock}>
+                            <label style={styles.label}>Date</label>
+                            <input
+                              type="date"
+                              value={editingFields.date || ""}
+                              onChange={(e) => setEditingFields({ ...editingFields, date: e.target.value })}
+                              style={styles.input}
+                            />
+                          </div>
+                          <div style={styles.fieldBlock}>
+                            <label style={styles.label}>Description</label>
+                            <textarea
+                              value={editingFields.description || ""}
+                              onChange={(e) => setEditingFields({ ...editingFields, description: e.target.value })}
+                              style={{ ...styles.input, minHeight: 60, resize: "vertical" } as React.CSSProperties}
+                            />
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          {it.group && (
+                            <div style={styles.itemLine}>
+                              <span style={styles.dim}>Group:</span> {it.group}
+                            </div>
+                          )}
+                          {it.person && (
+                            <div style={styles.itemLine}>
+                              <span style={styles.dim}>Person:</span> {it.person}
+                            </div>
+                          )}
+                          {it.date && (
+                            <div style={styles.itemLine}>
+                              <span style={styles.dim}>Date:</span> {it.date}
+                            </div>
+                          )}
+                          {it.description && (
+                            <div style={styles.itemLine}>
+                              <span style={styles.dim}>Desc:</span> {it.description}
+                            </div>
+                          )}
+                        </>
+                      )}
+
+                      <div style={styles.previewBox}>
+                        {isVideo(it.url) ? (
+                          <video key={it.url} src={it.url} controls preload="metadata" style={styles.video} />
+                        ) : isImage(it.url) ? (
+                          <img src={it.url} alt={it.title} style={styles.image} />
+                        ) : (
+                          <div style={styles.previewFallback}>No preview available</div>
+                        )}
+                      </div>
+
+                      <div style={{ ...styles.itemLine, wordBreak: "break-all" }}>
+                        <a href={it.url} target="_blank" rel="noreferrer" style={styles.link}>
+                          Open in new tab
+                        </a>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+
+                {!filteredItems.length && (
+                  <div style={styles.empty}>
+                    Nothing uploaded in <b>{section}{group ? ` \u2192 ${group}` : ""}</b> yet.
+                  </div>
+                )}
+              </div>
+            </section>
+
+            {/* Log */}
+            <section style={styles.card}>
+              <div style={styles.cardHeader}>
+                <div style={styles.cardTitle}>Log</div>
+                <button style={styles.buttonGhost} onClick={() => setLog([])} disabled={busy}>
+                  Clear
+                </button>
+              </div>
+              <pre style={styles.logBox}>{log.join("\n")}</pre>
+            </section>
           </div>
-        )}
+
+          {!authorized && (
+            <div style={styles.cloudOverlay}>
+              <div style={styles.cloudCard}>
+                <div style={styles.cloudTitle}>Locked</div>
+                <div style={styles.cloudText}>Enter a valid admin token above to unlock this screen.</div>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
 }
 
-function getStyles(isMobile: boolean): Record<string, React.CSSProperties> {
-  return {
-    page: {
-      position: "relative",
-      minHeight: "100vh",
-      color: "white",
-      overflow: "hidden",
-      fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
-    },
-    bgLayer: {
-      position: "absolute",
-      inset: 0,
-      zIndex: 0,
-    },
-    bgMedia: {
-      position: "absolute",
-      inset: 0,
-      width: "100%",
-      height: "100%",
-      objectFit: "cover",
-      filter: "blur(20px) brightness(0.4)",
-    },
-    bgOverlay: {
-      position: "absolute",
-      inset: 0,
-      background: "linear-gradient(180deg, rgba(0,0,0,0.5) 0%, rgba(0,0,0,0.7) 100%)",
-    },
-    shell: {
-      position: "relative",
-      zIndex: 2,
-      maxWidth: isMobile ? "100%" : 1000,
-      margin: "0 auto",
-      padding: isMobile ? "16px 12px" : "24px 20px",
-    },
-    header: {
-      display: "flex",
-      justifyContent: "flex-end",
-      marginBottom: isMobile ? 20 : 30,
-    },
-    headerText: {
-      textAlign: "right",
-      display: "flex",
-      flexDirection: "column",
-      gap: isMobile ? 4 : 6,
-    },
-    title: {
-      fontSize: isMobile ? 36 : 56,
-      fontWeight: 900,
-      lineHeight: 1.05,
-    },
-    subtitle: {
-      fontSize: isMobile ? 20 : 34,
-      fontWeight: 900,
-      opacity: 0.95,
-    },
-    subsubtitle: {
-      fontSize: isMobile ? 14 : 18,
-      fontWeight: 800,
-      opacity: 0.9,
-    },
-    sectionSelector: {
-      marginBottom: isMobile ? 20 : 30,
-      padding: isMobile ? 16 : 20,
-      borderRadius: isMobile ? 12 : 18,
-      border: "1px solid rgba(255,255,255,0.18)",
-      background: "rgba(0,0,0,0.3)",
-      backdropFilter: "blur(10px)",
-    },
-    sectionLabel: {
-      display: "block",
-      fontWeight: 900,
-      fontSize: isMobile ? 14 : 16,
-      marginBottom: 10,
-      opacity: 0.9,
-    },
-    sectionSelect: {
-      width: "100%",
-      padding: isMobile ? "12px 14px" : "14px 16px",
-      borderRadius: isMobile ? 10 : 12,
-      border: "1px solid rgba(255,255,255,0.3)",
-      background: "rgba(255,255,255,0.15)",
-      color: "white",
-      fontSize: isMobile ? 16 : 18,
-      fontWeight: 800,
-      cursor: "pointer",
-    },
-    panel: {
-      borderRadius: isMobile ? 12 : 18,
-      border: "1px solid rgba(255,255,255,0.18)",
-      background: "rgba(0,0,0,0.25)",
-      backdropFilter: "blur(10px)",
-      padding: isMobile ? 16 : 20,
-    },
-    itemInfo: {
-      marginBottom: isMobile ? 16 : 20,
-    },
-    itemTitle: {
-      fontSize: isMobile ? 20 : 26,
-      fontWeight: 900,
-      marginBottom: 12,
-    },
-    itemMeta: {
-      fontSize: isMobile ? 13 : 14,
-      opacity: 0.85,
-      marginBottom: 6,
-    },
-    metaLabel: {
-      fontWeight: 900,
-      opacity: 0.7,
-    },
-    itemDescription: {
-      fontSize: isMobile ? 14 : 15,
-      opacity: 0.9,
-      marginTop: 10,
-      lineHeight: 1.5,
-    },
-    frame: {
-      width: "100%",
-      aspectRatio: "16 / 9",
-      borderRadius: isMobile ? 10 : 16,
-      overflow: "hidden",
-      border: "1px solid rgba(255,255,255,0.18)",
-      background: "rgba(0,0,0,0.55)",
-      marginBottom: isMobile ? 16 : 20,
-    },
-    media: {
-      width: "100%",
-      height: "100%",
-      objectFit: "contain",
-      background: "black",
-      display: "block",
-    },
-    controls: {
-      display: "flex",
-      justifyContent: "space-between",
-      alignItems: "center",
-      gap: 12,
-    },
-    btn: {
-      padding: isMobile ? "12px 20px" : "12px 24px",
-      borderRadius: isMobile ? 10 : 12,
-      border: "1px solid rgba(255,255,255,0.25)",
-      background: "rgba(255,255,255,0.10)",
-      color: "white",
-      cursor: "pointer",
-      fontWeight: 900,
-      fontSize: isMobile ? 14 : 16,
-      minHeight: 44,
-    },
-    counter: {
-      fontWeight: 900,
-      fontSize: isMobile ? 14 : 16,
-      opacity: 0.8,
-    },
-    loading: {
-      textAlign: "center",
-      fontSize: isMobile ? 16 : 18,
-      fontWeight: 800,
-      padding: isMobile ? 40 : 60,
-      opacity: 0.85,
-    },
-    error: {
-      textAlign: "center",
-      fontSize: isMobile ? 14 : 16,
-      fontWeight: 800,
-      padding: isMobile ? 30 : 40,
-      color: "#ff6b6b",
-    },
-    empty: {
-      textAlign: "center",
-      fontSize: isMobile ? 14 : 16,
-      fontWeight: 800,
-      padding: isMobile ? 30 : 40,
-      opacity: 0.75,
-    },
-  };
-}
+const styles: Record<string, React.CSSProperties> = {
+  page: {
+    minHeight: "100vh",
+    background: "linear-gradient(180deg, #f7f7fb 0%, #f2f4f8 100%)",
+    fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
+    color: "#0f172a",
+  },
+  shell: { maxWidth: 1200, margin: "0 auto", padding: 18 },
+  header: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-end",
+    gap: 12,
+    flexWrap: "wrap",
+    marginBottom: 10,
+  },
+  headerRight: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" },
+  title: { fontSize: 28, fontWeight: 950, letterSpacing: -0.3 },
+  subtitle: { marginTop: 4, opacity: 0.72, fontSize: 13 },
+  tokenCard: {
+    background: "rgba(255,255,255,0.95)",
+    borderRadius: 18,
+    border: "1px solid rgba(15, 23, 42, 0.10)",
+    boxShadow: "0 20px 60px rgba(2, 6, 23, 0.08)",
+    padding: 14,
+    marginBottom: 14,
+    maxWidth: 800,
+    margin: "0 auto 14px auto",
+  },
+  gatedWrap: { position: "relative" },
+  gatedContent: { transition: "filter 160ms ease, opacity 160ms ease" },
+  gateOn: { opacity: 1, filter: "none", pointerEvents: "auto" },
+  gateOff: { opacity: 0.35, filter: "blur(3px)", pointerEvents: "none" },
+  cloudOverlay: {
+    position: "absolute",
+    inset: 0,
+    display: "flex",
+    alignItems: "flex-start",
+    justifyContent: "center",
+    paddingTop: 80,
+    pointerEvents: "none",
+  },
+  cloudCard: {
+    width: "min(560px, 92%)",
+    borderRadius: 18,
+    border: "1px solid rgba(15, 23, 42, 0.12)",
+    background: "rgba(255,255,255,0.72)",
+    backdropFilter: "blur(10px)",
+    boxShadow: "0 20px 60px rgba(2, 6, 23, 0.10)",
+    padding: 14,
+    textAlign: "center",
+  },
+  cloudTitle: { fontWeight: 950, fontSize: 16 },
+  cloudText: { marginTop: 6, opacity: 0.75, fontSize: 13, fontWeight: 650 },
+  filterBar: {
+    position: "sticky",
+    top: 0,
+    zIndex: 20,
+    marginBottom: 14,
+    background: "rgba(255,255,255,0.92)",
+    borderRadius: 18,
+    border: "1px solid rgba(15, 23, 42, 0.10)",
+    boxShadow: "0 20px 60px rgba(2, 6, 23, 0.06)",
+    padding: 14,
+    backdropFilter: "blur(8px)",
+  },
+  filterRow: { display: "flex", gap: 22, alignItems: "end", flexWrap: "wrap" },
+  filterField: { minWidth: 200 },
+  filterLabel: { display: "block", fontWeight: 950, fontSize: 22, marginBottom: 10 },
+  filterSelect: {
+    width: "100%",
+    padding: "16px 18px",
+    borderRadius: 16,
+    border: "3px solid rgba(15, 23, 42, 0.85)",
+    background: "white",
+    fontWeight: 800,
+    fontSize: 18,
+  },
+  filterSearch: { flex: 1, minWidth: 280 },
+  filterInput: {
+    width: "100%",
+    padding: "16px 18px",
+    borderRadius: 16,
+    border: "3px solid rgba(15, 23, 42, 0.85)",
+    background: "white",
+    fontWeight: 700,
+    fontSize: 18,
+  },
+  filterMeta: { display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end", marginLeft: "auto" },
+  filterCount: {
+    fontWeight: 950,
+    fontSize: 14,
+    padding: "8px 12px",
+    borderRadius: 999,
+    border: "1px solid rgba(15, 23, 42, 0.12)",
+    background: "rgba(15, 23, 42, 0.04)",
+  },
+  filterViewing: { fontSize: 13, opacity: 0.75 },
+  uploadCard: {
+    background: "rgba(255,255,255,0.9)",
+    borderRadius: 18,
+    border: "1px solid rgba(15, 23, 42, 0.08)",
+    boxShadow: "0 20px 60px rgba(2, 6, 23, 0.06)",
+    padding: 14,
+    marginBottom: 14,
+    backdropFilter: "blur(6px)",
+    maxWidth: 800,
+    margin: "0 auto 14px auto",
+  },
+  card: {
+    background: "rgba(255,255,255,0.9)",
+    borderRadius: 18,
+    border: "1px solid rgba(15, 23, 42, 0.08)",
+    boxShadow: "0 20px 60px rgba(2, 6, 23, 0.06)",
+    padding: 14,
+    marginBottom: 14,
+    backdropFilter: "blur(6px)",
+  },
+  cardHeader: { display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, marginBottom: 10 },
+  cardTitle: { fontWeight: 950, fontSize: 16 },
+  cardHint: { opacity: 0.65, fontSize: 12 },
+  row: { display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" },
+  label: { display: "block", fontWeight: 850, marginBottom: 6, fontSize: 12, opacity: 0.85 },
+  input: {
+    width: "100%",
+    padding: "11px 12px",
+    borderRadius: 14,
+    border: "1px solid rgba(15, 23, 42, 0.14)",
+    background: "rgba(255,255,255,0.95)",
+    outline: "none",
+  },
+  pill: {
+    padding: "7px 10px",
+    borderRadius: 999,
+    fontWeight: 900,
+    fontSize: 12,
+    border: "1px solid rgba(15, 23, 42, 0.10)",
+  },
+  button: {
+    padding: "10px 12px",
+    borderRadius: 14,
+    border: "1px solid rgba(15, 23, 42, 0.12)",
+    background: "rgba(255,255,255,0.95)",
+    cursor: "pointer",
+    fontWeight: 900,
+  },
+  buttonGhost: {
+    padding: "10px 12px",
+    borderRadius: 14,
+    border: "1px solid rgba(15, 23, 42, 0.10)",
+    background: "transparent",
+    cursor: "pointer",
+    fontWeight: 900,
+  },
+  buttonPrimary: {
+    padding: "10px 14px",
+    borderRadius: 14,
+    border: "1px solid rgba(15, 23, 42, 0.12)",
+    background: "#0f172a",
+    color: "white",
+    cursor: "pointer",
+    fontWeight: 950,
+  },
+  bigButton: {
+    marginTop: 12,
+    width: "100%",
+    padding: "14px",
+    borderRadius: 16,
+    border: "1px solid rgba(15, 23, 42, 0.12)",
+    background: "#0f172a",
+    color: "white",
+    fontWeight: 950,
+    cursor: "pointer",
+    fontSize: 16,
+  },
+  uploadGrid: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14, alignItems: "end" },
+  fieldBlock: { marginTop: 10 },
+  miniNote: { marginTop: 8, opacity: 0.72, fontSize: 12, fontWeight: 800 },
+  items: { display: "grid", gap: 10, marginTop: 12 },
+  item: {
+    border: "1px solid rgba(15, 23, 42, 0.10)",
+    borderRadius: 16,
+    padding: 12,
+    background: "white",
+    boxShadow: "0 10px 24px rgba(2, 6, 23, 0.04)",
+  },
+  itemTop: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 },
+  itemLeft: { display: "flex", flexDirection: "column", gap: 4 },
+  itemPK: { fontWeight: 950, fontSize: 12, opacity: 0.7 },
+  itemTitle: { fontWeight: 950, fontSize: 14 },
+  itemActions: { display: "flex", gap: 8 },
+  itemMeta: { marginTop: 10, display: "flex", flexDirection: "column", gap: 10 },
+  itemLine: { fontSize: 13, opacity: 0.9 },
+  dim: { opacity: 0.7, fontWeight: 800 },
+  link: { fontWeight: 900, textDecoration: "underline" },
+  previewBox: {
+    borderRadius: 14,
+    border: "1px solid rgba(15, 23, 42, 0.10)",
+    background: "rgba(15, 23, 42, 0.02)",
+    padding: 10,
+  },
+  video: { width: "100%", maxHeight: 280, borderRadius: 12, display: "block", background: "#000" },
+  image: { width: "100%", maxHeight: 280, objectFit: "contain", borderRadius: 12, display: "block" },
+  previewFallback: { padding: 12, opacity: 0.75, fontWeight: 800, fontSize: 12 },
+  // ── Move box (section/group edit) ────────────────────────────────────
+  moveBox: {
+    padding: 12,
+    borderRadius: 14,
+    border: "2px solid rgba(59, 130, 246, 0.30)",
+    background: "rgba(59, 130, 246, 0.06)",
+    marginBottom: 4,
+  },
+  moveBoxTitle: {
+    fontWeight: 950,
+    fontSize: 13,
+    marginBottom: 10,
+    color: "#1e40af",
+  },
+  editSelect: {
+    width: "100%",
+    padding: "10px 12px",
+    borderRadius: 12,
+    border: "2px solid rgba(59, 130, 246, 0.35)",
+    background: "white",
+    fontWeight: 800,
+    fontSize: 14,
+  },
+  editButton: {
+    padding: "8px 10px",
+    borderRadius: 12,
+    border: "1px solid rgba(59, 130, 246, 0.25)",
+    background: "rgba(59, 130, 246, 0.12)",
+    color: "#1e40af",
+    cursor: "pointer",
+    fontWeight: 950,
+  },
+  saveButton: {
+    padding: "8px 10px",
+    borderRadius: 12,
+    border: "1px solid rgba(34, 197, 94, 0.25)",
+    background: "rgba(34, 197, 94, 0.12)",
+    color: "#15803d",
+    cursor: "pointer",
+    fontWeight: 950,
+  },
+  cancelButton: {
+    padding: "8px 10px",
+    borderRadius: 12,
+    border: "1px solid rgba(107, 114, 128, 0.25)",
+    background: "rgba(107, 114, 128, 0.12)",
+    color: "#374151",
+    cursor: "pointer",
+    fontWeight: 950,
+  },
+  dangerSmall: {
+    padding: "8px 10px",
+    borderRadius: 12,
+    border: "1px solid rgba(185, 28, 28, 0.25)",
+    background: "rgba(220, 38, 38, 0.12)",
+    color: "#991b1b",
+    cursor: "pointer",
+    fontWeight: 950,
+  },
+  empty: {
+    opacity: 0.7,
+    fontWeight: 850,
+    padding: 12,
+    borderRadius: 16,
+    border: "1px dashed rgba(15, 23, 42, 0.18)",
+    background: "rgba(15, 23, 42, 0.02)",
+  },
+  logBox: {
+    marginTop: 10,
+    background: "#0b0b0b",
+    color: "#d7ffd7",
+    padding: 12,
+    borderRadius: 14,
+    overflow: "auto",
+    maxHeight: 260,
+    fontSize: 12,
+  },
+  authError: {
+    marginTop: 10,
+    padding: "10px 12px",
+    borderRadius: 14,
+    border: "1px solid rgba(185, 28, 28, 0.25)",
+    background: "rgba(220, 38, 38, 0.10)",
+    color: "#991b1b",
+    fontWeight: 900,
+    fontSize: 13,
+  },
+};
