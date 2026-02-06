@@ -1,97 +1,118 @@
-﻿// Original: app\api\admin\presign\route.ts
-// app/api/admin/presign/route.ts
+﻿// Original: app\api\admin\migrate-old\route.ts
+// app/api/admin/migrate-old/route.ts
 import { NextResponse } from "next/server";
-import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { DynamoDBDocumentClient, ScanCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-const SECTION_PREFIX: Record<string, string> = {
-  "Video Archives": "VIDEOARCHIVE",
-  "Single Videos-Songs": "SINGLEVIDEO",
-  "National Anthems": "ANTHEM",
-  "Photo Albums": "PHOTOALBUM",
-  "Live Channels": "LIVECHANNEL",
-  "Social Media Profiles": "SOCIAL",
-  "Great-National-Songs-Videos": "GREATSONG",
-  "In-Transition": "TRANSITION",
-};
-
-function json(status: number, obj: any) {
-  return NextResponse.json(obj, { status, headers: { "cache-control": "no-store" } });
-}
+type TargetSet = "CENTER" | "SLIDES" | "BG";
 
 function requireAdmin(req: Request) {
   const incoming = (req.headers.get("x-admin-token") || "").trim();
   const expected = (process.env.ADMIN_TOKEN || "").trim();
-  if (!expected) return false;
-  return incoming && incoming === expected;
+  if (!expected) throw new Error("Missing ADMIN_TOKEN in env");
+  if (!incoming || incoming !== expected) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  return null;
 }
 
-function sanitizeFilename(filename: string) {
-  return filename.replace(/[^a-zA-Z0-9._-]/g, "_");
+function tableName() {
+  return (
+    process.env.DDB_TABLE_NAME ||
+    process.env.MEDIA_TABLE_NAME ||
+    process.env.TABLE_NAME ||
+    ""
+  ).trim();
 }
 
-function encodeS3KeyForUrl(key: string) {
-  return encodeURIComponent(key).replace(/%2F/g, "/");
-}
+const NEW_CATEGORIES = new Set(["YouTubeChannels", "RevolutionMusic", "Old"]);
 
 /**
- * GET /api/admin/presign?section=Video+Archives&filename=video.mp4&contentType=video/mp4
- * Returns presigned URL for uploading to S3
+ * POST /api/admin/migrate-old
+ * Purpose: tag legacy items (missing category1/category2) under:
+ *   category1="Old"
+ *   category2 = pk ("CENTER" | "SLIDES" | "BG")
+ *
+ * Safety: by default it updates ONLY items where category1 is empty.
+ * If you want to force retag everything (NOT recommended), set env MIGRATE_FORCE=1 temporarily.
  */
-export async function GET(req: Request) {
-  if (!requireAdmin(req)) return json(401, { error: "Unauthorized" });
-
-  const region = (process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || "").trim();
-  const bucket = (process.env.S3_BUCKET_NAME || "").trim();
-
-  if (!region) return json(500, { error: "Missing AWS_REGION in env" });
-  if (!bucket) return json(500, { error: "Missing S3_BUCKET_NAME in env" });
-
-  const url = new URL(req.url);
-  const section = (url.searchParams.get("section") || "").trim();
-  const filename = (url.searchParams.get("filename") || "").trim();
-  const contentType = (url.searchParams.get("contentType") || "").trim();
-
-  if (!section || !SECTION_PREFIX[section]) {
-    return json(400, { 
-      error: `Invalid section. Must be one of: ${Object.keys(SECTION_PREFIX).join(", ")}` 
-    });
-  }
-  if (!filename) return json(400, { error: "Missing filename" });
-  if (!contentType) return json(400, { error: "Missing contentType" });
-
-  // Validate content types
-  const ct = contentType.toLowerCase();
-  const isVideo = ct.startsWith("video/");
-  const isImage = ct.startsWith("image/");
-  
-  if (!isVideo && !isImage) {
-    return json(400, { error: "Only video/* and image/* content types are allowed" });
-  }
-
-  const safeName = sanitizeFilename(filename);
-  const prefix = SECTION_PREFIX[section];
-  
-  // Key format: <PREFIX>/<timestamp>-<filename>
-  const key = `${prefix}/${Date.now()}-${safeName}`;
+export async function POST(req: Request) {
+  const auth = requireAdmin(req);
+  if (auth) return auth;
 
   try {
-    const s3 = new S3Client({ region });
+    const TableName = tableName();
+    if (!TableName) throw new Error("Missing DDB table name env (DDB_TABLE_NAME)");
 
-    const cmd = new PutObjectCommand({
-      Bucket: bucket,
-      Key: key,
-      ContentType: contentType,
-      CacheControl: "public, max-age=31536000, immutable",
-    });
+    const force = (process.env.MIGRATE_FORCE || "").trim() === "1";
 
-    const uploadUrl = await getSignedUrl(s3, cmd, { expiresIn: 300 });
-    const publicUrl = `https://${bucket}.s3.${region}.amazonaws.com/${encodeS3KeyForUrl(key)}`;
+    const ddb = DynamoDBDocumentClient.from(
+      new DynamoDBClient({
+        region: process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || "ca-central-1",
+      })
+    );
 
-    return json(200, { ok: true, section, key, uploadUrl, publicUrl });
+    let scanned = 0;
+    let updated = 0;
+    let lastKey: any = undefined;
+
+    do {
+      const scan = await ddb.send(
+        new ScanCommand({
+          TableName,
+          ExclusiveStartKey: lastKey,
+        })
+      );
+
+      const items = (scan.Items || []) as any[];
+      scanned += items.length;
+      lastKey = scan.LastEvaluatedKey;
+
+      for (const it of items) {
+        const pk = String(it.pk || "").trim().toUpperCase() as TargetSet;
+        const sk = String(it.sk || "").trim();
+
+        if (!(pk === "CENTER" || pk === "SLIDES" || pk === "BG")) continue;
+        if (!sk) continue;
+
+        const c1 = String(it.category1 || "").trim();
+        const c2 = String(it.category2 || "").trim();
+
+        // Default: only touch legacy/empty category1
+        if (!force) {
+          if (c1) continue; // already categorized
+        }
+
+        // If force, still avoid smashing new categories unless explicitly desired
+        if (force && c1 && NEW_CATEGORIES.has(c1)) {
+          // keep as-is
+          continue;
+        }
+
+        await ddb.send(
+          new UpdateCommand({
+            TableName,
+            Key: { pk: pk, sk: sk },
+            UpdateExpression: "SET category1 = :c1, category2 = :c2",
+            ExpressionAttributeValues: {
+              ":c1": "Old",
+              ":c2": pk, // CENTER / SLIDES / BG
+            },
+          })
+        );
+
+        updated += 1;
+      }
+    } while (lastKey);
+
+    return NextResponse.json({ ok: true, scanned, updated });
   } catch (e: any) {
-    return json(500, { error: "Presign failed", detail: e?.message ?? String(e) });
+    return NextResponse.json(
+      { error: "Migration failed", detail: e?.message ?? String(e) },
+      { status: 500 }
+    );
   }
 }
