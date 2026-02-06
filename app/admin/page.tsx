@@ -40,9 +40,26 @@ function isImage(url: string): boolean {
   return u.includes(".jpg") || u.includes(".jpeg") || u.includes(".png") || u.includes(".webp");
 }
 
-// ── Build section→groups map from items ────────────────────────────────
+// ── Default sections & groups (always visible even if DB is empty) ─────
+const DEFAULT_SECTION_GROUPS: Record<string, string[]> = {
+  "Video Archives": ["Conference", "Interview", "Workshop", "Lecture", "Panel Discussion"],
+  "Single Videos-Songs": ["Pop", "Classical", "Jazz", "Rock", "Traditional", "Folk"],
+  "National Anthems": ["Iran", "Canada", "USA", "France", "Germany", "Other"],
+  "Photo Albums": [],
+  "Live Channels": ["News", "Music", "Entertainment", "Sports"],
+  "Social Media Profiles": ["X", "YouTube", "Instagram", "Facebook", "TikTok"],
+  "Great-National-Songs-Videos": ["Patriotic", "Historical", "Contemporary"],
+  "In-Transition": ["Pending", "Review", "Archive"],
+};
+
+// ── Build section→groups map from items, merged with defaults ──────────
 function buildSectionMap(items: MediaItem[]): Record<string, string[]> {
+  // Start from defaults
   const map: Record<string, Set<string>> = {};
+  for (const [sec, groups] of Object.entries(DEFAULT_SECTION_GROUPS)) {
+    map[sec] = new Set(groups);
+  }
+  // Merge in anything discovered from data
   for (const it of items) {
     const sec = (it.section || "").trim();
     if (!sec) continue;
@@ -52,7 +69,7 @@ function buildSectionMap(items: MediaItem[]): Record<string, string[]> {
   }
   const result: Record<string, string[]> = {};
   for (const sec of Object.keys(map).sort()) {
-    result[sec] = [...map[sec]].sort();
+    result[sec] = Array.from(map[sec]).sort();
   }
   return result;
 }
@@ -102,23 +119,19 @@ export default function AdminPage() {
       for (const groups of Object.values(sectionMap)) {
         for (const g of groups) all.add(g);
       }
-      return [...all].sort();
+      return Array.from(all).sort();
     }
     return sectionMap[section] || [];
   }, [sectionMap, section]);
 
-  // Groups for the section being edited
-  const editingGroupOptions = useMemo(() => {
-    const sec = editingFields.section || "";
-    if (!sec || sec === "__NEW__") return [];
-    return sectionMap[sec] || [];
-  }, [sectionMap, editingFields.section]);
-
-  // Groups for the upload section
-  const uploadGroupOptions = useMemo(() => {
-    if (!uploadSection || uploadSection === "__NEW__") return [];
-    return sectionMap[uploadSection] || [];
-  }, [sectionMap, uploadSection]);
+  // ALL unique groups across every section (for edit & upload dropdowns)
+  const allGroupOptions = useMemo(() => {
+    const all = new Set<string>();
+    for (const groups of Object.values(sectionMap)) {
+      for (const g of groups) all.add(g);
+    }
+    return Array.from(all).sort();
+  }, [sectionMap]);
 
   useEffect(() => {
     setToken("");
@@ -679,7 +692,7 @@ export default function AdminPage() {
                     disabled={busy || !authorized || !uploadSection || uploadSection === "__NEW__"}
                   >
                     <option value="">(none)</option>
-                    {uploadGroupOptions.map((g) => (
+                    {allGroupOptions.map((g) => (
                       <option key={g} value={g}>{g}</option>
                     ))}
                     <option value="__NEW__">{"\u2795"} Add New Group...</option>
@@ -860,7 +873,7 @@ export default function AdminPage() {
                                   disabled={editingFields.section === "__NEW__"}
                                 >
                                   <option value="">(none)</option>
-                                  {editingGroupOptions.map((g) => (
+                                  {allGroupOptions.map((g) => (
                                     <option key={g} value={g}>{g}</option>
                                   ))}
                                   <option value="__NEW__">{"\u2795"} Add New Group...</option>
