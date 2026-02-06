@@ -545,48 +545,78 @@ export default function AdminPage() {
     }
   }
 
-  async function handleDeleteGroup() {
-    if (!targetSection) {
-      pushLog("\u274C Invalid target section");
-      return;
-    }
-    setDeleteBusy(true);
-    const targetGrp = targetGroup === ALL ? "" : targetGroup;
-    pushLog(`Moving group "${groupToDelete}" → "${targetSection}" / "${targetGrp || '(none)'}"`);
-    try {
-      const itemsToMove = allItems.filter(
-        i => i.section === sectionToDelete && i.group === groupToDelete
-      );
-      const count = itemsToMove.length;
-      if (count === 0) {
-        pushLog(`Group "${groupToDelete}" is empty and will disappear`);
-      } else {
-        pushLog(`Moving ${count} items`);
-        for (const item of itemsToMove) {
+async function handleDeleteGroup() {
+  if (!targetSection) {
+    pushLog("\u274C No target section selected");
+    return;
+  }
+
+  setDeleteBusy(true);
+  const targetGrp = targetGroup === ALL ? "" : targetGroup;
+
+  pushLog(`Deleting group "${groupToDelete}" in section "${sectionToDelete}"`);
+  pushLog(`→ Moving items to: "${targetSection}" / "${targetGrp || '(none)'}"`);
+
+  try {
+    const itemsToMove = allItems.filter(
+      (i) => i.section === sectionToDelete && i.group === groupToDelete
+    );
+
+    if (itemsToMove.length === 0) {
+      pushLog(`Group "${groupToDelete}" is already empty → it should disappear after refresh`);
+    } else {
+      pushLog(`Found ${itemsToMove.length} items to move`);
+
+      let successCount = 0;
+      let failCount = 0;
+
+      for (const item of itemsToMove) {
+        try {
           const payload = {
             PK: item.PK,
             section: targetSection,
             group: targetGrp,
           };
+
           const out = await apiJson("/api/admin/slides", {
             method: "PATCH",
             headers: { "content-type": "application/json", "x-admin-token": token },
             body: JSON.stringify(payload),
           });
-          if (!out.ok) throw new Error(out.data?.detail || out.data?.error || "Move failed");
+
+          if (!out.ok) {
+            throw new Error(out.data?.error || out.data?.detail || `HTTP ${out.status}`);
+          }
+
+          successCount++;
+          pushLog(`Moved ${item.PK} successfully`);
+        } catch (err: any) {
+          failCount++;
+          pushLog(`Failed to move ${item.PK}: ${err.message}`);
         }
-        pushLog(`Moved ${count} items successfully`);
       }
-      await refreshAll();
+
+      pushLog(`Finished: ${successCount} moved successfully, ${failCount} failed`);
+      if (failCount > 0) {
+        alert(`Warning: ${failCount} items could not be moved. The group may still appear.`);
+      }
+    }
+
+    await refreshAll();
+
+    // Give UI a moment to re-compute sectionMap
+    setTimeout(() => {
       setShowDeleteGroupModal(false);
       setGroup(ALL);
-    } catch (err: any) {
-      pushLog(`Error deleting group: ${err.message}`);
-      alert("Failed to move/delete group");
-    } finally {
-      setDeleteBusy(false);
-    }
+      pushLog("Group delete operation completed");
+    }, 300);
+  } catch (err: any) {
+    pushLog(`Critical error during group delete: ${err.message}`);
+    alert("Group delete failed: " + err.message);
+  } finally {
+    setDeleteBusy(false);
   }
+}
 
   // ── Render ───────────────────────────────────────────────────────────
   const filterLabel = section === ALL ? "All Sections" : section;
@@ -720,25 +750,60 @@ export default function AdminPage() {
                 flexWrap: 'wrap',
                 alignItems: 'center',
               }}>
-                {section !== ALL && (
-                  <button
-                    style={{
-                      ...styles.dangerSmall,
-                      padding: '10px 18px',
-                      fontSize: 15,
-                      minWidth: 260,
-                    }}
-                    onClick={() => {
-                      setSectionToDelete(section);
-                      setTargetSection("");
-                      setTargetGroup(ALL);
-                      setShowDeleteSectionModal(true);
-                    }}
-                    disabled={busy || deleteBusy}
-                  >
-                    🗑️ Delete Section "{section}" ({sectionItemCount} items)
-                  </button>
-                )}
+ {section !== ALL && (
+  <button
+    style={{
+      ...styles.dangerSmall,
+      padding: '10px 18px',
+      fontSize: 15,
+      minWidth: 260,
+    }}
+    onClick={() => {
+      const count = allItems.filter(i => i.section === section).length;
+      if (count === 0) {
+        pushLog(`Section "${section}" is already empty → refreshing`);
+        refreshAll();
+        setSection(ALL);
+      } else {
+        setSectionToDelete(section);
+        setTargetSection("");
+        setTargetGroup(ALL);
+        setShowDeleteSectionModal(true);
+      }
+    }}
+    disabled={busy || deleteBusy}
+  >
+    🗑️ Delete Section "{section}" ({sectionItemCount} items)
+  </button>
+)}
+
+{group !== ALL && (
+  <button
+    style={{
+      ...styles.dangerSmall,
+      padding: '10px 18px',
+      fontSize: 15,
+      minWidth: 260,
+    }}
+    onClick={() => {
+      const count = allItems.filter(i => i.section === section && i.group === group).length;
+      if (count === 0) {
+        pushLog(`Group "${group}" in "${section}" is already empty → refreshing`);
+        refreshAll();
+        setGroup(ALL);
+      } else {
+        setSectionToDelete(section);
+        setGroupToDelete(group);
+        setTargetSection("");
+        setTargetGroup(ALL);
+        setShowDeleteGroupModal(true);
+      }
+    }}
+    disabled={busy || deleteBusy}
+  >
+    🗑️ Delete Group "{group}" ({groupItemCount} items)
+  </button>
+)}
 
                 {group !== ALL && (
                   <button
@@ -1228,9 +1293,13 @@ export default function AdminPage() {
                 Delete Section: {sectionToDelete}
               </h3>
 
-              <p>
-                This section contains <strong>{sectionItemCount}</strong> items.
-              </p>
+                <p>
+                  {sectionItemCount > 0 ? (
+                    <>This section contains <strong>{sectionItemCount}</strong> items.</>
+                  ) : (
+                    <>This section is empty and will disappear after refresh.</>
+                  )}
+                </p>
 
               <p style={{ margin: "16px 0" }}>
                 You must move these items to another section before deletion.
@@ -1333,9 +1402,13 @@ export default function AdminPage() {
                 Delete Group: {groupToDelete} (in {sectionToDelete})
               </h3>
 
-              <p>
-                This group contains <strong>{groupItemCount}</strong> items.
-              </p>
+                <p>
+                  {groupItemCount > 0 ? (
+                    <>This group contains <strong>{groupItemCount}</strong> items.</>
+                  ) : (
+                    <>This group is empty and will disappear after refresh.</>
+                  )}
+                </p>
 
               <p style={{ margin: "16px 0" }}>
                 Move these items to another group in the same section or to another section.
