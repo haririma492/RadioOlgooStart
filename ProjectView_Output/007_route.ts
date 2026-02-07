@@ -1,28 +1,13 @@
-﻿// Original: app\api\admin\slides\route.ts
-// Original: app\api\admin\slides\route.ts
-// app/api/admin/slides/route.ts
-//
-// GENERIC PK SYSTEM: PK = MEDIA#<timestamp>#<random14>
-// Section/group are just attributes â€” items can move freely between them.
-//
+﻿// Original: app\api\admin\migrate-old\route.ts
+// app/api/admin/migrate-old/route.ts
 import { NextResponse } from "next/server";
-import { randomUUID } from "crypto";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import {
-  DynamoDBDocumentClient,
-  PutCommand,
-  DeleteCommand,
-  UpdateCommand,
-  ScanCommand,
-} from "@aws-sdk/lib-dynamodb";
-import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { DynamoDBDocumentClient, ScanCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// Sections are fully dynamic â€” no hardcoded validation list.
-// Any non-empty string is accepted as a valid section name.
+type TargetSet = "CENTER" | "SLIDES" | "BG";
 
 function requireAdmin(req: Request) {
   const incoming = (req.headers.get("x-admin-token") || "").trim();
@@ -34,134 +19,25 @@ function requireAdmin(req: Request) {
   return null;
 }
 
-function jsonOk(obj: any, status = 200) {
-  return NextResponse.json(obj, {
-    status,
-    headers: { "cache-control": "no-store" },
-  });
-}
-
-function jsonErr(error: string, status = 400, detail?: any) {
-  return jsonOk({ error, ...(detail ? { detail: String(detail) } : {}) }, status);
-}
-
-// â”€â”€ DynamoDB â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-const ddb = DynamoDBDocumentClient.from(
-  new DynamoDBClient({
-    region: process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || "ca-central-1",
-  }),
-  { marshallOptions: { removeUndefinedValues: true } }
-);
-
-const region = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || "ca-central-1";
-const bucket = (process.env.S3_BUCKET_NAME || "").trim();
-const bucketHost = bucket ? `${bucket}.s3.${region}.amazonaws.com` : "";
-const s3 = new S3Client({ region });
-
-function keyFromS3PublicUrl(urlStr: string): string | null {
-  try {
-    const u = new URL(urlStr);
-    if (!bucketHost) return null;
-    if (u.hostname !== bucketHost) return null;
-    const key = decodeURIComponent(u.pathname.replace(/^\//, ""));
-    return key || null;
-  } catch {
-    return null;
-  }
-}
-
 function tableName() {
-  const v = (process.env.DDB_TABLE_NAME || "").trim();
-  if (!v) throw new Error("Missing DDB_TABLE_NAME in env");
-  return v;
+  return (
+    process.env.DDB_TABLE_NAME ||
+    process.env.MEDIA_TABLE_NAME ||
+    process.env.TABLE_NAME ||
+    ""
+  ).trim();
 }
 
-// â”€â”€ Generic PK generator â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// Format: MEDIA#<timestamp>#<random14>
-// Example: MEDIA#1738704123456#a1b2c3d4e5f6ab
-function generatePK(): string {
-  const ts = Date.now();
-  const rand = randomUUID().replace(/-/g, "").slice(0, 14);
-  return `MEDIA#${ts}#${rand}`;
-}
-
-// â”€â”€ Helper: presign S3 URLs in items â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-async function presignItems(items: any[]): Promise<any[]> {
-  if (!bucket) return items;
-
-  return Promise.all(
-    items.map(async (item) => {
-      let urlStr = String(item.url || "");
-      const key = keyFromS3PublicUrl(urlStr);
-
-      if (key) {
-        urlStr = await getSignedUrl(
-          s3,
-          new GetObjectCommand({ Bucket: bucket, Key: key }),
-          { expiresIn: 60 * 60 } // 1 hour
-        );
-      }
-
-      return { ...item, url: urlStr };
-    })
-  );
-}
+const NEW_CATEGORIES = new Set(["YouTubeChannels", "RevolutionMusic", "Old"]);
 
 /**
- * GET - List items
- * Query params:
- *   - section: (optional) filter by section
- *   - group: (optional) filter by group
- */
-export async function GET(req: Request) {
-  const auth = requireAdmin(req);
-  if (auth) return auth;
-
-  try {
-    const TableName = tableName();
-    const url = new URL(req.url);
-    const sectionFilter = url.searchParams.get("section");
-    const groupFilter = url.searchParams.get("group");
-
-    const result = await ddb.send(new ScanCommand({ TableName }));
-    let items = (result.Items || []).filter(
-      (item) => item.PK && String(item.PK).startsWith("MEDIA#")
-    );
-
-    // Filter by section
-    if (sectionFilter) {
-      items = items.filter((item) => item.section === sectionFilter);
-    }
-
-    // Filter by group
-    if (groupFilter) {
-      items = items.filter((item) => item.group === groupFilter);
-    }
-
-    // Sort by createdAt descending
-    items.sort((a, b) => {
-      const da = a.createdAt || "";
-      const db = b.createdAt || "";
-      return db.localeCompare(da);
-    });
-
-    // Presign S3 URLs
-    items = await presignItems(items);
-
-    return jsonOk({
-      ok: true,
-      section: sectionFilter,
-      group: groupFilter,
-      count: items.length,
-      items,
-    });
-  } catch (e: any) {
-    return jsonErr("Load failed", 500, e?.message ?? e);
-  }
-}
-
-/**
- * POST - Create new item
+ * POST /api/admin/migrate-old
+ * Purpose: tag legacy items (missing category1/category2) under:
+ *   category1="Old"
+ *   category2 = pk ("CENTER" | "SLIDES" | "BG")
+ *
+ * Safety: by default it updates ONLY items where category1 is empty.
+ * If you want to force retag everything (NOT recommended), set env MIGRATE_FORCE=1 temporarily.
  */
 export async function POST(req: Request) {
   const auth = requireAdmin(req);
@@ -169,148 +45,74 @@ export async function POST(req: Request) {
 
   try {
     const TableName = tableName();
-    const body = await req.json().catch(() => null);
-    if (!body) return jsonErr("Bad JSON body", 400);
+    if (!TableName) throw new Error("Missing DDB table name env (DDB_TABLE_NAME)");
 
-    const section = String(body.section || "").trim();
-    if (!section) {
-      return jsonErr("Missing section", 400);
-    }
+    const force = (process.env.MIGRATE_FORCE || "").trim() === "1";
 
-    const url = String(body.url || "").trim();
-    if (!url) return jsonErr("Missing url", 400);
-
-    const title = String(body.title || "").trim();
-    if (!title) return jsonErr("Missing title", 400);
-
-    // Generate generic PK â€” not tied to any section
-    const PK = generatePK();
-
-    const item: any = {
-      PK,
-      url,
-      section,
-      title,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    // Optional fields
-    if (body.group) item.group = String(body.group).trim();
-    if (body.person) item.person = String(body.person).trim();
-    if (body.date) item.date = String(body.date).trim();
-    if (body.description) item.description = String(body.description).trim();
-    if (body.active !== undefined) item.active = Boolean(body.active);
-
-    await ddb.send(new PutCommand({ TableName, Item: item }));
-
-    return jsonOk({ ok: true, PK, item });
-  } catch (e: any) {
-    return jsonErr("Create failed", 500, e?.message ?? e);
-  }
-}
-
-/**
- * PATCH - Update item (title, description, section, group, etc.)
- * Now supports moving items between sections and groups!
- */
-export async function PATCH(req: Request) {
-  const auth = requireAdmin(req);
-  if (auth) return auth;
-
-  try {
-    const TableName = tableName();
-    const body = await req.json().catch(() => null);
-    if (!body) return jsonErr("Bad JSON body", 400);
-
-    const PK = String(body.PK || "").trim();
-    if (!PK) return jsonErr("Missing PK", 400);
-
-    // Build update expression dynamically
-    const updates: string[] = ["updatedAt = :upd"];
-    const values: any = { ":upd": new Date().toISOString() };
-    const names: Record<string, string> = {};
-
-    if (body.title !== undefined) {
-      updates.push("title = :title");
-      values[":title"] = String(body.title).trim();
-    }
-    if (body.description !== undefined) {
-      updates.push("description = :desc");
-      values[":desc"] = String(body.description).trim();
-    }
-    if (body.person !== undefined) {
-      updates.push("person = :person");
-      values[":person"] = String(body.person).trim();
-    }
-    if (body.date !== undefined) {
-      updates.push("#dt = :date");
-      values[":date"] = String(body.date).trim();
-      names["#dt"] = "date";
-    }
-    if (body.active !== undefined) {
-      updates.push("active = :active");
-      values[":active"] = Boolean(body.active);
-    }
-
-    // â”€â”€ NEW: Allow moving between sections â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    if (body.section !== undefined) {
-      const newSection = String(body.section).trim();
-      if (!newSection) {
-        return jsonErr("Section cannot be empty", 400);
-      }
-      updates.push("#sec = :section");
-      values[":section"] = newSection;
-      names["#sec"] = "section";
-    }
-
-    // â”€â”€ NEW: Allow moving between groups â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    if (body.group !== undefined) {
-      updates.push("#grp = :group");
-      values[":group"] = String(body.group).trim();
-      names["#grp"] = "group";
-    }
-
-    const updateExpression = `SET ${updates.join(", ")}`;
-    const expressionAttributeNames =
-      Object.keys(names).length > 0 ? names : undefined;
-
-    await ddb.send(
-      new UpdateCommand({
-        TableName,
-        Key: { PK },
-        UpdateExpression: updateExpression,
-        ExpressionAttributeValues: values,
-        ...(expressionAttributeNames && {
-          ExpressionAttributeNames: expressionAttributeNames,
-        }),
+    const ddb = DynamoDBDocumentClient.from(
+      new DynamoDBClient({
+        region: process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || "ca-central-1",
       })
     );
 
-    return jsonOk({ ok: true, PK });
+    let scanned = 0;
+    let updated = 0;
+    let lastKey: any = undefined;
+
+    do {
+      const scan = await ddb.send(
+        new ScanCommand({
+          TableName,
+          ExclusiveStartKey: lastKey,
+        })
+      );
+
+      const items = (scan.Items || []) as any[];
+      scanned += items.length;
+      lastKey = scan.LastEvaluatedKey;
+
+      for (const it of items) {
+        const pk = String(it.pk || "").trim().toUpperCase() as TargetSet;
+        const sk = String(it.sk || "").trim();
+
+        if (!(pk === "CENTER" || pk === "SLIDES" || pk === "BG")) continue;
+        if (!sk) continue;
+
+        const c1 = String(it.category1 || "").trim();
+        const c2 = String(it.category2 || "").trim();
+
+        // Default: only touch legacy/empty category1
+        if (!force) {
+          if (c1) continue; // already categorized
+        }
+
+        // If force, still avoid smashing new categories unless explicitly desired
+        if (force && c1 && NEW_CATEGORIES.has(c1)) {
+          // keep as-is
+          continue;
+        }
+
+        await ddb.send(
+          new UpdateCommand({
+            TableName,
+            Key: { pk: pk, sk: sk },
+            UpdateExpression: "SET category1 = :c1, category2 = :c2",
+            ExpressionAttributeValues: {
+              ":c1": "Old",
+              ":c2": pk, // CENTER / SLIDES / BG
+            },
+          })
+        );
+
+        updated += 1;
+      }
+    } while (lastKey);
+
+    return NextResponse.json({ ok: true, scanned, updated });
   } catch (e: any) {
-    return jsonErr("Update failed", 500, e?.message ?? e);
-  }
-}
-
-/**
- * DELETE - Remove item
- */
-export async function DELETE(req: Request) {
-  const auth = requireAdmin(req);
-  if (auth) return auth;
-
-  try {
-    const TableName = tableName();
-    const url = new URL(req.url);
-    const PK = (url.searchParams.get("PK") || "").trim();
-
-    if (!PK) return jsonErr("Missing PK", 400);
-
-    await ddb.send(new DeleteCommand({ TableName, Key: { PK } }));
-
-    return jsonOk({ ok: true });
-  } catch (e: any) {
-    return jsonErr("Delete failed", 500, e?.message ?? e);
+    return NextResponse.json(
+      { error: "Migration failed", detail: e?.message ?? String(e) },
+      { status: 500 }
+    );
   }
 }

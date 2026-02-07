@@ -1,7 +1,9 @@
+﻿// Original: app\api\slides\route.ts
+// Original: app\api\slides\route.ts
 // app/api/slides/route.ts
 //
 // PUBLIC API: Returns media items filtered by section/group.
-// NO AUTHENTICATION REQUIRED - this is for public viewing
+// Updated for generic MEDIA#<ts>#<random> PK system.
 //
 import { NextResponse } from "next/server";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
@@ -70,11 +72,9 @@ export async function GET(req: Request) {
     const result = await ddb.send(new ScanCommand({ TableName }));
     const allItems = (result.Items || []) as any[];
 
-    // ✅ Filter: Accept both MEDIA# and VIDEOARCHIVE# formats
+    // Filter: only MEDIA# items with matching section/group
     let items = allItems.filter((x) => {
-      if (!x.PK) return false;
-      const pk = String(x.PK);
-      if (!pk.startsWith("MEDIA#") && !pk.startsWith("VIDEOARCHIVE#")) return false;
+      if (!x.PK || !String(x.PK).startsWith("MEDIA#")) return false;
       if (!x.url || !x.section) return false;
       if (x.section !== section) return false;
       if (group && x.group !== group) return false;
