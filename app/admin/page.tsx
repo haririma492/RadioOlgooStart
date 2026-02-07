@@ -19,6 +19,7 @@ type MediaItem = {
   active?: boolean;
   createdAt?: string;
 };
+
 type ItemsGetResponse = { ok: true; items: MediaItem[]; count?: number } | { error: string };
 
 const ALL = "__ALL__"; // sentinel for "show everything"
@@ -37,7 +38,7 @@ function isImage(url: string): boolean {
   return u.includes(".jpg") || u.includes(".jpeg") || u.includes(".png") || u.includes(".webp");
 }
 
-// ── Default sections & groups (always visible even if DB is empty) ─────
+// ── Default sections & groups (used only as fallback when no data exists) ─────
 const DEFAULT_SECTION_GROUPS: Record<string, string[]> = {
   "Video Archives": ["Conference", "Interview", "Workshop", "Lecture", "Panel Discussion"],
   "Single Videos-Songs": ["Pop", "Classical", "Jazz", "Rock", "Traditional", "Folk"],
@@ -49,23 +50,29 @@ const DEFAULT_SECTION_GROUPS: Record<string, string[]> = {
   "In-Transition": ["Pending", "Review", "Archive"],
 };
 
-// ── Build section→groups map from items, merged with defaults ──────────
-function buildSectionMap(items: MediaItem[]): Record<string, string[]> {
-  const map: Record<string, Set<string>> = {};
-  for (const [sec, groups] of Object.entries(DEFAULT_SECTION_GROUPS)) {
-    map[sec] = new Set(groups);
-  }
+// ── Build section→groups map STRICTLY from items + known groups ──────
+function buildSectionMap(
+  items: MediaItem[],
+  knownGroups: Record<string, Set<string>>
+): Record<string, string[]> {
+  const map: Record<string, Set<string>> = { ...knownGroups };
+
+  // Add real data (overrides anything)
   for (const it of items) {
     const sec = (it.section || "").trim();
     if (!sec) continue;
+
     if (!map[sec]) map[sec] = new Set();
+
     const grp = (it.group || "").trim();
     if (grp) map[sec].add(grp);
   }
+
   const result: Record<string, string[]> = {};
   for (const sec of Object.keys(map).sort()) {
     result[sec] = Array.from(map[sec]).sort();
   }
+
   return result;
 }
 
@@ -77,18 +84,14 @@ export default function AdminPage() {
   const [busy, setBusy] = useState<boolean>(false);
   const [log, setLog] = useState<string[]>([]);
 
-  // ALL items from DB (no server-side filter)
   const [allItems, setAllItems] = useState<MediaItem[]>([]);
 
-  // Filters — ALL means show everything
   const [section, setSection] = useState<string>(ALL);
   const [group, setGroup] = useState<string>(ALL);
   const [search, setSearch] = useState<string>("");
 
-  // Upload mode: "file" for file upload, "url" for URL import
   const [uploadMode, setUploadMode] = useState<"file" | "url">("file");
 
-  // Upload fields
   const [uploadFiles, setUploadFiles] = useState<File[]>([]);
   const [uploadUrl, setUploadUrl] = useState<string>("");
   const [uploadTitle, setUploadTitle] = useState<string>("");
@@ -101,13 +104,11 @@ export default function AdminPage() {
   const [uploadNewGroup, setUploadNewGroup] = useState<string>("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Editing state
   const [editingPK, setEditingPK] = useState<string>("");
   const [editingFields, setEditingFields] = useState<Partial<MediaItem>>({});
   const [editNewSection, setEditNewSection] = useState<string>("");
   const [editNewGroup, setEditNewGroup] = useState<string>("");
 
-  // Delete modals
   const [showDeleteSectionModal, setShowDeleteSectionModal] = useState(false);
   const [showDeleteGroupModal, setShowDeleteGroupModal] = useState(false);
   const [sectionToDelete, setSectionToDelete] = useState<string>("");
@@ -116,11 +117,16 @@ export default function AdminPage() {
   const [targetGroup, setTargetGroup] = useState<string>(ALL);
   const [deleteBusy, setDeleteBusy] = useState(false);
 
+  // Track known groups (newly created ones) so they appear even without items
+  const [knownGroups, setKnownGroups] = useState<Record<string, Set<string>>>({});
+
   // ── Derived: dynamic section → groups map ────────────────────────────
-  const sectionMap = useMemo(() => buildSectionMap(allItems), [allItems]);
+  const sectionMap = useMemo(
+    () => buildSectionMap(allItems, knownGroups),
+    [allItems, knownGroups]
+  );
   const sectionList = useMemo(() => Object.keys(sectionMap).sort(), [sectionMap]);
 
-  // Groups for current filter section
   const groupOptions = useMemo(() => {
     if (section === ALL) {
       const all = new Set<string>();
@@ -132,7 +138,6 @@ export default function AdminPage() {
     return sectionMap[section] || [];
   }, [sectionMap, section]);
 
-  // ALL unique groups across every section
   const allGroupOptions = useMemo(() => {
     const all = new Set<string>();
     for (const groups of Object.values(sectionMap)) {
@@ -141,7 +146,6 @@ export default function AdminPage() {
     return Array.from(all).sort();
   }, [sectionMap]);
 
-  // Item counts for delete buttons
   const sectionItemCount = useMemo(() => 
     section !== ALL ? allItems.filter(i => i.section === section).length : 0,
     [allItems, section]
@@ -515,9 +519,10 @@ export default function AdminPage() {
       const itemsToMove = allItems.filter(i => i.section === sectionToDelete);
       const count = itemsToMove.length;
       if (count === 0) {
-        pushLog(`Section "${sectionToDelete}" is empty and will disappear`);
+        pushLog(`Section "${sectionToDelete}" is already empty → refreshing`);
       } else {
         pushLog(`Moving ${count} items`);
+        let success = 0;
         for (const item of itemsToMove) {
           const payload = {
             PK: item.PK,
@@ -529,96 +534,77 @@ export default function AdminPage() {
             headers: { "content-type": "application/json", "x-admin-token": token },
             body: JSON.stringify(payload),
           });
-          if (!out.ok) throw new Error(out.data?.detail || out.data?.error || "Move failed");
+          if (out.ok) {
+            success++;
+          } else {
+            pushLog(`Failed to move ${item.PK}: ${out.data?.error || out.data?.detail || "Unknown error"}`);
+          }
         }
-        pushLog(`Moved ${count} items successfully`);
+        pushLog(`Moved ${success} of ${count} items`);
       }
-      pushLog(`Section "${sectionToDelete}" is now empty`);
       await refreshAll();
+      await new Promise(r => setTimeout(r, 600));
       setShowDeleteSectionModal(false);
       setSection(ALL);
+      pushLog(`Section delete operation completed`);
     } catch (err: any) {
-      pushLog(`Error during section delete: ${err.message}`);
-      alert("Failed to move/delete section: " + err.message);
+      pushLog(`Critical error: ${err.message}`);
+      alert("Section delete failed: " + err.message);
     } finally {
       setDeleteBusy(false);
     }
   }
 
-async function handleDeleteGroup() {
-  if (!targetSection) {
-    pushLog("\u274C No target section selected");
-    return;
-  }
-
-  setDeleteBusy(true);
-  const targetGrp = targetGroup === ALL ? "" : targetGroup;
-
-  pushLog(`Deleting group "${groupToDelete}" in section "${sectionToDelete}"`);
-  pushLog(`→ Moving items to: "${targetSection}" / "${targetGrp || '(none)'}"`);
-
-  try {
-    const itemsToMove = allItems.filter(
-      (i) => i.section === sectionToDelete && i.group === groupToDelete
-    );
-
-    if (itemsToMove.length === 0) {
-      pushLog(`Group "${groupToDelete}" is already empty → it should disappear after refresh`);
-    } else {
-      pushLog(`Found ${itemsToMove.length} items to move`);
-
-      let successCount = 0;
-      let failCount = 0;
-
-      for (const item of itemsToMove) {
-        try {
+  async function handleDeleteGroup() {
+    if (!targetSection) {
+      pushLog("\u274C No target section selected");
+      return;
+    }
+    setDeleteBusy(true);
+    const targetGrp = targetGroup === ALL ? "" : targetGroup;
+    pushLog(`Deleting group "${groupToDelete}" in "${sectionToDelete}" → "${targetSection}" / "${targetGrp || '(none)'}"`);
+    try {
+      const itemsToMove = allItems.filter(
+        i => i.section === sectionToDelete && i.group === groupToDelete
+      );
+      const count = itemsToMove.length;
+      if (count === 0) {
+        pushLog(`Group "${groupToDelete}" is already empty → refreshing`);
+      } else {
+        pushLog(`Moving ${count} items`);
+        let success = 0;
+        for (const item of itemsToMove) {
           const payload = {
             PK: item.PK,
             section: targetSection,
             group: targetGrp,
           };
-
           const out = await apiJson("/api/admin/slides", {
             method: "PATCH",
             headers: { "content-type": "application/json", "x-admin-token": token },
             body: JSON.stringify(payload),
           });
-
-          if (!out.ok) {
-            throw new Error(out.data?.error || out.data?.detail || `HTTP ${out.status}`);
+          if (out.ok) {
+            success++;
+          } else {
+            pushLog(`Failed to move ${item.PK}: ${out.data?.error || out.data?.detail || "Unknown error"}`);
           }
-
-          successCount++;
-          pushLog(`Moved ${item.PK} successfully`);
-        } catch (err: any) {
-          failCount++;
-          pushLog(`Failed to move ${item.PK}: ${err.message}`);
         }
+        pushLog(`Moved ${success} of ${count} items`);
       }
-
-      pushLog(`Finished: ${successCount} moved successfully, ${failCount} failed`);
-      if (failCount > 0) {
-        alert(`Warning: ${failCount} items could not be moved. The group may still appear.`);
-      }
-    }
-
-    await refreshAll();
-
-    // Give UI a moment to re-compute sectionMap
-    setTimeout(() => {
+      await refreshAll();
+      await new Promise(r => setTimeout(r, 600));
       setShowDeleteGroupModal(false);
       setGroup(ALL);
-      pushLog("Group delete operation completed");
-    }, 300);
-  } catch (err: any) {
-    pushLog(`Critical error during group delete: ${err.message}`);
-    alert("Group delete failed: " + err.message);
-  } finally {
-    setDeleteBusy(false);
+      pushLog(`Group delete operation completed`);
+    } catch (err: any) {
+      pushLog(`Critical error: ${err.message}`);
+      alert("Group delete failed: " + err.message);
+    } finally {
+      setDeleteBusy(false);
+    }
   }
-}
 
-  // ── Render ───────────────────────────────────────────────────────────
   const filterLabel = section === ALL ? "All Sections" : section;
   const filterGroupLabel = group === ALL ? "All Groups" : group;
 
@@ -738,7 +724,7 @@ async function handleDeleteGroup() {
                 </div>
               </div>
 
-              {/* Delete Controls – always visible when relevant */}
+              {/* Delete Controls */}
               <div style={{
                 marginTop: 16,
                 padding: '12px 16px',
@@ -750,60 +736,32 @@ async function handleDeleteGroup() {
                 flexWrap: 'wrap',
                 alignItems: 'center',
               }}>
- {section !== ALL && (
-  <button
-    style={{
-      ...styles.dangerSmall,
-      padding: '10px 18px',
-      fontSize: 15,
-      minWidth: 260,
-    }}
-    onClick={() => {
-      const count = allItems.filter(i => i.section === section).length;
-      if (count === 0) {
-        pushLog(`Section "${section}" is already empty → refreshing`);
-        refreshAll();
-        setSection(ALL);
-      } else {
-        setSectionToDelete(section);
-        setTargetSection("");
-        setTargetGroup(ALL);
-        setShowDeleteSectionModal(true);
-      }
-    }}
-    disabled={busy || deleteBusy}
-  >
-    🗑️ Delete Section "{section}" ({sectionItemCount} items)
-  </button>
-)}
-
-{group !== ALL && (
-  <button
-    style={{
-      ...styles.dangerSmall,
-      padding: '10px 18px',
-      fontSize: 15,
-      minWidth: 260,
-    }}
-    onClick={() => {
-      const count = allItems.filter(i => i.section === section && i.group === group).length;
-      if (count === 0) {
-        pushLog(`Group "${group}" in "${section}" is already empty → refreshing`);
-        refreshAll();
-        setGroup(ALL);
-      } else {
-        setSectionToDelete(section);
-        setGroupToDelete(group);
-        setTargetSection("");
-        setTargetGroup(ALL);
-        setShowDeleteGroupModal(true);
-      }
-    }}
-    disabled={busy || deleteBusy}
-  >
-    🗑️ Delete Group "{group}" ({groupItemCount} items)
-  </button>
-)}
+                {section !== ALL && (
+                  <button
+                    style={{
+                      ...styles.dangerSmall,
+                      padding: '10px 18px',
+                      fontSize: 15,
+                      minWidth: 260,
+                    }}
+                    onClick={() => {
+                      const count = allItems.filter(i => i.section === section).length;
+                      if (count === 0) {
+                        pushLog(`Section "${section}" is already empty → refreshing`);
+                        refreshAll();
+                        setSection(ALL);
+                      } else {
+                        setSectionToDelete(section);
+                        setTargetSection("");
+                        setTargetGroup(ALL);
+                        setShowDeleteSectionModal(true);
+                      }
+                    }}
+                    disabled={busy || deleteBusy}
+                  >
+                    🗑️ Delete Section "{section}" ({sectionItemCount} items)
+                  </button>
+                )}
 
                 {group !== ALL && (
                   <button
@@ -814,11 +772,18 @@ async function handleDeleteGroup() {
                       minWidth: 260,
                     }}
                     onClick={() => {
-                      setSectionToDelete(section);
-                      setGroupToDelete(group);
-                      setTargetSection("");
-                      setTargetGroup(ALL);
-                      setShowDeleteGroupModal(true);
+                      const count = allItems.filter(i => i.section === section && i.group === group).length;
+                      if (count === 0) {
+                        pushLog(`Group "${group}" in "{section}" is already empty → refreshing`);
+                        refreshAll();
+                        setGroup(ALL);
+                      } else {
+                        setSectionToDelete(section);
+                        setGroupToDelete(group);
+                        setTargetSection("");
+                        setTargetGroup(ALL);
+                        setShowDeleteGroupModal(true);
+                      }
                     }}
                     disabled={busy || deleteBusy}
                   >
@@ -890,6 +855,8 @@ async function handleDeleteGroup() {
                     />
                   )}
                 </div>
+
+                {/* ── Group field with Create button ── */}
                 <div style={{ flex: 1, minWidth: 200 }}>
                   <label style={styles.label}>Group (optional)</label>
                   <select
@@ -902,20 +869,84 @@ async function handleDeleteGroup() {
                     disabled={busy || !authorized || !uploadSection || uploadSection === "__NEW__"}
                   >
                     <option value="">(none)</option>
-                    {allGroupOptions.map((g) => (
+                    {(uploadSection && sectionMap[uploadSection] || []).map((g) => (
                       <option key={g} value={g}>{g}</option>
                     ))}
                     <option value="__NEW__">{"\u2795"} Add New Group...</option>
                   </select>
+
                   {uploadGroup === "__NEW__" && (
-                    <input
-                      value={uploadNewGroup}
-                      onChange={(e) => setUploadNewGroup(e.target.value)}
-                      placeholder="New group name"
-                      style={{ ...styles.input, marginTop: 8, border: "2px solid rgba(34,197,94,0.5)" }}
-                      autoFocus
-                      disabled={busy}
-                    />
+                    <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8 }}>
+                      <input
+                        value={uploadNewGroup}
+                        onChange={(e) => setUploadNewGroup(e.target.value)}
+                        placeholder="New group name"
+                        style={{ ...styles.input, flex: 1, border: "2px solid rgba(34,197,94,0.5)" }}
+                        autoFocus
+                        disabled={busy}
+                      />
+                      <button
+                        style={{
+                          padding: "8px 12px",
+                          background: "#15803d",
+                          color: "white",
+                          border: "none",
+                          borderRadius: 8,
+                          cursor: "pointer",
+                          fontWeight: 800,
+                          fontSize: 13,
+                        }}
+                        onClick={async () => {
+                          if (!uploadNewGroup.trim()) {
+                            pushLog("\u274C Please enter a group name");
+                            return;
+                          }
+
+                          if (!uploadSection || uploadSection === "__NEW__") {
+                            pushLog("\u274C Select a section first");
+                            return;
+                          }
+
+                          setBusy(true);
+                          try {
+                            const finalSection = resolveUploadSection();
+                            const payload = {
+                              section: finalSection,
+                              group: uploadNewGroup.trim(),
+                            };
+
+                            const res = await fetch("/api/admin/create-group", {
+                              method: "POST",
+                              headers: {
+                                "Content-Type": "application/json",
+                                "x-admin-token": token,
+                              },
+                              body: JSON.stringify(payload),
+                            });
+
+                            const data = await res.json();
+
+                            if (res.ok && data.success) {
+                              pushLog(`\u2705 Group "${uploadNewGroup.trim()}" created in "${finalSection}"`);
+                              setUploadNewGroup("");
+                              setUploadGroup(uploadNewGroup.trim()); // auto-select
+                              await refreshAll();
+                              await new Promise(r => setTimeout(r, 800));
+                              await refreshAll(); // double refresh to be sure
+                            } else {
+                              pushLog(`\u274C Failed: ${data.error || "Unknown error"}`);
+                            }
+                          } catch (err: any) {
+                            pushLog(`\u274C Error creating group: ${err.message}`);
+                          } finally {
+                            setBusy(false);
+                          }
+                        }}
+                        disabled={busy || !uploadNewGroup.trim()}
+                      >
+                        Create Group
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>
@@ -1078,7 +1109,6 @@ async function handleDeleteGroup() {
                     <div style={styles.itemMeta}>
                       {editingPK === it.PK ? (
                         <>
-                          {/* Move box */}
                           <div style={styles.moveBox}>
                             <div style={styles.moveBoxTitle}>{"\u27A1\uFE0F"} Section / Group</div>
                             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -1130,7 +1160,7 @@ async function handleDeleteGroup() {
                                   disabled={editingFields.section === "__NEW__"}
                                 >
                                   <option value="">(none)</option>
-                                  {allGroupOptions.map((g) => (
+                                  {(editingFields.section && sectionMap[editingFields.section] || []).map((g) => (
                                     <option key={g} value={g}>{g}</option>
                                   ))}
                                   <option value="__NEW__">{"\u2795"} Add New Group...</option>
@@ -1266,7 +1296,7 @@ async function handleDeleteGroup() {
           )}
         </div>
 
-        {/* ── Delete Section Modal ──────────────────────────────────────── */}
+        {/* Delete Section Modal */}
         {showDeleteSectionModal && (
           <div
             style={{
@@ -1293,42 +1323,46 @@ async function handleDeleteGroup() {
                 Delete Section: {sectionToDelete}
               </h3>
 
-                <p>
-                  {sectionItemCount > 0 ? (
-                    <>This section contains <strong>{sectionItemCount}</strong> items.</>
-                  ) : (
-                    <>This section is empty and will disappear after refresh.</>
-                  )}
-                </p>
-
-              <p style={{ margin: "16px 0" }}>
-                You must move these items to another section before deletion.
+              <p>
+                {sectionItemCount > 0 ? (
+                  <>This section contains <strong>{sectionItemCount}</strong> items.</>
+                ) : (
+                  <>This section is empty and will disappear after refresh.</>
+                )}
               </p>
 
-              <div style={{ margin: "16px 0" }}>
-                <label style={{ fontWeight: 800, display: "block", marginBottom: 8 }}>
-                  Move to section:
-                </label>
-                <select
-                  value={targetSection}
-                  onChange={(e) => {
-                    setTargetSection(e.target.value);
-                    setTargetGroup(ALL);
-                  }}
-                  style={styles.editSelect}
-                >
-                  <option value="">— Select target section —</option>
-                  {sectionList
-                    .filter((s) => s !== sectionToDelete)
-                    .map((s) => (
-                      <option key={s} value={s}>
-                        {s}
-                      </option>
-                    ))}
-                </select>
-              </div>
+              {sectionItemCount > 0 && (
+                <p style={{ margin: "16px 0" }}>
+                  You must move these items to another section before deletion.
+                </p>
+              )}
 
-              {targetSection && sectionMap[targetSection]?.length > 0 && (
+              {sectionItemCount > 0 && (
+                <div style={{ margin: "16px 0" }}>
+                  <label style={{ fontWeight: 800, display: "block", marginBottom: 8 }}>
+                    Move to section:
+                  </label>
+                  <select
+                    value={targetSection}
+                    onChange={(e) => {
+                      setTargetSection(e.target.value);
+                      setTargetGroup(ALL);
+                    }}
+                    style={styles.editSelect}
+                  >
+                    <option value="">— Select target section —</option>
+                    {sectionList
+                      .filter((s) => s !== sectionToDelete)
+                      .map((s) => (
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+              )}
+
+              {sectionItemCount > 0 && targetSection && sectionMap[targetSection]?.length > 0 && (
                 <div style={{ margin: "16px 0" }}>
                   <label style={{ fontWeight: 800, display: "block", marginBottom: 8 }}>
                     Move to group (optional):
@@ -1353,6 +1387,7 @@ async function handleDeleteGroup() {
                   style={styles.cancelButton}
                   onClick={() => {
                     setShowDeleteSectionModal(false);
+                    setSectionToDelete("");
                     setTargetSection("");
                     setTargetGroup(ALL);
                   }}
@@ -1360,22 +1395,37 @@ async function handleDeleteGroup() {
                   Cancel
                 </button>
 
-                <button
-                  style={{
-                    ...styles.dangerSmall,
-                    opacity: deleteBusy || !targetSection ? 0.6 : 1,
-                  }}
-                  disabled={deleteBusy || !targetSection}
-                  onClick={handleDeleteSection}
-                >
-                  {deleteBusy ? "Moving & Deleting..." : "Move & Delete Section"}
-                </button>
+                {sectionItemCount > 0 && (
+                  <button
+                    style={{
+                      ...styles.dangerSmall,
+                      opacity: deleteBusy || !targetSection ? 0.6 : 1,
+                    }}
+                    disabled={deleteBusy || !targetSection}
+                    onClick={handleDeleteSection}
+                  >
+                    {deleteBusy ? "Moving & Deleting..." : "Move & Delete Section"}
+                  </button>
+                )}
+
+                {sectionItemCount === 0 && (
+                  <button
+                    style={styles.buttonPrimary}
+                    onClick={() => {
+                      refreshAll();
+                      setShowDeleteSectionModal(false);
+                      setSection(ALL);
+                    }}
+                  >
+                    Refresh & Close
+                  </button>
+                )}
               </div>
             </div>
           </div>
         )}
 
-        {/* ── Delete Group Modal ────────────────────────────────────────── */}
+        {/* Delete Group Modal */}
         {showDeleteGroupModal && (
           <div
             style={{
@@ -1402,40 +1452,44 @@ async function handleDeleteGroup() {
                 Delete Group: {groupToDelete} (in {sectionToDelete})
               </h3>
 
-                <p>
-                  {groupItemCount > 0 ? (
-                    <>This group contains <strong>{groupItemCount}</strong> items.</>
-                  ) : (
-                    <>This group is empty and will disappear after refresh.</>
-                  )}
-                </p>
-
-              <p style={{ margin: "16px 0" }}>
-                Move these items to another group in the same section or to another section.
+              <p>
+                {groupItemCount > 0 ? (
+                  <>This group contains <strong>{groupItemCount}</strong> items.</>
+                ) : (
+                  <>This group is empty and will disappear after refresh.</>
+                )}
               </p>
 
-              <div style={{ margin: "16px 0" }}>
-                <label style={{ fontWeight: 800, display: "block", marginBottom: 8 }}>
-                  Move to section:
-                </label>
-                <select
-                  value={targetSection}
-                  onChange={(e) => {
-                    setTargetSection(e.target.value);
-                    setTargetGroup(ALL);
-                  }}
-                  style={styles.editSelect}
-                >
-                  <option value="">— Select target section —</option>
-                  {sectionList.map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {groupItemCount > 0 && (
+                <p style={{ margin: "16px 0" }}>
+                  Move these items to another group in the same section or to another section.
+                </p>
+              )}
 
-              {targetSection && sectionMap[targetSection]?.length > 0 && (
+              {groupItemCount > 0 && (
+                <div style={{ margin: "16px 0" }}>
+                  <label style={{ fontWeight: 800, display: "block", marginBottom: 8 }}>
+                    Move to section:
+                  </label>
+                  <select
+                    value={targetSection}
+                    onChange={(e) => {
+                      setTargetSection(e.target.value);
+                      setTargetGroup(ALL);
+                    }}
+                    style={styles.editSelect}
+                  >
+                    <option value="">— Select target section —</option>
+                    {sectionList.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {groupItemCount > 0 && targetSection && sectionMap[targetSection]?.length > 0 && (
                 <div style={{ margin: "16px 0" }}>
                   <label style={{ fontWeight: 800, display: "block", marginBottom: 8 }}>
                     Move to group (optional):
@@ -1462,6 +1516,8 @@ async function handleDeleteGroup() {
                   style={styles.cancelButton}
                   onClick={() => {
                     setShowDeleteGroupModal(false);
+                    setSectionToDelete("");
+                    setGroupToDelete("");
                     setTargetSection("");
                     setTargetGroup(ALL);
                   }}
@@ -1469,16 +1525,31 @@ async function handleDeleteGroup() {
                   Cancel
                 </button>
 
-                <button
-                  style={{
-                    ...styles.dangerSmall,
-                    opacity: deleteBusy || !targetSection ? 0.6 : 1,
-                  }}
-                  disabled={deleteBusy || !targetSection}
-                  onClick={handleDeleteGroup}
-                >
-                  {deleteBusy ? "Moving & Deleting..." : "Move & Delete Group"}
-                </button>
+                {groupItemCount > 0 && (
+                  <button
+                    style={{
+                      ...styles.dangerSmall,
+                      opacity: deleteBusy || !targetSection ? 0.6 : 1,
+                    }}
+                    disabled={deleteBusy || !targetSection}
+                    onClick={handleDeleteGroup}
+                  >
+                    {deleteBusy ? "Moving & Deleting..." : "Move & Delete Group"}
+                  </button>
+                )}
+
+                {groupItemCount === 0 && (
+                  <button
+                    style={styles.buttonPrimary}
+                    onClick={() => {
+                      refreshAll();
+                      setShowDeleteGroupModal(false);
+                      setGroup(ALL);
+                    }}
+                  >
+                    Refresh & Close
+                  </button>
+                )}
               </div>
             </div>
           </div>
