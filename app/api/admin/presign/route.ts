@@ -8,7 +8,7 @@ import { NextResponse } from "next/server";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
-// Force Node.js runtime (fixes timeouts and better compatibility for file uploads)
+// Force Node.js runtime (longer timeouts, better for S3/DynamoDB)
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -30,12 +30,12 @@ function encodeS3KeyForUrl(key: string) {
   return encodeURIComponent(key).replace(/%2F/g, "/");
 }
 
-// Handle CORS preflight (OPTIONS) requests — required for file uploads from browser
+// Handle OPTIONS preflight (required for CORS on file uploads)
 export async function OPTIONS() {
   return new NextResponse(null, {
     status: 204,
     headers: {
-      "Access-Control-Allow-Origin": "*", // ← Change to your domain in production (e.g. https://your-vercel-app.vercel.app)
+      "Access-Control-Allow-Origin": "*", // Change to your exact domain in production
       "Access-Control-Allow-Methods": "GET, POST, PUT, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type, x-admin-token",
       "Access-Control-Max-Age": "86400",
@@ -47,17 +47,30 @@ export async function OPTIONS() {
 export async function GET(req: Request) {
   // Check admin token
   if (!requireAdmin(req)) {
-    return NextResponse.json({ error: "Unauthorized" }, {
+    return new NextResponse(JSON.stringify({ error: "Unauthorized" }), {
       status: 401,
-      headers: { "Access-Control-Allow-Origin": "*" },
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Content-Type": "application/json",
+      },
     });
   }
 
   const region = (process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || "").trim();
   const bucket = (process.env.S3_BUCKET_NAME || "").trim();
 
-  if (!region) return NextResponse.json({ error: "Missing AWS_REGION in env" }, { status: 500 });
-  if (!bucket) return NextResponse.json({ error: "Missing S3_BUCKET_NAME in env" }, { status: 500 });
+  if (!region) {
+    return new NextResponse(JSON.stringify({ error: "Missing AWS_REGION in env" }), {
+      status: 500,
+      headers: { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json" },
+    });
+  }
+  if (!bucket) {
+    return new NextResponse(JSON.stringify({ error: "Missing S3_BUCKET_NAME in env" }), {
+      status: 500,
+      headers: { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json" },
+    });
+  }
 
   const url = new URL(req.url);
   const section = (url.searchParams.get("section") || "").trim();
@@ -65,17 +78,33 @@ export async function GET(req: Request) {
   const contentType = (url.searchParams.get("contentType") || "").trim();
 
   if (!section) {
-    return NextResponse.json({ error: "Missing section parameter" }, { status: 400 });
+    return new NextResponse(JSON.stringify({ error: "Missing section parameter" }), {
+      status: 400,
+      headers: { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json" },
+    });
   }
-  if (!filename) return NextResponse.json({ error: "Missing filename" }, { status: 400 });
-  if (!contentType) return NextResponse.json({ error: "Missing contentType" }, { status: 400 });
+  if (!filename) {
+    return new NextResponse(JSON.stringify({ error: "Missing filename" }), {
+      status: 400,
+      headers: { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json" },
+    });
+  }
+  if (!contentType) {
+    return new NextResponse(JSON.stringify({ error: "Missing contentType" }), {
+      status: 400,
+      headers: { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json" },
+    });
+  }
 
   // Validate content types
   const ct = contentType.toLowerCase();
   const isVideo = ct.startsWith("video/");
   const isImage = ct.startsWith("image/");
   if (!isVideo && !isImage) {
-    return NextResponse.json({ error: "Only video/* and image/* content types are allowed" }, { status: 400 });
+    return new NextResponse(JSON.stringify({ error: "Only video/* and image/* content types are allowed" }), {
+      status: 400,
+      headers: { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json" },
+    });
   }
 
   const safeName = sanitizeFilename(filename);
@@ -93,12 +122,13 @@ export async function GET(req: Request) {
     const uploadUrl = await getSignedUrl(s3, cmd, { expiresIn: 300 });
     const publicUrl = `https://${bucket}.s3.${region}.amazonaws.com/${encodeS3KeyForUrl(key)}`;
 
-    return NextResponse.json(
-      { ok: true, section, key, uploadUrl, publicUrl },
+    return new NextResponse(
+      JSON.stringify({ ok: true, section, key, uploadUrl, publicUrl }),
       {
         status: 200,
         headers: {
-          "Access-Control-Allow-Origin": "*", // ← Change to your domain in production
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*", // ← Change to your domain later
           "Access-Control-Allow-Methods": "GET, OPTIONS",
           "Access-Control-Allow-Headers": "Content-Type, x-admin-token",
         },
@@ -106,11 +136,14 @@ export async function GET(req: Request) {
     );
   } catch (e: any) {
     console.error("Presign error:", e);
-    return NextResponse.json(
-      { error: "Presign failed", detail: e?.message ?? String(e) },
+    return new NextResponse(
+      JSON.stringify({ error: "Presign failed", detail: e?.message ?? String(e) }),
       {
         status: 500,
-        headers: { "Access-Control-Allow-Origin": "*" },
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+        },
       }
     );
   }
