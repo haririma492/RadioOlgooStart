@@ -1,21 +1,18 @@
-// Original: app\api\admin\presign\route.ts
 // app/api/admin/presign/route.ts
 //
 // GENERIC S3 PATHS: media/<timestamp>-<filename>
 // Section is passed through for metadata but doesn't affect the S3 key structure.
 //
+
 import { NextResponse } from "next/server";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
+// Force Node.js runtime (fixes timeouts and better compatibility for file uploads)
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-// Sections are fully dynamic — any non-empty string is valid.
-
-function json(status: number, obj: any) {
-  return NextResponse.json(obj, { status, headers: { "cache-control": "no-store" } });
-}
-
+// Simple admin check helper
 function requireAdmin(req: Request) {
   const incoming = (req.headers.get("x-admin-token") || "").trim();
   const expected = (process.env.ADMIN_TOKEN || "").trim();
@@ -23,29 +20,44 @@ function requireAdmin(req: Request) {
   return incoming && incoming === expected;
 }
 
+// Sanitize filename to avoid invalid S3 keys
 function sanitizeFilename(filename: string) {
   return filename.replace(/[^a-zA-Z0-9._-]/g, "_");
 }
 
+// Encode key for public URL (preserve slashes)
 function encodeS3KeyForUrl(key: string) {
   return encodeURIComponent(key).replace(/%2F/g, "/");
 }
 
-/**
- * GET /api/admin/presign?section=Video+Archives&filename=video.mp4&contentType=video/mp4
- * Returns presigned URL for uploading to S3
- *
- * S3 key format: media/<timestamp>-<filename>
- * Generic path — not tied to section. Items can move between sections freely.
- */
+// Handle CORS preflight (OPTIONS) requests — required for file uploads from browser
+export async function OPTIONS() {
+  return new NextResponse(null, {
+    status: 204,
+    headers: {
+      "Access-Control-Allow-Origin": "*", // ← Change to your domain in production (e.g. https://your-vercel-app.vercel.app)
+      "Access-Control-Allow-Methods": "GET, POST, PUT, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type, x-admin-token",
+      "Access-Control-Max-Age": "86400",
+    },
+  });
+}
+
+// Main presign handler
 export async function GET(req: Request) {
-  if (!requireAdmin(req)) return json(401, { error: "Unauthorized" });
+  // Check admin token
+  if (!requireAdmin(req)) {
+    return NextResponse.json({ error: "Unauthorized" }, {
+      status: 401,
+      headers: { "Access-Control-Allow-Origin": "*" },
+    });
+  }
 
   const region = (process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || "").trim();
   const bucket = (process.env.S3_BUCKET_NAME || "").trim();
 
-  if (!region) return json(500, { error: "Missing AWS_REGION in env" });
-  if (!bucket) return json(500, { error: "Missing S3_BUCKET_NAME in env" });
+  if (!region) return NextResponse.json({ error: "Missing AWS_REGION in env" }, { status: 500 });
+  if (!bucket) return NextResponse.json({ error: "Missing S3_BUCKET_NAME in env" }, { status: 500 });
 
   const url = new URL(req.url);
   const section = (url.searchParams.get("section") || "").trim();
@@ -53,28 +65,24 @@ export async function GET(req: Request) {
   const contentType = (url.searchParams.get("contentType") || "").trim();
 
   if (!section) {
-    return json(400, { error: "Missing section parameter" });
+    return NextResponse.json({ error: "Missing section parameter" }, { status: 400 });
   }
-  if (!filename) return json(400, { error: "Missing filename" });
-  if (!contentType) return json(400, { error: "Missing contentType" });
+  if (!filename) return NextResponse.json({ error: "Missing filename" }, { status: 400 });
+  if (!contentType) return NextResponse.json({ error: "Missing contentType" }, { status: 400 });
 
   // Validate content types
   const ct = contentType.toLowerCase();
   const isVideo = ct.startsWith("video/");
   const isImage = ct.startsWith("image/");
-
   if (!isVideo && !isImage) {
-    return json(400, { error: "Only video/* and image/* content types are allowed" });
+    return NextResponse.json({ error: "Only video/* and image/* content types are allowed" }, { status: 400 });
   }
 
   const safeName = sanitizeFilename(filename);
-
-  // Generic S3 key — not tied to section
   const key = `media/${Date.now()}-${safeName}`;
 
   try {
     const s3 = new S3Client({ region });
-
     const cmd = new PutObjectCommand({
       Bucket: bucket,
       Key: key,
@@ -85,8 +93,25 @@ export async function GET(req: Request) {
     const uploadUrl = await getSignedUrl(s3, cmd, { expiresIn: 300 });
     const publicUrl = `https://${bucket}.s3.${region}.amazonaws.com/${encodeS3KeyForUrl(key)}`;
 
-    return json(200, { ok: true, section, key, uploadUrl, publicUrl });
+    return NextResponse.json(
+      { ok: true, section, key, uploadUrl, publicUrl },
+      {
+        status: 200,
+        headers: {
+          "Access-Control-Allow-Origin": "*", // ← Change to your domain in production
+          "Access-Control-Allow-Methods": "GET, OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type, x-admin-token",
+        },
+      }
+    );
   } catch (e: any) {
-    return json(500, { error: "Presign failed", detail: e?.message ?? String(e) });
+    console.error("Presign error:", e);
+    return NextResponse.json(
+      { error: "Presign failed", detail: e?.message ?? String(e) },
+      {
+        status: 500,
+        headers: { "Access-Control-Allow-Origin": "*" },
+      }
+    );
   }
 }
