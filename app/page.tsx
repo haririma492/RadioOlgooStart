@@ -18,7 +18,7 @@ export default function SinglePhotoPage() {
       const targetPK = "MEDIA#1770524535876#658dc883fa9147";
       
       // Fetch from your section (adjust section name as needed)
-      const res = await fetch(`/api/slides?section=Photo+Gallery`);
+const res = await fetch(`/api/slides?section=National+Anthems`);
       const data = await res.json();
       
       const items = data.items || [];
