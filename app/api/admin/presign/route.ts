@@ -1,15 +1,18 @@
+// app/api/admin/presign/route.ts
+//
+// GENERIC S3 PATHS: media/<timestamp>-<filename>
+// Section is passed through for metadata but doesn't affect the S3 key structure.
+//
+
 import { NextResponse } from "next/server";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
+// Force Node.js runtime (longer timeouts, better for S3/DynamoDB)
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-type SetKind = "CENTER" | "SLIDES" | "BG";
-
-function json(status: number, obj: any) {
-  return NextResponse.json(obj, { status, headers: { "cache-control": "no-store" } });
-}
-
+// Simple admin check helper
 function requireAdmin(req: Request) {
   const incoming = (req.headers.get("x-admin-token") || "").trim();
   const expected = (process.env.ADMIN_TOKEN || "").trim();
@@ -17,89 +20,131 @@ function requireAdmin(req: Request) {
   return incoming && incoming === expected;
 }
 
-function badRequest(message: string) {
-  return json(400, { error: message });
-}
-
-function isAllowed(set: SetKind, contentType: string) {
-  const ct = (contentType || "").toLowerCase();
-  if (set === "CENTER") return ct === "video/mp4";
-  if (set === "SLIDES") return ct.startsWith("image/");
-  if (set === "BG") return ct.startsWith("image/") || ct === "video/mp4";
-  return false;
-}
-
-function parseSet(raw: string | null): SetKind | null {
-  const s = (raw || "").trim().toUpperCase();
-  if (s === "CENTER" || s === "SLIDES" || s === "BG") return s as SetKind;
-  return null;
-}
-
+// Sanitize filename to avoid invalid S3 keys
 function sanitizeFilename(filename: string) {
-  // keep extension, replace unsafe chars
   return filename.replace(/[^a-zA-Z0-9._-]/g, "_");
 }
 
-// Properly encode S3 key for URL while keeping "/" separators
+// Encode key for public URL (preserve slashes)
 function encodeS3KeyForUrl(key: string) {
   return encodeURIComponent(key).replace(/%2F/g, "/");
 }
 
-export async function GET(req: Request) {
-  if (!requireAdmin(req)) return json(401, { error: "Unauthorized" });
+// Handle OPTIONS preflight (required for CORS on file uploads)
+export async function OPTIONS() {
+  return new NextResponse(null, {
+    status: 204,
+    headers: {
+      "Access-Control-Allow-Origin": "*", // Change to your exact domain in production
+      "Access-Control-Allow-Methods": "GET, POST, PUT, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type, x-admin-token",
+      "Access-Control-Max-Age": "86400",
+    },
+  });
+}
 
-  const region =
-    (process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || "").trim();
+// Main presign handler
+export async function GET(req: Request) {
+  // Check admin token
+  if (!requireAdmin(req)) {
+    return new NextResponse(JSON.stringify({ error: "Unauthorized" }), {
+      status: 401,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Content-Type": "application/json",
+      },
+    });
+  }
+
+  const region = (process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || "").trim();
   const bucket = (process.env.S3_BUCKET_NAME || "").trim();
 
-  if (!region) return json(500, { error: "Missing AWS_REGION (or AWS_DEFAULT_REGION) in env" });
-  if (!bucket) return json(500, { error: "Missing S3_BUCKET_NAME in env" });
+  if (!region) {
+    return new NextResponse(JSON.stringify({ error: "Missing AWS_REGION in env" }), {
+      status: 500,
+      headers: { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json" },
+    });
+  }
+  if (!bucket) {
+    return new NextResponse(JSON.stringify({ error: "Missing S3_BUCKET_NAME in env" }), {
+      status: 500,
+      headers: { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json" },
+    });
+  }
 
   const url = new URL(req.url);
-  const set = parseSet(url.searchParams.get("set"));
+  const section = (url.searchParams.get("section") || "").trim();
   const filename = (url.searchParams.get("filename") || "").trim();
   const contentType = (url.searchParams.get("contentType") || "").trim();
 
-  if (!set) return badRequest("Missing/invalid set. Use ?set=CENTER or ?set=SLIDES or ?set=BG");
-  if (!filename) return badRequest("Missing filename");
-  if (!contentType) return badRequest("Missing contentType");
+  if (!section) {
+    return new NextResponse(JSON.stringify({ error: "Missing section parameter" }), {
+      status: 400,
+      headers: { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json" },
+    });
+  }
+  if (!filename) {
+    return new NextResponse(JSON.stringify({ error: "Missing filename" }), {
+      status: 400,
+      headers: { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json" },
+    });
+  }
+  if (!contentType) {
+    return new NextResponse(JSON.stringify({ error: "Missing contentType" }), {
+      status: 400,
+      headers: { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json" },
+    });
+  }
 
-  if (!isAllowed(set, contentType)) {
-    return badRequest(
-      set === "CENTER"
-        ? "CENTER accepts only video/mp4"
-        : set === "SLIDES"
-        ? "SLIDES accepts only image/*"
-        : "BG accepts image/* or video/mp4"
-    );
+  // Validate content types
+  const ct = contentType.toLowerCase();
+  const isVideo = ct.startsWith("video/");
+  const isImage = ct.startsWith("image/");
+  if (!isVideo && !isImage) {
+    return new NextResponse(JSON.stringify({ error: "Only video/* and image/* content types are allowed" }), {
+      status: 400,
+      headers: { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json" },
+    });
   }
 
   const safeName = sanitizeFilename(filename);
-
-  // Key format: <SET>/<timestamp>-<safeName>
-  const key = `${set}/${Date.now()}-${safeName}`;
+  const key = `media/${Date.now()}-${safeName}`;
 
   try {
     const s3 = new S3Client({ region });
-
     const cmd = new PutObjectCommand({
       Bucket: bucket,
       Key: key,
       ContentType: contentType,
-      // cache for public viewing (even if bucket is private, this header is fine)
       CacheControl: "public, max-age=31536000, immutable",
-      // NOTE: do NOT set ACL here unless you intentionally allow public-read.
-      // ACL: "public-read",
     });
 
-    // presigned PUT url (upload only)
     const uploadUrl = await getSignedUrl(s3, cmd, { expiresIn: 300 });
-
-    // clean URL for viewing (NO X-Amz params)
     const publicUrl = `https://${bucket}.s3.${region}.amazonaws.com/${encodeS3KeyForUrl(key)}`;
 
-    return json(200, { ok: true, set, key, uploadUrl, publicUrl });
+    return new NextResponse(
+      JSON.stringify({ ok: true, section, key, uploadUrl, publicUrl }),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*", // ← Change to your domain later
+          "Access-Control-Allow-Methods": "GET, OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type, x-admin-token",
+        },
+      }
+    );
   } catch (e: any) {
-    return json(500, { error: "Presign failed", detail: e?.message ?? String(e) });
+    console.error("Presign error:", e);
+    return new NextResponse(
+      JSON.stringify({ error: "Presign failed", detail: e?.message ?? String(e) }),
+      {
+        status: 500,
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+        },
+      }
+    );
   }
 }

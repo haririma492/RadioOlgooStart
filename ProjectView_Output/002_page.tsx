@@ -1,57 +1,83 @@
 ﻿// Original: app\admin\page.tsx
 // app/admin/page.tsx
+//
+// FULLY DYNAMIC: Sections and groups are derived from data in DynamoDB.
+// No hardcoded section list. "Add New..." lets you create new ones on the fly.
+//
 "use client";
-
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
-type TargetSet = "CENTER" | "SLIDES" | "BG";
-
+// â”€â”€ Types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 type MediaItem = {
-  pk: TargetSet;
-  sk: string;
+  PK: string;
   url: string;
-  mediaType?: string;
-  enabled: boolean;
-  order: number;
-  category1?: string;
-  category2?: string;
+  section: string;
+  title: string;
+  group?: string;
+  person?: string;
+  date?: string;
   description?: string;
+  active?: boolean;
   createdAt?: string;
 };
 
-type SlidesGetResponse =
-  | { ok: true; set: TargetSet; items: MediaItem[]; count?: number }
-  | { error: string; detail?: string };
+type ItemsGetResponse = { ok: true; items: MediaItem[]; count?: number } | { error: string };
+
+const ALL = "__ALL__"; // sentinel for "show everything"
 
 function nowTime() {
   return new Date().toLocaleTimeString([], { hour12: true });
 }
 
-// SECTION (Category) -> GROUP (Sub-category)
-const CATEGORY_TREE = {
-  YouTubeChannels: ["IranPoliticalCommentary", "KingRezaPahlavi", "NewsLive"],
-  RevolutionMusic: ["RevolutionRap", "IranNational", "TrumpAct"],
-  Old: ["CENTER", "SLIDES", "BG"],
-} as const;
-
-type Category1 = keyof typeof CATEGORY_TREE;
-
-function isLikelyVideo(url: string, mediaType?: string) {
-  const mt = (mediaType || "").toLowerCase();
-  if (mt.startsWith("video/")) return true;
+function isVideo(url: string): boolean {
   const u = (url || "").toLowerCase();
-  return u.endsWith(".mp4") || u.includes(".mp4?");
+  return u.includes(".mp4") || u.includes("video");
 }
 
-function isLikelyImage(url: string, mediaType?: string) {
-  const mt = (mediaType || "").toLowerCase();
-  if (mt.startsWith("image/")) return true;
+function isImage(url: string): boolean {
   const u = (url || "").toLowerCase();
-  return u.endsWith(".jpg") || u.endsWith(".jpeg") || u.endsWith(".png") || u.endsWith(".webp") || u.endsWith(".gif");
+  return u.includes(".jpg") || u.includes(".jpeg") || u.includes(".png") || u.includes(".webp");
+}
+
+// â”€â”€ Default sections & groups (used only as fallback when no data exists) â”€â”€â”€â”€â”€
+const DEFAULT_SECTION_GROUPS: Record<string, string[]> = {
+  "Video Archives": ["Conference", "Interview", "Workshop", "Lecture", "Panel Discussion"],
+  "Single Videos-Songs": ["Pop", "Classical", "Jazz", "Rock", "Traditional", "Folk"],
+  "National Anthems": ["Iran", "Canada", "USA", "France", "Germany", "Other"],
+  "Photo Albums": [],
+  "Live Channels": ["News", "Music", "Entertainment", "Sports"],
+  "Social Media Profiles": ["X", "YouTube", "Instagram", "Facebook", "TikTok"],
+  "Great-National-Songs-Videos": ["Patriotic", "Historical", "Contemporary"],
+  "In-Transition": ["Pending", "Review", "Archive"],
+};
+
+// â”€â”€ Build sectionâ†’groups map STRICTLY from items + known groups â”€â”€â”€â”€â”€â”€
+function buildSectionMap(
+  items: MediaItem[],
+  knownGroups: Record<string, Set<string>>
+): Record<string, string[]> {
+  const map: Record<string, Set<string>> = { ...knownGroups };
+
+  // Add real data (overrides anything)
+  for (const it of items) {
+    const sec = (it.section || "").trim();
+    if (!sec) continue;
+
+    if (!map[sec]) map[sec] = new Set();
+
+    const grp = (it.group || "").trim();
+    if (grp) map[sec].add(grp);
+  }
+
+  const result: Record<string, string[]> = {};
+  for (const sec of Object.keys(map).sort()) {
+    result[sec] = Array.from(map[sec]).sort();
+  }
+
+  return result;
 }
 
 export default function AdminPage() {
-  // 1) Token is ALWAYS blank; user enters every time
   const [token, setToken] = useState<string>("");
   const [authorized, setAuthorized] = useState<boolean>(false);
   const [authError, setAuthError] = useState<string>("");
@@ -59,31 +85,87 @@ export default function AdminPage() {
   const [busy, setBusy] = useState<boolean>(false);
   const [log, setLog] = useState<string[]>([]);
 
-  // Filters
-  const [section, setSection] = useState<Category1>("YouTubeChannels");
-  const [group, setGroup] = useState<string>(CATEGORY_TREE.YouTubeChannels[0]);
+  const [allItems, setAllItems] = useState<MediaItem[]>([]);
+
+  const [section, setSection] = useState<string>(ALL);
+  const [group, setGroup] = useState<string>(ALL);
   const [search, setSearch] = useState<string>("");
 
-  // Upload
+  const [uploadMode, setUploadMode] = useState<"file" | "url">("file");
+
   const [uploadFiles, setUploadFiles] = useState<File[]>([]);
-  const [uploadDesc, setUploadDesc] = useState<string>("");
+  const [uploadUrl, setUploadUrl] = useState<string>("");
+  const [uploadTitle, setUploadTitle] = useState<string>("");
+  const [uploadPerson, setUploadPerson] = useState<string>("");
+  const [uploadDate, setUploadDate] = useState<string>("");
+  const [uploadDescription, setUploadDescription] = useState<string>("");
+  const [uploadSection, setUploadSection] = useState<string>("");
+  const [uploadGroup, setUploadGroup] = useState<string>("");
+  const [uploadNewSection, setUploadNewSection] = useState<string>("");
+  const [uploadNewGroup, setUploadNewGroup] = useState<string>("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Data
-  const [centerItems, setCenterItems] = useState<MediaItem[]>([]);
-  const [slidesItems, setSlidesItems] = useState<MediaItem[]>([]);
-  const [bgItems, setBgItems] = useState<MediaItem[]>([]);
+  const [editingPK, setEditingPK] = useState<string>("");
+  const [editingFields, setEditingFields] = useState<Partial<MediaItem>>({});
+  const [editNewSection, setEditNewSection] = useState<string>("");
+  const [editNewGroup, setEditNewGroup] = useState<string>("");
 
-  // Editing state
-  const [editingDescSk, setEditingDescSk] = useState<string>("");
-  const [editingDescValue, setEditingDescValue] = useState<string>("");
+  const [showDeleteSectionModal, setShowDeleteSectionModal] = useState(false);
+  const [showDeleteGroupModal, setShowDeleteGroupModal] = useState(false);
+  const [sectionToDelete, setSectionToDelete] = useState<string>("");
+  const [groupToDelete, setGroupToDelete] = useState<string>("");
+  const [targetSection, setTargetSection] = useState<string>("");
+  const [targetGroup, setTargetGroup] = useState<string>(ALL);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+
+  // Track known groups (newly created ones) so they appear even without items
+  const [knownGroups, setKnownGroups] = useState<Record<string, Set<string>>>({});
+
+  // â”€â”€ Derived: dynamic section â†’ groups map â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const sectionMap = useMemo(
+    () => buildSectionMap(allItems, knownGroups),
+    [allItems, knownGroups]
+  );
+  const sectionList = useMemo(() => Object.keys(sectionMap).sort(), [sectionMap]);
+
+  const groupOptions = useMemo(() => {
+    if (section === ALL) {
+      const all = new Set<string>();
+      for (const groups of Object.values(sectionMap)) {
+        for (const g of groups) all.add(g);
+      }
+      return Array.from(all).sort();
+    }
+    return sectionMap[section] || [];
+  }, [sectionMap, section]);
+
+  const allGroupOptions = useMemo(() => {
+    const all = new Set<string>();
+    for (const groups of Object.values(sectionMap)) {
+      for (const g of groups) all.add(g);
+    }
+    return Array.from(all).sort();
+  }, [sectionMap]);
+
+  const sectionItemCount = useMemo(() => 
+    section !== ALL ? allItems.filter(i => i.section === section).length : 0,
+    [allItems, section]
+  );
+
+  const groupItemCount = useMemo(() => 
+    group !== ALL ? allItems.filter(i => i.section === section && i.group === group).length : 0,
+    [allItems, section, group]
+  );
 
   useEffect(() => {
-    // ensure locked on full load
     setToken("");
     setAuthorized(false);
     setAuthError("");
   }, []);
+
+  useEffect(() => {
+    setGroup(ALL);
+  }, [section]);
 
   function pushLog(line: string) {
     setLog((prev) => [`${nowTime()}  ${line}`, ...prev].slice(0, 400));
@@ -95,15 +177,19 @@ export default function AdminPage() {
     let data: any = null;
     try {
       data = text ? JSON.parse(text) : null;
-    } catch {
-      // ignore
-    }
+    } catch {}
     return { ok: res.ok, status: res.status, text, data };
   }
 
   function clearUpload() {
     setUploadFiles([]);
-    setUploadDesc("");
+    setUploadUrl("");
+    setUploadTitle("");
+    setUploadPerson("");
+    setUploadDate("");
+    setUploadDescription("");
+    setUploadNewSection("");
+    setUploadNewGroup("");
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
@@ -114,156 +200,125 @@ export default function AdminPage() {
     if (name.endsWith(".jpg") || name.endsWith(".jpeg")) return "image/jpeg";
     if (name.endsWith(".png")) return "image/png";
     if (name.endsWith(".webp")) return "image/webp";
-    if (name.endsWith(".gif")) return "image/gif";
     return "application/octet-stream";
   }
 
-  function isMp4(file: File) {
-    const ct = guessContentType(file).toLowerCase();
-    const name = file.name.toLowerCase();
-    return ct === "video/mp4" || name.endsWith(".mp4");
-  }
-
+  // â”€â”€ Auth â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   async function verifyToken() {
     const t = token.trim();
     setAuthError("");
-
     if (!t) {
       setAuthorized(false);
       setAuthError("Token is required.");
-      pushLog("âŒ Missing token");
+      pushLog("\u274C Missing token");
       return;
     }
-
     const out = await apiJson("/api/admin/validate", {
       method: "POST",
       headers: { "x-admin-token": t },
       cache: "no-store",
     });
-
-    // Only unlock if backend explicitly says ok/authorized/valid
     const body = out.data;
-    const bodyOk =
-      body &&
-      typeof body === "object" &&
-      (body.ok === true || body.authorized === true || body.valid === true) &&
-      !body.error;
-
+    const bodyOk = body && typeof body === "object" && body.ok === true && !body.error;
     if (!out.ok || !bodyOk) {
       setAuthorized(false);
-      const msg =
-        (body && typeof body === "object" && (body.detail || body.error || body.message)) ||
-        `Invalid admin token (HTTP ${out.status})`;
+      const msg = (body && (body.detail || body.error || body.message)) || `Invalid token (HTTP ${out.status})`;
       setAuthError(String(msg));
-      pushLog(`âŒ ${msg}`);
+      pushLog(`\u274C ${msg}`);
       return;
     }
-
     setAuthorized(true);
     setAuthError("");
-    pushLog("âœ… Token accepted");
+    pushLog("\u2705 Token accepted");
     await refreshAll();
   }
 
-  async function loadSet(set: TargetSet, t: string) {
-    const out = await apiJson(`/api/admin/slides?set=${encodeURIComponent(set)}`, {
-      method: "GET",
-      headers: { "x-admin-token": t },
-      cache: "no-store",
-    });
-
-    if (!out.ok) {
-      const msg = out.data?.detail || out.data?.error || out.text || "Load failed";
-      throw new Error(`Load failed for ${set} (HTTP ${out.status}) ${msg}`);
-    }
-
-    const data = out.data as SlidesGetResponse;
-    if (!data || (data as any).error) {
-      throw new Error(`Load failed for ${set} (HTTP ${out.status}) ${out.text}`);
-    }
-
-    return Array.isArray((data as any).items) ? ((data as any).items as MediaItem[]) : [];
-  }
-
+  // â”€â”€ Data loading â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   async function refreshAll() {
     const t = token.trim();
     if (!t) return;
-
     setBusy(true);
     try {
-      const [c, s, b] = await Promise.all([loadSet("CENTER", t), loadSet("SLIDES", t), loadSet("BG", t)]);
-      setCenterItems(c);
-      setSlidesItems(s);
-      setBgItems(b);
-      pushLog(`Loaded: CENTER=${c.length}, SLIDES=${s.length}, BG=${b.length}`);
+      const out = await apiJson("/api/admin/slides", {
+        method: "GET",
+        headers: { "x-admin-token": t },
+        cache: "no-store",
+      });
+      if (!out.ok) throw new Error(`Load failed (HTTP ${out.status})`);
+      const data = out.data as ItemsGetResponse;
+      if ((data as any).error) throw new Error((data as any).error);
+      const loaded = (data as any).items || [];
+      setAllItems(loaded);
+      pushLog(`Loaded: ${loaded.length} total items`);
     } catch (e: any) {
-      pushLog(`âŒ ${e?.message ?? String(e)}`);
+      pushLog(`\u274C ${e?.message ?? String(e)}`);
     } finally {
       setBusy(false);
     }
   }
 
-  const groupOptions = useMemo(() => Array.from(CATEGORY_TREE[section]), [section]);
-
-  useEffect(() => {
-    setGroup(groupOptions[0] || "");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [section]);
-
-  const headerTitle = `${section} â†’ ${group}`;
-
+  // â”€â”€ Client-side filtering â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const filteredItems: MediaItem[] = useMemo(() => {
-    let base: MediaItem[] = [];
-
-    if (section === "Old") {
-      const set = (group || "CENTER") as TargetSet;
-      if (set === "CENTER") base = centerItems;
-      else if (set === "SLIDES") base = slidesItems;
-      else base = bgItems;
-    } else {
-      base = centerItems.filter(
-        (it) => (it.category1 || "").trim() === section && (it.category2 || "").trim() === (group || "")
-      );
+    let result = allItems;
+    if (section !== ALL) {
+      result = result.filter((it) => it.section === section);
     }
-
+    if (group !== ALL) {
+      result = result.filter((it) => (it.group || "") === group);
+    }
     const q = search.trim().toLowerCase();
-    if (!q) return base;
+    if (q) {
+      result = result.filter((it) => {
+        const hay = [it.PK, it.url, it.title, it.description, it.person, it.section, it.group]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        return hay.includes(q);
+      });
+    }
+    return result;
+  }, [allItems, search, section, group]);
 
-    return base.filter((it) => {
-      const hay = [it.sk, it.url, it.description, it.category1, it.category2].filter(Boolean).join(" ").toLowerCase();
-      return hay.includes(q);
-    });
-  }, [section, group, centerItems, slidesItems, bgItems, search]);
-
+  // â”€â”€ Upload helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   function onPickUploadFiles(e: React.ChangeEvent<HTMLInputElement>) {
     const list = Array.from(e.target.files || []);
     setUploadFiles(list);
     if (list.length) pushLog(`Selected ${list.length} file(s)`);
   }
 
-  async function presignOne(set: TargetSet, file: File) {
+  function resolveUploadSection(): string {
+    if (uploadSection === "__NEW__") return uploadNewSection.trim();
+    return uploadSection;
+  }
+
+  function resolveUploadGroup(): string {
+    if (uploadGroup === "__NEW__") return uploadNewGroup.trim();
+    return uploadGroup;
+  }
+
+  async function presignOne(file: File) {
     const t = token.trim();
     const contentType = encodeURIComponent(guessContentType(file));
     const filename = encodeURIComponent(file.name);
-
+    const sec = resolveUploadSection();
     const out = await apiJson(
-      `/api/admin/presign?set=${encodeURIComponent(set)}&filename=${filename}&contentType=${contentType}`,
+      `/api/admin/presign?section=${encodeURIComponent(sec)}&filename=${filename}&contentType=${contentType}`,
       { method: "GET", headers: { "x-admin-token": t }, cache: "no-store" }
     );
-
     if (!out.ok) {
-      const msg = out.data?.detail || out.data?.error || out.text || "Presign failed";
+      const msg = out.data?.detail || out.data?.error || "Presign failed";
       throw new Error(`Presign failed (HTTP ${out.status}) ${msg}`);
     }
     return out.data as { ok: true; uploadUrl: string; publicUrl: string; key: string };
   }
 
   async function registerOne(item: {
-    set: TargetSet;
     url: string;
-    mediaType: string;
-    category1?: string;
-    category2?: string;
+    section: string;
+    title: string;
+    group?: string;
+    person?: string;
+    date?: string;
     description?: string;
   }) {
     const t = token.trim();
@@ -272,140 +327,287 @@ export default function AdminPage() {
       headers: { "content-type": "application/json", "x-admin-token": t },
       body: JSON.stringify(item),
     });
-
     if (!out.ok) {
-      const msg = out.data?.detail || out.data?.error || out.text || "Register failed";
+      const msg = out.data?.detail || out.data?.error || "Register failed";
       throw new Error(`Register failed (HTTP ${out.status}) ${msg}`);
     }
   }
 
-  async function uploadMovies() {
-    if (!authorized) {
-      pushLog("âŒ Not authorized");
+  async function uploadMedia() {
+    if (!authorized || !uploadTitle.trim() || !resolveUploadSection() || !uploadFiles.length) {
+      pushLog("\u274C Upload requirements not met");
       return;
     }
-    if (section === "Old") {
-      pushLog("âŒ Choose a real SECTION (not Old) for uploading movies");
-      return;
-    }
-    if (!uploadFiles.length) {
-      pushLog("âŒ Select at least one file");
-      return;
-    }
-    const bad = uploadFiles.find((f) => !isMp4(f));
-    if (bad) {
-      pushLog(`âŒ Only .mp4 allowed. Bad file: ${bad.name}`);
-      return;
-    }
-
+    const sec = resolveUploadSection();
+    const grp = resolveUploadGroup();
     setBusy(true);
     try {
-      pushLog(`Uploading ${uploadFiles.length} movie(s) to CENTER...`);
-
+      pushLog(`Uploading ${uploadFiles.length} file(s) to ${sec}${grp ? ` â†’ ${grp}` : ""}...`);
       for (const f of uploadFiles) {
-        const pres = await presignOne("CENTER", f);
+        const pres = await presignOne(f);
         const contentType = guessContentType(f);
-
         const putRes = await fetch(pres.uploadUrl, {
           method: "PUT",
           headers: { "content-type": contentType },
           body: f,
         });
         if (!putRes.ok) throw new Error(`S3 upload failed (HTTP ${putRes.status}) ${f.name}`);
-
         await registerOne({
-          set: "CENTER",
           url: pres.publicUrl,
-          mediaType: contentType,
-          category1: section,
-          category2: group,
-          description: uploadDesc.trim(),
+          section: sec,
+          title: uploadTitle.trim(),
+          group: grp || undefined,
+          person: uploadPerson.trim() || undefined,
+          date: uploadDate.trim() || undefined,
+          description: uploadDescription.trim() || undefined,
         });
-
-        pushLog(`âœ… Uploaded: ${f.name}`);
+        pushLog(`\u2705 Uploaded: ${f.name}`);
       }
-
       clearUpload();
       await refreshAll();
     } catch (e: any) {
-      pushLog(`âŒ Upload failed: ${e?.message ?? String(e)}`);
+      pushLog(`\u274C Upload failed: ${e?.message ?? String(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function importFromUrl() {
+    if (!authorized || !uploadUrl.trim() || !uploadTitle.trim() || !resolveUploadSection()) {
+      pushLog("\u274C Import requirements not met");
+      return;
+    }
+    const sec = resolveUploadSection();
+    const grp = resolveUploadGroup();
+    setBusy(true);
+    try {
+      pushLog(`Importing from URL: ${uploadUrl.trim().slice(0, 80)}...`);
+      const payload: any = {
+        url: uploadUrl.trim(),
+        section: sec,
+        title: uploadTitle.trim(),
+      };
+      if (grp) payload.group = grp;
+      if (uploadPerson.trim()) payload.person = uploadPerson.trim();
+      if (uploadDate.trim()) payload.date = uploadDate.trim();
+      if (uploadDescription.trim()) payload.description = uploadDescription.trim();
+      const out = await apiJson("/api/admin/import-url", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-admin-token": token },
+        body: JSON.stringify(payload),
+      });
+      if (!out.ok) throw new Error(out.data?.detail || out.data?.error || `Import failed (HTTP ${out.status})`);
+      pushLog(`\u2705 Imported: ${out.data?.title || uploadTitle.trim()} (${out.data?.PK})`);
+      clearUpload();
+      await refreshAll();
+    } catch (e: any) {
+      pushLog(`\u274C Import failed: ${e?.message ?? String(e)}`);
     } finally {
       setBusy(false);
     }
   }
 
   async function deleteItem(it: MediaItem) {
-    if (!authorized) {
-      pushLog("âŒ Not authorized");
-      return;
-    }
+    if (!authorized) return;
+    if (!confirm(`Delete "${it.title}" (${it.PK})?`)) return;
 
     setBusy(true);
     try {
-      const t = token.trim();
-      const out = await apiJson(
-        `/api/admin/slides?set=${encodeURIComponent(it.pk)}&sk=${encodeURIComponent(it.sk)}`,
-        { method: "DELETE", headers: { "x-admin-token": t } }
-      );
-
-      if (!out.ok) {
-        const msg = out.data?.detail || out.data?.error || out.text || "Delete failed";
-        throw new Error(`Delete failed (HTTP ${out.status}) ${msg}`);
-      }
-
-      pushLog(`ðŸ—‘ï¸ Deleted: ${it.pk} / ${it.sk}`);
+      const out = await apiJson(`/api/admin/slides?PK=${encodeURIComponent(it.PK)}`, {
+        method: "DELETE",
+        headers: { "x-admin-token": token },
+      });
+      if (!out.ok) throw new Error(out.data?.detail || out.data?.error || "Delete failed");
+      pushLog(`\uD83D\uDDD1\uFE0F Deleted: ${it.PK}`);
       await refreshAll();
     } catch (e: any) {
-      pushLog(`âŒ ${e?.message ?? String(e)}`);
+      pushLog(`\u274C ${e?.message ?? String(e)}`);
     } finally {
       setBusy(false);
     }
   }
 
-  function startEditingDesc(it: MediaItem) {
-    setEditingDescSk(it.sk);
-    setEditingDescValue(it.description || "");
+  function startEditing(it: MediaItem) {
+    setEditingPK(it.PK);
+    setEditingFields({
+      title: it.title,
+      description: it.description || "",
+      person: it.person || "",
+      date: it.date || "",
+      section: it.section || "",
+      group: it.group || "",
+    });
+    setEditNewSection("");
+    setEditNewGroup("");
   }
 
-  function cancelEditingDesc() {
-    setEditingDescSk("");
-    setEditingDescValue("");
+  function cancelEditing() {
+    setEditingPK("");
+    setEditingFields({});
+    setEditNewSection("");
+    setEditNewGroup("");
   }
 
-  async function saveDescription(it: MediaItem) {
-    if (!authorized) {
-      pushLog("âŒ Not authorized");
+  function resolveEditSection(): string {
+    if (editingFields.section === "__NEW__") return editNewSection.trim();
+    return (editingFields.section || "").trim();
+  }
+
+  function resolveEditGroup(): string {
+    if (editingFields.group === "__NEW__") return editNewGroup.trim();
+    return (editingFields.group || "").trim();
+  }
+
+  async function saveEditing(it: MediaItem) {
+    if (!authorized) return;
+    const destSection = resolveEditSection();
+    const destGroup = resolveEditGroup();
+    if (!destSection) {
+      pushLog("\u274C Section is required");
       return;
     }
-
     setBusy(true);
     try {
-      const t = token.trim();
+      const sectionChanged = destSection !== it.section;
+      const groupChanged = destGroup !== (it.group || "");
+      const payload: any = {
+        PK: it.PK,
+        title: editingFields.title,
+        description: editingFields.description,
+        person: editingFields.person,
+        date: editingFields.date,
+        section: destSection,
+        group: destGroup,
+      };
       const out = await apiJson("/api/admin/slides", {
         method: "PATCH",
-        headers: { "content-type": "application/json", "x-admin-token": t },
-        body: JSON.stringify({
-          set: it.pk,
-          sk: it.sk,
-          description: editingDescValue.trim(),
-        }),
+        headers: { "content-type": "application/json", "x-admin-token": token },
+        body: JSON.stringify(payload),
       });
-
-      if (!out.ok) {
-        const msg = out.data?.detail || out.data?.error || out.text || "Update failed";
-        throw new Error(`Update failed (HTTP ${out.status}) ${msg}`);
+      if (!out.ok) throw new Error(out.data?.detail || out.data?.error || "Update failed");
+      if (sectionChanged) {
+        pushLog(`\u27A1\uFE0F Moved ${it.PK}: ${it.section} â†’ ${destSection}`);
+      } else if (groupChanged) {
+        pushLog(`\u27A1\uFE0F Moved ${it.PK}: group ${it.group || "(none)"} â†’ ${destGroup || "(none)"}`);
+      } else {
+        pushLog(`\u270F\uFE0F Updated: ${it.PK}`);
       }
-
-      pushLog(`âœï¸ Updated description: ${it.sk}`);
-      setEditingDescSk("");
-      setEditingDescValue("");
+      setEditingPK("");
+      setEditingFields({});
+      setEditNewSection("");
+      setEditNewGroup("");
       await refreshAll();
+      if (sectionChanged || groupChanged) {
+        setSection(destSection);
+        setTimeout(() => setGroup(destGroup || ALL), 50);
+      }
     } catch (e: any) {
-      pushLog(`âŒ ${e?.message ?? String(e)}`);
+      pushLog(`\u274C ${e?.message ?? String(e)}`);
     } finally {
       setBusy(false);
     }
   }
+
+  // â”€â”€ Delete Handlers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  async function handleDeleteSection() {
+    if (!targetSection || targetSection === sectionToDelete) {
+      pushLog("\u274C Invalid target section");
+      return;
+    }
+    setDeleteBusy(true);
+    pushLog(`Starting move & delete of section "${sectionToDelete}" â†’ "${targetSection}"`);
+    try {
+      const itemsToMove = allItems.filter(i => i.section === sectionToDelete);
+      const count = itemsToMove.length;
+      if (count === 0) {
+        pushLog(`Section "${sectionToDelete}" is already empty â†’ refreshing`);
+      } else {
+        pushLog(`Moving ${count} items`);
+        let success = 0;
+        for (const item of itemsToMove) {
+          const payload = {
+            PK: item.PK,
+            section: targetSection,
+            group: targetGroup === ALL ? "" : targetGroup,
+          };
+          const out = await apiJson("/api/admin/slides", {
+            method: "PATCH",
+            headers: { "content-type": "application/json", "x-admin-token": token },
+            body: JSON.stringify(payload),
+          });
+          if (out.ok) {
+            success++;
+          } else {
+            pushLog(`Failed to move ${item.PK}: ${out.data?.error || out.data?.detail || "Unknown error"}`);
+          }
+        }
+        pushLog(`Moved ${success} of ${count} items`);
+      }
+      await refreshAll();
+      await new Promise(r => setTimeout(r, 600));
+      setShowDeleteSectionModal(false);
+      setSection(ALL);
+      pushLog(`Section delete operation completed`);
+    } catch (err: any) {
+      pushLog(`Critical error: ${err.message}`);
+      alert("Section delete failed: " + err.message);
+    } finally {
+      setDeleteBusy(false);
+    }
+  }
+
+  async function handleDeleteGroup() {
+    if (!targetSection) {
+      pushLog("\u274C No target section selected");
+      return;
+    }
+    setDeleteBusy(true);
+    const targetGrp = targetGroup === ALL ? "" : targetGroup;
+    pushLog(`Deleting group "${groupToDelete}" in "${sectionToDelete}" â†’ "${targetSection}" / "${targetGrp || '(none)'}"`);
+    try {
+      const itemsToMove = allItems.filter(
+        i => i.section === sectionToDelete && i.group === groupToDelete
+      );
+      const count = itemsToMove.length;
+      if (count === 0) {
+        pushLog(`Group "${groupToDelete}" is already empty â†’ refreshing`);
+      } else {
+        pushLog(`Moving ${count} items`);
+        let success = 0;
+        for (const item of itemsToMove) {
+          const payload = {
+            PK: item.PK,
+            section: targetSection,
+            group: targetGrp,
+          };
+          const out = await apiJson("/api/admin/slides", {
+            method: "PATCH",
+            headers: { "content-type": "application/json", "x-admin-token": token },
+            body: JSON.stringify(payload),
+          });
+          if (out.ok) {
+            success++;
+          } else {
+            pushLog(`Failed to move ${item.PK}: ${out.data?.error || out.data?.detail || "Unknown error"}`);
+          }
+        }
+        pushLog(`Moved ${success} of ${count} items`);
+      }
+      await refreshAll();
+      await new Promise(r => setTimeout(r, 600));
+      setShowDeleteGroupModal(false);
+      setGroup(ALL);
+      pushLog(`Group delete operation completed`);
+    } catch (err: any) {
+      pushLog(`Critical error: ${err.message}`);
+      alert("Group delete failed: " + err.message);
+    } finally {
+      setDeleteBusy(false);
+    }
+  }
+
+  const filterLabel = section === ALL ? "All Sections" : section;
+  const filterGroupLabel = group === ALL ? "All Groups" : group;
 
   return (
     <div style={styles.page}>
@@ -413,9 +615,8 @@ export default function AdminPage() {
         <header style={styles.header}>
           <div>
             <div style={styles.title}>Radio Olgoo Admin</div>
-            <div style={styles.subtitle}>Upload movies and manage what's already on the site.</div>
+            <div style={styles.subtitle}>Upload and manage media across all sections.</div>
           </div>
-
           <div style={styles.headerRight}>
             <span
               style={{
@@ -426,22 +627,20 @@ export default function AdminPage() {
             >
               {authorized ? "Authorized" : "Locked"}
             </span>
-
             <button style={styles.button} onClick={refreshAll} disabled={!authorized || busy}>
               Refresh
             </button>
           </div>
         </header>
 
-        {/* Token at the very top */}
+        {/* Token Section */}
         <section style={styles.tokenCard}>
           <div style={styles.cardHeader}>
             <div>
               <div style={styles.cardTitle}>Admin token</div>
-              <div style={styles.cardHint}>Enter the admin token to unlock the rest of this screen.</div>
+              <div style={styles.cardHint}>Enter the admin token to unlock this screen.</div>
             </div>
           </div>
-
           <div style={styles.row}>
             <input
               type="password"
@@ -462,9 +661,7 @@ export default function AdminPage() {
                 setAuthorized(false);
                 setAuthError("");
                 clearUpload();
-                setCenterItems([]);
-                setSlidesItems([]);
-                setBgItems([]);
+                setAllItems([]);
                 pushLog("Logged out");
               }}
               disabled={busy}
@@ -472,32 +669,30 @@ export default function AdminPage() {
               Log out
             </button>
           </div>
-
-          {authError ? <div style={styles.authError}>âš ï¸ {authError}</div> : null}
+          {authError && <div style={styles.authError}>{"\u26A0\uFE0F"} {authError}</div>}
         </section>
 
-        {/* Cloudy overlay + blur until authorized */}
+        {/* Gated Content */}
         <div style={styles.gatedWrap}>
           <div style={{ ...styles.gatedContent, ...(authorized ? styles.gateOn : styles.gateOff) }}>
-            {/* FILTER BAR */}
+
+            {/* Filter Bar */}
             <section style={styles.filterBar}>
               <div style={styles.filterRow}>
                 <div style={styles.filterField}>
                   <label style={styles.filterLabel}>SECTION</label>
                   <select
                     value={section}
-                    onChange={(e) => setSection(e.target.value as Category1)}
+                    onChange={(e) => setSection(e.target.value)}
                     style={styles.filterSelect}
                     disabled={busy || !authorized}
                   >
-                    {Object.keys(CATEGORY_TREE).map((c) => (
-                      <option key={c} value={c}>
-                        {c}
-                      </option>
+                    <option value={ALL}>{"\u2014"} All Sections {"\u2014"}</option>
+                    {sectionList.map((s) => (
+                      <option key={s} value={s}>{s}</option>
                     ))}
                   </select>
                 </div>
-
                 <div style={styles.filterField}>
                   <label style={styles.filterLabel}>GROUP</label>
                   <select
@@ -506,118 +701,387 @@ export default function AdminPage() {
                     style={styles.filterSelect}
                     disabled={busy || !authorized}
                   >
-                    {groupOptions.map((sc) => (
-                      <option key={sc} value={sc}>
-                        {sc}
-                      </option>
+                    <option value={ALL}>{"\u2014"} All Groups {"\u2014"}</option>
+                    {groupOptions.map((g) => (
+                      <option key={g} value={g}>{g}</option>
                     ))}
                   </select>
                 </div>
-
                 <div style={styles.filterSearch}>
                   <label style={styles.filterLabel}>SEARCH</label>
                   <input
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
-                    placeholder="key / URL / descriptionâ€¦"
+                    placeholder="PK / title / descriptionâ€¦"
                     style={styles.filterInput}
                     disabled={busy || !authorized}
                   />
                 </div>
-
                 <div style={styles.filterMeta}>
-                  <div style={styles.filterCount}>{filteredItems.length} item(s)</div>
+                  <div style={styles.filterCount}>{filteredItems.length} / {allItems.length} item(s)</div>
                   <div style={styles.filterViewing}>
-                    Viewing: <b>{headerTitle}</b>
+                    Viewing: <b>{filterLabel}{group !== ALL ? ` â†’ ${filterGroupLabel}` : ""}</b>
                   </div>
                 </div>
               </div>
+
+              {/* Delete Controls */}
+              <div style={{
+                marginTop: 16,
+                padding: '12px 16px',
+                background: 'rgba(220, 38, 38, 0.05)',
+                border: '1px solid rgba(185, 28, 28, 0.20)',
+                borderRadius: 14,
+                display: 'flex',
+                gap: 16,
+                flexWrap: 'wrap',
+                alignItems: 'center',
+              }}>
+                {section !== ALL && (
+                  <button
+                    style={{
+                      ...styles.dangerSmall,
+                      padding: '10px 18px',
+                      fontSize: 15,
+                      minWidth: 260,
+                    }}
+                    onClick={() => {
+                      const count = allItems.filter(i => i.section === section).length;
+                      if (count === 0) {
+                        pushLog(`Section "${section}" is already empty â†’ refreshing`);
+                        refreshAll();
+                        setSection(ALL);
+                      } else {
+                        setSectionToDelete(section);
+                        setTargetSection("");
+                        setTargetGroup(ALL);
+                        setShowDeleteSectionModal(true);
+                      }
+                    }}
+                    disabled={busy || deleteBusy}
+                  >
+                    ðŸ—‘ï¸ Delete Section "{section}" ({sectionItemCount} items)
+                  </button>
+                )}
+
+                {group !== ALL && (
+                  <button
+                    style={{
+                      ...styles.dangerSmall,
+                      padding: '10px 18px',
+                      fontSize: 15,
+                      minWidth: 260,
+                    }}
+                    onClick={() => {
+                      const count = allItems.filter(i => i.section === section && i.group === group).length;
+                      if (count === 0) {
+                        pushLog(`Group "${group}" in "{section}" is already empty â†’ refreshing`);
+                        refreshAll();
+                        setGroup(ALL);
+                      } else {
+                        setSectionToDelete(section);
+                        setGroupToDelete(group);
+                        setTargetSection("");
+                        setTargetGroup(ALL);
+                        setShowDeleteGroupModal(true);
+                      }
+                    }}
+                    disabled={busy || deleteBusy}
+                  >
+                    ðŸ—‘ï¸ Delete Group "{group}" ({groupItemCount} items)
+                  </button>
+                )}
+
+                {section === ALL && group === ALL && (
+                  <span style={{ fontSize: 13, opacity: 0.7, fontStyle: 'italic' }}>
+                    Select a specific section or group to enable delete options
+                  </span>
+                )}
+              </div>
             </section>
 
-            {/* UPLOAD SECTION - Now narrower */}
+            {/* â”€â”€ Upload Section â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
             <section style={styles.uploadCard}>
               <div style={styles.cardHeader}>
                 <div>
-                  <div style={styles.cardTitle}>Upload movies</div>
-                  <div style={styles.cardHint}>Uploads go to CENTER and are tagged with SECTION/GROUP.</div>
+                  <div style={styles.cardTitle}>Add media</div>
+                  <div style={styles.cardHint}>Upload a file or import from a URL (X, YouTube, etc.)</div>
+                </div>
+              </div>
+
+              <div style={styles.tabRow}>
+                <button
+                  style={uploadMode === "file" ? styles.tabActive : styles.tab}
+                  onClick={() => setUploadMode("file")}
+                  disabled={busy}
+                >
+                  {"\uD83D\uDCC1"} File Upload
+                </button>
+                <button
+                  style={uploadMode === "url" ? styles.tabActive : styles.tab}
+                  onClick={() => setUploadMode("url")}
+                  disabled={busy}
+                >
+                  {"\uD83D\uDD17"} Import from URL
+                </button>
+              </div>
+
+              <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 10 }}>
+                <div style={{ flex: 1, minWidth: 200 }}>
+                  <label style={styles.label}>Section (required)</label>
+                  <select
+                    value={uploadSection}
+                    onChange={(e) => {
+                      setUploadSection(e.target.value);
+                      setUploadGroup("");
+                      setUploadNewSection("");
+                    }}
+                    style={styles.filterSelect}
+                    disabled={busy || !authorized}
+                  >
+                    <option value="">-- Select --</option>
+                    {sectionList.map((s) => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                    <option value="__NEW__">{"\u2795"} Add New Section...</option>
+                  </select>
+                  {uploadSection === "__NEW__" && (
+                    <input
+                      value={uploadNewSection}
+                      onChange={(e) => setUploadNewSection(e.target.value)}
+                      placeholder="New section name"
+                      style={{ ...styles.input, marginTop: 8, border: "2px solid rgba(34,197,94,0.5)" }}
+                      autoFocus
+                      disabled={busy}
+                    />
+                  )}
+                </div>
+
+                {/* â”€â”€ Group field with Create button â”€â”€ */}
+                <div style={{ flex: 1, minWidth: 200 }}>
+                  <label style={styles.label}>Group (optional)</label>
+                  <select
+                    value={uploadGroup}
+                    onChange={(e) => {
+                      setUploadGroup(e.target.value);
+                      setUploadNewGroup("");
+                    }}
+                    style={styles.filterSelect}
+                    disabled={busy || !authorized || !uploadSection || uploadSection === "__NEW__"}
+                  >
+                    <option value="">(none)</option>
+                    {(uploadSection && sectionMap[uploadSection] || []).map((g) => (
+                      <option key={g} value={g}>{g}</option>
+                    ))}
+                    <option value="__NEW__">{"\u2795"} Add New Group...</option>
+                  </select>
+
+                  {uploadGroup === "__NEW__" && (
+                    <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8 }}>
+                      <input
+                        value={uploadNewGroup}
+                        onChange={(e) => setUploadNewGroup(e.target.value)}
+                        placeholder="New group name"
+                        style={{ ...styles.input, flex: 1, border: "2px solid rgba(34,197,94,0.5)" }}
+                        autoFocus
+                        disabled={busy}
+                      />
+                      <button
+                        style={{
+                          padding: "8px 12px",
+                          background: "#15803d",
+                          color: "white",
+                          border: "none",
+                          borderRadius: 8,
+                          cursor: "pointer",
+                          fontWeight: 800,
+                          fontSize: 13,
+                        }}
+                        onClick={async () => {
+                          if (!uploadNewGroup.trim()) {
+                            pushLog("\u274C Please enter a group name");
+                            return;
+                          }
+
+                          if (!uploadSection || uploadSection === "__NEW__") {
+                            pushLog("\u274C Select a section first");
+                            return;
+                          }
+
+                          setBusy(true);
+                          try {
+                            const finalSection = resolveUploadSection();
+                            const payload = {
+                              section: finalSection,
+                              group: uploadNewGroup.trim(),
+                            };
+
+                            const res = await fetch("/api/admin/create-group", {
+                              method: "POST",
+                              headers: {
+                                "Content-Type": "application/json",
+                                "x-admin-token": token,
+                              },
+                              body: JSON.stringify(payload),
+                            });
+
+                            const data = await res.json();
+
+                            if (res.ok && data.success) {
+                              pushLog(`\u2705 Group "${uploadNewGroup.trim()}" created in "${finalSection}"`);
+                              setUploadNewGroup("");
+                              setUploadGroup(uploadNewGroup.trim()); // auto-select
+                              await refreshAll();
+                              await new Promise(r => setTimeout(r, 800));
+                              await refreshAll(); // double refresh to be sure
+                            } else {
+                              pushLog(`\u274C Failed: ${data.error || "Unknown error"}`);
+                            }
+                          } catch (err: any) {
+                            pushLog(`\u274C Error creating group: ${err.message}`);
+                          } finally {
+                            setBusy(false);
+                          }
+                        }}
+                        disabled={busy || !uploadNewGroup.trim()}
+                      >
+                        Create Group
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
 
               <div style={styles.uploadGrid}>
                 <div style={styles.fieldBlock}>
-                  <label style={styles.label}>Description (optional)</label>
+                  <label style={styles.label}>Title (required)</label>
                   <input
-                    value={uploadDesc}
-                    onChange={(e) => setUploadDesc(e.target.value)}
-                    placeholder="Short description"
+                    value={uploadTitle}
+                    onChange={(e) => setUploadTitle(e.target.value)}
+                    placeholder="Enter title"
                     style={styles.input}
                     disabled={busy || !authorized}
                   />
                 </div>
-
                 <div style={styles.fieldBlock}>
-                  <label style={styles.label}>Choose .mp4 file(s)</label>
+                  <label style={styles.label}>Person (optional)</label>
                   <input
-                    ref={fileInputRef}
-                    type="file"
-                    multiple
-                    accept="video/mp4"
-                    onChange={onPickUploadFiles}
+                    value={uploadPerson}
+                    onChange={(e) => setUploadPerson(e.target.value)}
+                    placeholder="Speaker/Artist name"
+                    style={styles.input}
                     disabled={busy || !authorized}
                   />
-                  {!!uploadFiles.length ? (
-                    <div style={styles.miniNote}>Selected: {uploadFiles.length}</div>
-                  ) : (
-                    <div style={styles.miniNote}>Tip: you can select multiple mp4 files at once.</div>
-                  )}
                 </div>
-
-                <button style={styles.bigButton} onClick={uploadMovies} disabled={!authorized || busy}>
-                  {busy ? "Working..." : "Upload movie(s)"}
-                </button>
+                <div style={styles.fieldBlock}>
+                  <label style={styles.label}>Date (optional)</label>
+                  <input
+                    type="date"
+                    value={uploadDate}
+                    onChange={(e) => setUploadDate(e.target.value)}
+                    style={styles.input}
+                    disabled={busy || !authorized}
+                  />
+                </div>
               </div>
 
-              <div style={styles.note}>
-                Uploading is for <b>mp4</b> movies only. (Old â†’ BG/SLIDES/CENTER is browse-only here.)
+              <div style={styles.fieldBlock}>
+                <label style={styles.label}>Description (optional)</label>
+                <textarea
+                  value={uploadDescription}
+                  onChange={(e) => setUploadDescription(e.target.value)}
+                  placeholder="Brief description"
+                  style={{ ...styles.input, minHeight: 60, resize: "vertical" }}
+                  disabled={busy || !authorized}
+                />
               </div>
+
+              {uploadMode === "file" ? (
+                <>
+                  <div style={styles.fieldBlock}>
+                    <label style={styles.label}>Choose file(s)</label>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      multiple
+                      accept="video/*,image/*"
+                      onChange={onPickUploadFiles}
+                      disabled={busy || !authorized}
+                    />
+                    {uploadFiles.length > 0 && (
+                      <div style={styles.miniNote}>Selected: {uploadFiles.length}</div>
+                    )}
+                  </div>
+                  <button
+                    style={styles.bigButton}
+                    onClick={uploadMedia}
+                    disabled={!authorized || busy || !uploadTitle.trim() || !uploadFiles.length}
+                  >
+                    {busy ? "Working..." : "Upload"}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div style={styles.fieldBlock}>
+                    <label style={styles.label}>Source URL (X, YouTube, etc.)</label>
+                    <input
+                      value={uploadUrl}
+                      onChange={(e) => setUploadUrl(e.target.value)}
+                      placeholder="https://x.com/user/status/123456789"
+                      style={{ ...styles.input, border: "2px solid rgba(139, 92, 246, 0.4)" }}
+                      disabled={busy || !authorized}
+                    />
+                    <div style={styles.miniNote}>
+                      Supported: X/Twitter, YouTube, Instagram, and 1000+ sites via yt-dlp
+                    </div>
+                  </div>
+                  <button
+                    style={styles.bigButtonPurple}
+                    onClick={importFromUrl}
+                    disabled={!authorized || busy || !uploadTitle.trim() || !uploadUrl.trim()}
+                  >
+                    {busy ? "Downloading & importing..." : "\uD83D\uDD17 Import from URL"}
+                  </button>
+                </>
+              )}
             </section>
 
-            {/* UPLOADED ITEMS - Now full width below upload */}
+            {/* â”€â”€ Items List â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
             <section style={styles.card}>
               <div style={styles.cardHeader}>
                 <div>
                   <div style={styles.cardTitle}>
-                    Uploaded items in {section} â†’ {group}
+                    Items {section !== ALL ? `in ${section}` : ""}{" "}
+                    {group !== ALL ? `â†’ ${group}` : ""}
                   </div>
                   <div style={styles.cardHint}>
-                    Videos are rendered inline. Click "Edit" to update description, or "Delete" to remove.
+                    Edit details, move between sections, or delete items below.
                   </div>
                 </div>
               </div>
 
               <div style={styles.items}>
                 {filteredItems.map((it) => (
-                  <div key={it.sk} style={styles.item}>
+                  <div key={it.PK} style={styles.item}>
                     <div style={styles.itemTop}>
                       <div style={styles.itemLeft}>
-                        <div style={styles.itemPk}>{it.pk}</div>
-                        <div style={styles.itemSk}>{it.sk}</div>
+                        <div style={styles.itemPK}>{it.PK}</div>
+                        <div style={styles.itemTitle}>{it.title}</div>
                       </div>
-
                       <div style={styles.itemActions}>
-                        {editingDescSk === it.sk ? (
+                        {editingPK === it.PK ? (
                           <>
                             <button
                               style={styles.saveButton}
-                              onClick={() => saveDescription(it)}
-                              disabled={busy || !authorized}
+                              onClick={() => saveEditing(it)}
+                              disabled={busy}
                             >
                               Save
                             </button>
                             <button
                               style={styles.cancelButton}
-                              onClick={cancelEditingDesc}
-                              disabled={busy || !authorized}
+                              onClick={cancelEditing}
+                              disabled={busy}
                             >
                               Cancel
                             </button>
@@ -626,15 +1090,15 @@ export default function AdminPage() {
                           <>
                             <button
                               style={styles.editButton}
-                              onClick={() => startEditingDesc(it)}
-                              disabled={busy || !authorized}
+                              onClick={() => startEditing(it)}
+                              disabled={busy}
                             >
                               Edit
                             </button>
                             <button
                               style={styles.dangerSmall}
                               onClick={() => deleteItem(it)}
-                              disabled={busy || !authorized}
+                              disabled={busy}
                             >
                               Delete
                             </button>
@@ -644,46 +1108,152 @@ export default function AdminPage() {
                     </div>
 
                     <div style={styles.itemMeta}>
-                      <div style={styles.itemLine}>
-                        <span style={styles.dim}>Category:</span>{" "}
-                        {[it.category1, it.category2].filter(Boolean).join(" Â· ") || "â€”"}
-                      </div>
+                      {editingPK === it.PK ? (
+                        <>
+                          <div style={styles.moveBox}>
+                            <div style={styles.moveBoxTitle}>{"\u27A1\uFE0F"} Section / Group</div>
+                            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                              <div style={{ flex: 1, minWidth: 200 }}>
+                                <label style={styles.label}>Section</label>
+                                <select
+                                  value={editingFields.section || ""}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setEditNewSection("");
+                                    setEditNewGroup("");
+                                    if (val === "__NEW__") {
+                                      setEditingFields({ ...editingFields, section: "__NEW__", group: "" });
+                                    } else {
+                                      const newGroups = sectionMap[val] || [];
+                                      setEditingFields({
+                                        ...editingFields,
+                                        section: val,
+                                        group: newGroups[0] || "",
+                                      });
+                                    }
+                                  }}
+                                  style={styles.editSelect}
+                                >
+                                  {sectionList.map((s) => (
+                                    <option key={s} value={s}>{s}</option>
+                                  ))}
+                                  <option value="__NEW__">{"\u2795"} Add New Section...</option>
+                                </select>
+                                {editingFields.section === "__NEW__" && (
+                                  <input
+                                    value={editNewSection}
+                                    onChange={(e) => setEditNewSection(e.target.value)}
+                                    placeholder="New section name"
+                                    style={{ ...styles.input, marginTop: 8, border: "2px solid rgba(34,197,94,0.5)" }}
+                                    autoFocus
+                                  />
+                                )}
+                              </div>
+                              <div style={{ flex: 1, minWidth: 200 }}>
+                                <label style={styles.label}>Group</label>
+                                <select
+                                  value={editingFields.group || ""}
+                                  onChange={(e) => {
+                                    setEditNewGroup("");
+                                    setEditingFields({ ...editingFields, group: e.target.value });
+                                  }}
+                                  style={styles.editSelect}
+                                  disabled={editingFields.section === "__NEW__"}
+                                >
+                                  <option value="">(none)</option>
+                                  {(editingFields.section && sectionMap[editingFields.section] || []).map((g) => (
+                                    <option key={g} value={g}>{g}</option>
+                                  ))}
+                                  <option value="__NEW__">{"\u2795"} Add New Group...</option>
+                                </select>
+                                {editingFields.group === "__NEW__" && (
+                                  <input
+                                    value={editNewGroup}
+                                    onChange={(e) => setEditNewGroup(e.target.value)}
+                                    placeholder="New group name"
+                                    style={{ ...styles.input, marginTop: 8, border: "2px solid rgba(34,197,94,0.5)" }}
+                                    autoFocus
+                                  />
+                                )}
+                              </div>
+                            </div>
+                          </div>
 
-                      {/* Description editing */}
-                      {editingDescSk === it.sk ? (
-                        <div style={styles.fieldBlock}>
-                          <label style={styles.label}>Description</label>
-                          <input
-                            value={editingDescValue}
-                            onChange={(e) => setEditingDescValue(e.target.value)}
-                            placeholder="Enter description"
-                            style={styles.input}
-                            disabled={busy || !authorized}
-                            autoFocus
-                          />
-                        </div>
-                      ) : it.description ? (
-                        <div style={styles.itemLine}>
-                          <span style={styles.dim}>Desc:</span> {it.description}
-                        </div>
+                          <div style={styles.fieldBlock}>
+                            <label style={styles.label}>Title</label>
+                            <input
+                              value={editingFields.title || ""}
+                              onChange={(e) => setEditingFields({ ...editingFields, title: e.target.value })}
+                              style={styles.input}
+                            />
+                          </div>
+
+                          <div style={styles.fieldBlock}>
+                            <label style={styles.label}>Person</label>
+                            <input
+                              value={editingFields.person || ""}
+                              onChange={(e) => setEditingFields({ ...editingFields, person: e.target.value })}
+                              style={styles.input}
+                            />
+                          </div>
+
+                          <div style={styles.fieldBlock}>
+                            <label style={styles.label}>Date</label>
+                            <input
+                              type="date"
+                              value={editingFields.date || ""}
+                              onChange={(e) => setEditingFields({ ...editingFields, date: e.target.value })}
+                              style={styles.input}
+                            />
+                          </div>
+
+                          <div style={styles.fieldBlock}>
+                            <label style={styles.label}>Description</label>
+                            <textarea
+                              value={editingFields.description || ""}
+                              onChange={(e) => setEditingFields({ ...editingFields, description: e.target.value })}
+                              style={{ ...styles.input, minHeight: 60, resize: "vertical" }}
+                            />
+                          </div>
+                        </>
                       ) : (
-                        <div style={{ ...styles.itemLine, opacity: 0.5 }}>
-                          <span style={styles.dim}>Desc:</span> (no description)
-                        </div>
+                        <>
+                          <div style={styles.itemLine}>
+                            <span style={styles.dim}>Section:</span> {it.section}
+                          </div>
+                          {it.group && (
+                            <div style={styles.itemLine}>
+                              <span style={styles.dim}>Group:</span> {it.group}
+                            </div>
+                          )}
+                          {it.person && (
+                            <div style={styles.itemLine}>
+                              <span style={styles.dim}>Person:</span> {it.person}
+                            </div>
+                          )}
+                          {it.date && (
+                            <div style={styles.itemLine}>
+                              <span style={styles.dim}>Date:</span> {it.date}
+                            </div>
+                          )}
+                          {it.description && (
+                            <div style={styles.itemLine}>
+                              <span style={styles.dim}>Desc:</span> {it.description}
+                            </div>
+                          )}
+                        </>
                       )}
 
-                      {/* Inline render (image/video) */}
                       <div style={styles.previewBox}>
-                        {isLikelyVideo(it.url, it.mediaType) ? (
+                        {isVideo(it.url) ? (
                           <video key={it.url} src={it.url} controls preload="metadata" style={styles.video} />
-                        ) : isLikelyImage(it.url, it.mediaType) ? (
-                          <img src={it.url} alt={it.sk} style={styles.image} />
+                        ) : isImage(it.url) ? (
+                          <img src={it.url} alt={it.title} style={styles.image} />
                         ) : (
-                          <div style={styles.previewFallback}>No inline preview for this file type.</div>
+                          <div style={styles.previewFallback}>No preview available</div>
                         )}
                       </div>
 
-                      {/* Keep "Open" link as optional */}
                       <div style={{ ...styles.itemLine, wordBreak: "break-all" }}>
                         <a href={it.url} target="_blank" rel="noreferrer" style={styles.link}>
                           Open in new tab
@@ -693,18 +1263,23 @@ export default function AdminPage() {
                   </div>
                 ))}
 
-                {!filteredItems.length ? (
+                {!filteredItems.length && (
                   <div style={styles.empty}>
-                    Nothing uploaded in <b>{headerTitle}</b> yet.
+                    {allItems.length === 0
+                      ? "No items uploaded yet."
+                      : `No items match the current filter (${filterLabel}${
+                          group !== ALL ? ` â†’ ${filterGroupLabel}` : ""
+                        }).`}
                   </div>
-                ) : null}
+                )}
               </div>
             </section>
 
+            {/* Log */}
             <section style={styles.card}>
               <div style={styles.cardHeader}>
                 <div style={styles.cardTitle}>Log</div>
-                <button style={styles.buttonGhost} onClick={() => setLog([])} disabled={busy || !authorized}>
+                <button style={styles.buttonGhost} onClick={() => setLog([])} disabled={busy}>
                   Clear
                 </button>
               </div>
@@ -712,20 +1287,280 @@ export default function AdminPage() {
             </section>
           </div>
 
-          {!authorized ? (
-            <div style={styles.cloudOverlay} aria-hidden="true">
+          {!authorized && (
+            <div style={styles.cloudOverlay}>
               <div style={styles.cloudCard}>
                 <div style={styles.cloudTitle}>Locked</div>
                 <div style={styles.cloudText}>Enter a valid admin token above to unlock this screen.</div>
               </div>
             </div>
-          ) : null}
+          )}
         </div>
+
+        {/* Delete Section Modal */}
+        {showDeleteSectionModal && (
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              background: "rgba(0,0,0,0.5)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              zIndex: 1000,
+            }}
+          >
+            <div
+              style={{
+                background: "white",
+                padding: 24,
+                borderRadius: 16,
+                maxWidth: 480,
+                width: "90%",
+                boxShadow: "0 10px 30px rgba(0,0,0,0.2)",
+              }}
+            >
+              <h3 style={{ margin: "0 0 16px", color: "#991b1b" }}>
+                Delete Section: {sectionToDelete}
+              </h3>
+
+              <p>
+                {sectionItemCount > 0 ? (
+                  <>This section contains <strong>{sectionItemCount}</strong> items.</>
+                ) : (
+                  <>This section is empty and will disappear after refresh.</>
+                )}
+              </p>
+
+              {sectionItemCount > 0 && (
+                <p style={{ margin: "16px 0" }}>
+                  You must move these items to another section before deletion.
+                </p>
+              )}
+
+              {sectionItemCount > 0 && (
+                <div style={{ margin: "16px 0" }}>
+                  <label style={{ fontWeight: 800, display: "block", marginBottom: 8 }}>
+                    Move to section:
+                  </label>
+                  <select
+                    value={targetSection}
+                    onChange={(e) => {
+                      setTargetSection(e.target.value);
+                      setTargetGroup(ALL);
+                    }}
+                    style={styles.editSelect}
+                  >
+                    <option value="">â€” Select target section â€”</option>
+                    {sectionList
+                      .filter((s) => s !== sectionToDelete)
+                      .map((s) => (
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+              )}
+
+              {sectionItemCount > 0 && targetSection && sectionMap[targetSection]?.length > 0 && (
+                <div style={{ margin: "16px 0" }}>
+                  <label style={{ fontWeight: 800, display: "block", marginBottom: 8 }}>
+                    Move to group (optional):
+                  </label>
+                  <select
+                    value={targetGroup}
+                    onChange={(e) => setTargetGroup(e.target.value)}
+                    style={styles.editSelect}
+                  >
+                    <option value={ALL}>No specific group (root of section)</option>
+                    {sectionMap[targetSection].map((g) => (
+                      <option key={g} value={g}>
+                        {g}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              <div style={{ marginTop: 24, display: "flex", gap: 12, justifyContent: "flex-end" }}>
+                <button
+                  style={styles.cancelButton}
+                  onClick={() => {
+                    setShowDeleteSectionModal(false);
+                    setSectionToDelete("");
+                    setTargetSection("");
+                    setTargetGroup(ALL);
+                  }}
+                >
+                  Cancel
+                </button>
+
+                {sectionItemCount > 0 && (
+                  <button
+                    style={{
+                      ...styles.dangerSmall,
+                      opacity: deleteBusy || !targetSection ? 0.6 : 1,
+                    }}
+                    disabled={deleteBusy || !targetSection}
+                    onClick={handleDeleteSection}
+                  >
+                    {deleteBusy ? "Moving & Deleting..." : "Move & Delete Section"}
+                  </button>
+                )}
+
+                {sectionItemCount === 0 && (
+                  <button
+                    style={styles.buttonPrimary}
+                    onClick={() => {
+                      refreshAll();
+                      setShowDeleteSectionModal(false);
+                      setSection(ALL);
+                    }}
+                  >
+                    Refresh & Close
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Delete Group Modal */}
+        {showDeleteGroupModal && (
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              background: "rgba(0,0,0,0.5)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              zIndex: 1000,
+            }}
+          >
+            <div
+              style={{
+                background: "white",
+                padding: 24,
+                borderRadius: 16,
+                maxWidth: 480,
+                width: "90%",
+                boxShadow: "0 10px 30px rgba(0,0,0,0.2)",
+              }}
+            >
+              <h3 style={{ margin: "0 0 16px", color: "#991b1b" }}>
+                Delete Group: {groupToDelete} (in {sectionToDelete})
+              </h3>
+
+              <p>
+                {groupItemCount > 0 ? (
+                  <>This group contains <strong>{groupItemCount}</strong> items.</>
+                ) : (
+                  <>This group is empty and will disappear after refresh.</>
+                )}
+              </p>
+
+              {groupItemCount > 0 && (
+                <p style={{ margin: "16px 0" }}>
+                  Move these items to another group in the same section or to another section.
+                </p>
+              )}
+
+              {groupItemCount > 0 && (
+                <div style={{ margin: "16px 0" }}>
+                  <label style={{ fontWeight: 800, display: "block", marginBottom: 8 }}>
+                    Move to section:
+                  </label>
+                  <select
+                    value={targetSection}
+                    onChange={(e) => {
+                      setTargetSection(e.target.value);
+                      setTargetGroup(ALL);
+                    }}
+                    style={styles.editSelect}
+                  >
+                    <option value="">â€” Select target section â€”</option>
+                    {sectionList.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {groupItemCount > 0 && targetSection && sectionMap[targetSection]?.length > 0 && (
+                <div style={{ margin: "16px 0" }}>
+                  <label style={{ fontWeight: 800, display: "block", marginBottom: 8 }}>
+                    Move to group (optional):
+                  </label>
+                  <select
+                    value={targetGroup}
+                    onChange={(e) => setTargetGroup(e.target.value)}
+                    style={styles.editSelect}
+                  >
+                    <option value={ALL}>No specific group (root of section)</option>
+                    {sectionMap[targetSection]
+                      .filter((g) => targetSection !== sectionToDelete || g !== groupToDelete)
+                      .map((g) => (
+                        <option key={g} value={g}>
+                          {g}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+              )}
+
+              <div style={{ marginTop: 24, display: "flex", gap: 12, justifyContent: "flex-end" }}>
+                <button
+                  style={styles.cancelButton}
+                  onClick={() => {
+                    setShowDeleteGroupModal(false);
+                    setSectionToDelete("");
+                    setGroupToDelete("");
+                    setTargetSection("");
+                    setTargetGroup(ALL);
+                  }}
+                >
+                  Cancel
+                </button>
+
+                {groupItemCount > 0 && (
+                  <button
+                    style={{
+                      ...styles.dangerSmall,
+                      opacity: deleteBusy || !targetSection ? 0.6 : 1,
+                    }}
+                    disabled={deleteBusy || !targetSection}
+                    onClick={handleDeleteGroup}
+                  >
+                    {deleteBusy ? "Moving & Deleting..." : "Move & Delete Group"}
+                  </button>
+                )}
+
+                {groupItemCount === 0 && (
+                  <button
+                    style={styles.buttonPrimary}
+                    onClick={() => {
+                      refreshAll();
+                      setShowDeleteGroupModal(false);
+                      setGroup(ALL);
+                    }}
+                  >
+                    Refresh & Close
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
+// â”€â”€ Styles â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const styles: Record<string, React.CSSProperties> = {
   page: {
     minHeight: "100vh",
@@ -734,7 +1569,6 @@ const styles: Record<string, React.CSSProperties> = {
     color: "#0f172a",
   },
   shell: { maxWidth: 1200, margin: "0 auto", padding: 18 },
-
   header: {
     display: "flex",
     justifyContent: "space-between",
@@ -746,7 +1580,6 @@ const styles: Record<string, React.CSSProperties> = {
   headerRight: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" },
   title: { fontSize: 28, fontWeight: 950, letterSpacing: -0.3 },
   subtitle: { marginTop: 4, opacity: 0.72, fontSize: 13 },
-
   tokenCard: {
     background: "rgba(255,255,255,0.95)",
     borderRadius: 18,
@@ -757,12 +1590,10 @@ const styles: Record<string, React.CSSProperties> = {
     maxWidth: 800,
     margin: "0 auto 14px auto",
   },
-
   gatedWrap: { position: "relative" },
   gatedContent: { transition: "filter 160ms ease, opacity 160ms ease" },
   gateOn: { opacity: 1, filter: "none", pointerEvents: "auto" },
-  gateOff: { opacity: 0.35, filter: "blur(3px) saturate(0.9)", pointerEvents: "none", userSelect: "none" },
-
+  gateOff: { opacity: 0.35, filter: "blur(3px)", pointerEvents: "none" },
   cloudOverlay: {
     position: "absolute",
     inset: 0,
@@ -784,7 +1615,6 @@ const styles: Record<string, React.CSSProperties> = {
   },
   cloudTitle: { fontWeight: 950, fontSize: 16 },
   cloudText: { marginTop: 6, opacity: 0.75, fontSize: 13, fontWeight: 650 },
-
   filterBar: {
     position: "sticky",
     top: 0,
@@ -798,8 +1628,8 @@ const styles: Record<string, React.CSSProperties> = {
     backdropFilter: "blur(8px)",
   },
   filterRow: { display: "flex", gap: 22, alignItems: "end", flexWrap: "wrap" },
-  filterField: { minWidth: 280 },
-  filterLabel: { display: "block", fontWeight: 950, fontSize: 22, marginBottom: 10, letterSpacing: 0.2 },
+  filterField: { minWidth: 200 },
+  filterLabel: { display: "block", fontWeight: 950, fontSize: 22, marginBottom: 10 },
   filterSelect: {
     width: "100%",
     padding: "16px 18px",
@@ -807,28 +1637,19 @@ const styles: Record<string, React.CSSProperties> = {
     border: "3px solid rgba(15, 23, 42, 0.85)",
     background: "white",
     fontWeight: 800,
-    outline: "none",
     fontSize: 18,
   },
-  filterSearch: { flex: 1, minWidth: 320 },
+  filterSearch: { flex: 1, minWidth: 280 },
   filterInput: {
     width: "100%",
     padding: "16px 18px",
     borderRadius: 16,
     border: "3px solid rgba(15, 23, 42, 0.85)",
     background: "white",
-    outline: "none",
     fontWeight: 700,
     fontSize: 18,
   },
-  filterMeta: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 8,
-    alignItems: "flex-end",
-    marginLeft: "auto",
-    minWidth: 200,
-  },
+  filterMeta: { display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end", marginLeft: "auto" },
   filterCount: {
     fontWeight: 950,
     fontSize: 14,
@@ -838,16 +1659,6 @@ const styles: Record<string, React.CSSProperties> = {
     background: "rgba(15, 23, 42, 0.04)",
   },
   filterViewing: { fontSize: 13, opacity: 0.75 },
-
-  card: {
-    background: "rgba(255,255,255,0.9)",
-    borderRadius: 18,
-    border: "1px solid rgba(15, 23, 42, 0.08)",
-    boxShadow: "0 20px 60px rgba(2, 6, 23, 0.06)",
-    padding: 14,
-    marginBottom: 14,
-    backdropFilter: "blur(6px)",
-  },
   uploadCard: {
     background: "rgba(255,255,255,0.9)",
     borderRadius: 18,
@@ -859,20 +1670,20 @@ const styles: Record<string, React.CSSProperties> = {
     maxWidth: 800,
     margin: "0 auto 14px auto",
   },
-  cardHeader: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "baseline",
-    gap: 12,
-    flexWrap: "wrap",
-    marginBottom: 10,
+  card: {
+    background: "rgba(255,255,255,0.9)",
+    borderRadius: 18,
+    border: "1px solid rgba(15, 23, 42, 0.08)",
+    boxShadow: "0 20px 60px rgba(2, 6, 23, 0.06)",
+    padding: 14,
+    marginBottom: 14,
+    backdropFilter: "blur(6px)",
   },
-  cardTitle: { fontWeight: 950, fontSize: 16, letterSpacing: -0.1 },
+  cardHeader: { display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, marginBottom: 10 },
+  cardTitle: { fontWeight: 950, fontSize: 16 },
   cardHint: { opacity: 0.65, fontSize: 12 },
-
   row: { display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" },
   label: { display: "block", fontWeight: 850, marginBottom: 6, fontSize: 12, opacity: 0.85 },
-
   input: {
     width: "100%",
     padding: "11px 12px",
@@ -881,7 +1692,6 @@ const styles: Record<string, React.CSSProperties> = {
     background: "rgba(255,255,255,0.95)",
     outline: "none",
   },
-
   pill: {
     padding: "7px 10px",
     borderRadius: 999,
@@ -889,7 +1699,6 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 12,
     border: "1px solid rgba(15, 23, 42, 0.10)",
   },
-
   button: {
     padding: "10px 12px",
     borderRadius: 14,
@@ -918,7 +1727,7 @@ const styles: Record<string, React.CSSProperties> = {
   bigButton: {
     marginTop: 12,
     width: "100%",
-    padding: "14px 14px",
+    padding: "14px",
     borderRadius: 16,
     border: "1px solid rgba(15, 23, 42, 0.12)",
     background: "#0f172a",
@@ -927,19 +1736,48 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: "pointer",
     fontSize: 16,
   },
-
-  uploadGrid: {
-    display: "grid",
-    gridTemplateColumns: "1fr 1fr auto",
-    gap: 14,
-    alignItems: "end",
+  bigButtonPurple: {
+    marginTop: 12,
+    width: "100%",
+    padding: "14px",
+    borderRadius: 16,
+    border: "1px solid rgba(139, 92, 246, 0.3)",
+    background: "#7c3aed",
+    color: "white",
+    fontWeight: 950,
+    cursor: "pointer",
+    fontSize: 16,
   },
-
+  tabRow: {
+    display: "flex",
+    gap: 6,
+    marginBottom: 14,
+    borderBottom: "2px solid rgba(15, 23, 42, 0.08)",
+    paddingBottom: 10,
+  },
+  tab: {
+    padding: "10px 18px",
+    borderRadius: 12,
+    border: "1px solid rgba(15, 23, 42, 0.10)",
+    background: "transparent",
+    cursor: "pointer",
+    fontWeight: 800,
+    fontSize: 14,
+    opacity: 0.6,
+  },
+  tabActive: {
+    padding: "10px 18px",
+    borderRadius: 12,
+    border: "2px solid #0f172a",
+    background: "rgba(15, 23, 42, 0.06)",
+    cursor: "pointer",
+    fontWeight: 950,
+    fontSize: 14,
+  },
+  uploadGrid: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14, alignItems: "end" },
   fieldBlock: { marginTop: 10 },
-  note: { marginTop: 10, opacity: 0.72, fontSize: 13 },
   miniNote: { marginTop: 8, opacity: 0.72, fontSize: 12, fontWeight: 800 },
-
-  items: { display: "grid", gridTemplateColumns: "1fr", gap: 10, marginTop: 12 },
+  items: { display: "grid", gap: 10, marginTop: 12 },
   item: {
     border: "1px solid rgba(15, 23, 42, 0.10)",
     borderRadius: 16,
@@ -949,44 +1787,44 @@ const styles: Record<string, React.CSSProperties> = {
   },
   itemTop: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 },
   itemLeft: { display: "flex", flexDirection: "column", gap: 4 },
-  itemPk: { fontWeight: 950, fontSize: 12, opacity: 0.7 },
-  itemSk: { fontWeight: 950, fontSize: 13, wordBreak: "break-all" },
-  itemActions: { display: "flex", gap: 8, flexWrap: "wrap" },
+  itemPK: { fontWeight: 950, fontSize: 12, opacity: 0.7 },
+  itemTitle: { fontWeight: 950, fontSize: 14 },
+  itemActions: { display: "flex", gap: 8 },
   itemMeta: { marginTop: 10, display: "flex", flexDirection: "column", gap: 10 },
   itemLine: { fontSize: 13, opacity: 0.9 },
   dim: { opacity: 0.7, fontWeight: 800 },
   link: { fontWeight: 900, textDecoration: "underline" },
-
   previewBox: {
     borderRadius: 14,
     border: "1px solid rgba(15, 23, 42, 0.10)",
     background: "rgba(15, 23, 42, 0.02)",
     padding: 10,
   },
-  video: {
-    width: "100%",
-    maxHeight: 280,
-    borderRadius: 12,
-    display: "block",
-    background: "#000",
-  },
-  image: {
-    width: "100%",
-    maxHeight: 280,
-    objectFit: "contain",
-    borderRadius: 12,
-    display: "block",
-    background: "#fff",
-  },
-  previewFallback: {
+  video: { width: "100%", maxHeight: 280, borderRadius: 12, display: "block", background: "#000" },
+  image: { width: "100%", maxHeight: 280, objectFit: "contain", borderRadius: 12, display: "block" },
+  previewFallback: { padding: 12, opacity: 0.75, fontWeight: 800, fontSize: 12 },
+  moveBox: {
     padding: 12,
-    borderRadius: 12,
-    border: "1px dashed rgba(15, 23, 42, 0.18)",
-    opacity: 0.75,
-    fontWeight: 800,
-    fontSize: 12,
+    borderRadius: 14,
+    border: "2px solid rgba(59, 130, 246, 0.30)",
+    background: "rgba(59, 130, 246, 0.06)",
+    marginBottom: 4,
   },
-
+  moveBoxTitle: {
+    fontWeight: 950,
+    fontSize: 13,
+    marginBottom: 10,
+    color: "#1e40af",
+  },
+  editSelect: {
+    width: "100%",
+    padding: "10px 12px",
+    borderRadius: 12,
+    border: "2px solid rgba(59, 130, 246, 0.35)",
+    background: "white",
+    fontWeight: 800,
+    fontSize: 14,
+  },
   editButton: {
     padding: "8px 10px",
     borderRadius: 12,
@@ -1023,7 +1861,6 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: "pointer",
     fontWeight: 950,
   },
-
   empty: {
     opacity: 0.7,
     fontWeight: 850,
@@ -1032,7 +1869,6 @@ const styles: Record<string, React.CSSProperties> = {
     border: "1px dashed rgba(15, 23, 42, 0.18)",
     background: "rgba(15, 23, 42, 0.02)",
   },
-
   logBox: {
     marginTop: 10,
     background: "#0b0b0b",
@@ -1043,7 +1879,6 @@ const styles: Record<string, React.CSSProperties> = {
     maxHeight: 260,
     fontSize: 12,
   },
-
   authError: {
     marginTop: 10,
     padding: "10px 12px",

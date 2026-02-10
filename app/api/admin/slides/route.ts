@@ -1,24 +1,23 @@
 // app/api/admin/slides/route.ts
+//
+// ADMIN API: Manage media items (requires authentication)
+// Supports both MEDIA# and VIDEOARCHIVE# PK formats
+//
 import { NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import {
   DynamoDBDocumentClient,
   PutCommand,
-  QueryCommand,
   DeleteCommand,
+  UpdateCommand,
+  ScanCommand,
 } from "@aws-sdk/lib-dynamodb";
+import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-type TargetSet = "CENTER" | "SLIDES" | "BG";
-
-function getEnv(name: string) {
-  const v = process.env[name];
-  if (!v) throw new Error(`Missing ${name} in env`);
-  return v;
-}
 
 function requireAdmin(req: Request) {
   const incoming = (req.headers.get("x-admin-token") || "").trim();
@@ -28,18 +27,6 @@ function requireAdmin(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   return null;
-}
-
-function parseSet(raw: string | null): TargetSet | null {
-  const s = (raw || "").trim().toUpperCase();
-  if (s === "CENTER" || s === "SLIDES" || s === "BG") return s as TargetSet;
-  return null;
-}
-
-function skPrefixFor(set: TargetSet) {
-  if (set === "CENTER") return "VID#";
-  if (set === "SLIDES") return "SLD#";
-  return "BG#";
 }
 
 function jsonOk(obj: any, status = 200) {
@@ -55,13 +42,27 @@ function jsonErr(error: string, status = 400, detail?: any) {
 
 const ddb = DynamoDBDocumentClient.from(
   new DynamoDBClient({
-    region:
-      process.env.AWS_REGION ||
-      process.env.AWS_DEFAULT_REGION ||
-      "ca-central-1",
+    region: process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || "ca-central-1",
   }),
   { marshallOptions: { removeUndefinedValues: true } }
 );
+
+const region = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || "ca-central-1";
+const bucket = (process.env.S3_BUCKET_NAME || "").trim();
+const bucketHost = bucket ? `${bucket}.s3.${region}.amazonaws.com` : "";
+const s3 = new S3Client({ region });
+
+function keyFromS3PublicUrl(urlStr: string): string | null {
+  try {
+    const u = new URL(urlStr);
+    if (!bucketHost) return null;
+    if (u.hostname !== bucketHost) return null;
+    const key = decodeURIComponent(u.pathname.replace(/^\//, ""));
+    return key || null;
+  } catch {
+    return null;
+  }
+}
 
 function tableName() {
   const v = (process.env.DDB_TABLE_NAME || "").trim();
@@ -69,102 +70,218 @@ function tableName() {
   return v;
 }
 
-
-async function listBySet(set: TargetSet) {
-  const TableName = tableName();
-  if (!TableName) throw new Error("Missing DDB table name env (DDB_TABLE_NAME)");
-
-  const out = await ddb.send(
-    new QueryCommand({
-      TableName,
-      KeyConditionExpression: "pk = :pk",
-      ExpressionAttributeValues: { ":pk": set },
-    })
-  );
-
-  const items = (out.Items || []) as any[];
-  items.sort((a, b) => String(a.sk).localeCompare(String(b.sk)));
-  return items;
+function generatePK(): string {
+  const ts = Date.now();
+  const rand = randomUUID().replace(/-/g, "").slice(0, 14);
+  return `MEDIA#${ts}#${rand}`;
 }
 
+async function presignItems(items: any[]): Promise<any[]> {
+  if (!bucket) return items;
+
+  return Promise.all(
+    items.map(async (item) => {
+      let urlStr = String(item.url || "");
+      const key = keyFromS3PublicUrl(urlStr);
+
+      if (key) {
+        urlStr = await getSignedUrl(
+          s3,
+          new GetObjectCommand({ Bucket: bucket, Key: key }),
+          { expiresIn: 60 * 60 }
+        );
+      }
+
+      return { ...item, url: urlStr };
+    })
+  );
+}
+
+/**
+ * GET - List items
+ */
 export async function GET(req: Request) {
   const auth = requireAdmin(req);
   if (auth) return auth;
 
   try {
+    const TableName = tableName();
     const url = new URL(req.url);
-    const set = parseSet(url.searchParams.get("set"));
-    if (!set) return jsonErr("Invalid set. Must be CENTER, SLIDES, or BG", 400);
+    const sectionFilter = url.searchParams.get("section");
+    const groupFilter = url.searchParams.get("group");
 
-    const items = await listBySet(set);
-    return jsonOk({ ok: true, set, count: items.length, items });
+    const result = await ddb.send(new ScanCommand({ TableName }));
+    
+    // ✅ Accept both MEDIA# and VIDEOARCHIVE# formats
+    let items = (result.Items || []).filter((item) => {
+      if (!item.PK) return false;
+      const pk = String(item.PK);
+      return pk.startsWith("MEDIA#") || pk.startsWith("VIDEOARCHIVE#");
+    });
+
+    if (sectionFilter) {
+      items = items.filter((item) => item.section === sectionFilter);
+    }
+
+    if (groupFilter) {
+      items = items.filter((item) => item.group === groupFilter);
+    }
+
+    items.sort((a, b) => {
+      const da = a.createdAt || "";
+      const db = b.createdAt || "";
+      return db.localeCompare(da);
+    });
+
+    items = await presignItems(items);
+
+    return jsonOk({
+      ok: true,
+      section: sectionFilter,
+      group: groupFilter,
+      count: items.length,
+      items,
+    });
   } catch (e: any) {
     return jsonErr("Load failed", 500, e?.message ?? e);
   }
 }
 
+/**
+ * POST - Create new item
+ */
 export async function POST(req: Request) {
   const auth = requireAdmin(req);
   if (auth) return auth;
 
   try {
     const TableName = tableName();
-    if (!TableName) throw new Error("Missing DDB table name env (DDB_TABLE_NAME)");
-
     const body = await req.json().catch(() => null);
     if (!body) return jsonErr("Bad JSON body", 400);
 
-    const set = parseSet(body.set);
-    if (!set) return jsonErr("Invalid set. Must be CENTER, SLIDES, or BG", 400);
+    const section = String(body.section || "").trim();
+    if (!section) return jsonErr("Missing section", 400);
 
-    const urlStr = String(body.url || "").trim();
-    if (!urlStr) return jsonErr("Missing url", 400);
+    const url = String(body.url || "").trim();
+    if (!url) return jsonErr("Missing url", 400);
 
-    const mediaType = String(body.mediaType || "").trim();
+    const title = String(body.title || "").trim();
+    if (!title) return jsonErr("Missing title", 400);
 
-    const incomingSk = String(body.sk || "").trim();
-    const ts = Date.now();
-    const id = randomUUID().replace(/-/g, "").slice(0, 14);
-    const sk = incomingSk || `${skPrefixFor(set)}${ts}#${id}`;
+    const PK = generatePK();
 
-    const item = {
-      pk: set,
-      sk,
-      url: urlStr,
-      mediaType,
-      enabled: body.enabled ?? true,
-      order: Number(body.order ?? 0),
-      category1: String(body.category1 || ""),
-      category2: String(body.category2 || ""),
-      description: String(body.description || ""),
-      createdAt: String(body.createdAt || new Date().toISOString()),
+    const item: any = {
+      PK,
+      url,
+      section,
+      title,
+      createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
 
+    if (body.group) item.group = String(body.group).trim();
+    if (body.person) item.person = String(body.person).trim();
+    if (body.date) item.date = String(body.date).trim();
+    if (body.description) item.description = String(body.description).trim();
+    if (body.active !== undefined) item.active = Boolean(body.active);
+
     await ddb.send(new PutCommand({ TableName, Item: item }));
 
-    return jsonOk({ ok: true, pk: set, sk });
+    return jsonOk({ ok: true, PK, item });
   } catch (e: any) {
-    return jsonErr("DDB write failed", 500, e?.message ?? e);
+    return jsonErr("Create failed", 500, e?.message ?? e);
   }
 }
 
+/**
+ * PATCH - Update item
+ */
+export async function PATCH(req: Request) {
+  const auth = requireAdmin(req);
+  if (auth) return auth;
+
+  try {
+    const TableName = tableName();
+    const body = await req.json().catch(() => null);
+    if (!body) return jsonErr("Bad JSON body", 400);
+
+    const PK = String(body.PK || "").trim();
+    if (!PK) return jsonErr("Missing PK", 400);
+
+    const updates: string[] = ["updatedAt = :upd"];
+    const values: any = { ":upd": new Date().toISOString() };
+    const names: Record<string, string> = {};
+
+    if (body.title !== undefined) {
+      updates.push("title = :title");
+      values[":title"] = String(body.title).trim();
+    }
+    if (body.description !== undefined) {
+      updates.push("description = :desc");
+      values[":desc"] = String(body.description).trim();
+    }
+    if (body.person !== undefined) {
+      updates.push("person = :person");
+      values[":person"] = String(body.person).trim();
+    }
+    if (body.date !== undefined) {
+      updates.push("#dt = :date");
+      values[":date"] = String(body.date).trim();
+      names["#dt"] = "date";
+    }
+    if (body.active !== undefined) {
+      updates.push("active = :active");
+      values[":active"] = Boolean(body.active);
+    }
+    if (body.section !== undefined) {
+      const newSection = String(body.section).trim();
+      if (!newSection) return jsonErr("Section cannot be empty", 400);
+      updates.push("#sec = :section");
+      values[":section"] = newSection;
+      names["#sec"] = "section";
+    }
+    if (body.group !== undefined) {
+      updates.push("#grp = :group");
+      values[":group"] = String(body.group).trim();
+      names["#grp"] = "group";
+    }
+
+    const updateExpression = `SET ${updates.join(", ")}`;
+    const expressionAttributeNames = Object.keys(names).length > 0 ? names : undefined;
+
+    await ddb.send(
+      new UpdateCommand({
+        TableName,
+        Key: { PK },
+        UpdateExpression: updateExpression,
+        ExpressionAttributeValues: values,
+        ...(expressionAttributeNames && {
+          ExpressionAttributeNames: expressionAttributeNames,
+        }),
+      })
+    );
+
+    return jsonOk({ ok: true, PK });
+  } catch (e: any) {
+    return jsonErr("Update failed", 500, e?.message ?? e);
+  }
+}
+
+/**
+ * DELETE - Remove item
+ */
 export async function DELETE(req: Request) {
   const auth = requireAdmin(req);
   if (auth) return auth;
 
   try {
     const TableName = tableName();
-    if (!TableName) throw new Error("Missing DDB table name env (DDB_TABLE_NAME)");
-
     const url = new URL(req.url);
-    const set = parseSet(url.searchParams.get("set"));
-    const sk = (url.searchParams.get("sk") || "").trim();
+    const PK = (url.searchParams.get("PK") || "").trim();
 
-    if (!set) return jsonErr("Invalid set. Must be CENTER, SLIDES, or BG", 400);
-    if (!sk) return jsonErr("Missing sk", 400);
+    if (!PK) return jsonErr("Missing PK", 400);
 
-    await ddb.send(new DeleteCommand({ TableName, Key: { pk: set, sk } }));
+    await ddb.send(new DeleteCommand({ TableName, Key: { PK } }));
 
     return jsonOk({ ok: true });
   } catch (e: any) {
