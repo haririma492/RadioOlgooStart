@@ -108,7 +108,10 @@ export default function AdminPage() {
   const [editingFields, setEditingFields] = useState<Partial<MediaItem>>({});
   const [editNewSection, setEditNewSection] = useState<string>("");
   const [editNewGroup, setEditNewGroup] = useState<string>("");
+  const [editFile, setEditFile] = useState<File | null>(null);
+  const editFileInputRef = useRef<HTMLInputElement | null>(null);
 
+  const [showUploadModal, setShowUploadModal] = useState(false);
   const [showDeleteSectionModal, setShowDeleteSectionModal] = useState(false);
   const [showDeleteGroupModal, setShowDeleteGroupModal] = useState(false);
   const [sectionToDelete, setSectionToDelete] = useState<string>("");
@@ -116,6 +119,7 @@ export default function AdminPage() {
   const [targetSection, setTargetSection] = useState<string>("");
   const [targetGroup, setTargetGroup] = useState<string>(ALL);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const [logCollapsed, setLogCollapsed] = useState(false);
 
   // Track known groups (newly created ones) so they appear even without items
   const [knownGroups, setKnownGroups] = useState<Record<string, Set<string>>>({});
@@ -156,6 +160,11 @@ export default function AdminPage() {
     [allItems, section, group]
   );
 
+  // Profile pictures for person dropdown (when section is "Youtube Chanel Videos")
+  const profilePictures = useMemo(() => {
+    return allItems.filter(item => item.section === "Youtube_Channel_Profile_Picture" && item.person);
+  }, [allItems]);
+
   useEffect(() => {
     setToken("");
     setAuthorized(false);
@@ -190,6 +199,7 @@ export default function AdminPage() {
     setUploadNewSection("");
     setUploadNewGroup("");
     if (fileInputRef.current) fileInputRef.current.value = "";
+    setShowUploadModal(false);
   }
 
   function guessContentType(file: File) {
@@ -295,11 +305,11 @@ export default function AdminPage() {
     return uploadGroup;
   }
 
-  async function presignOne(file: File) {
+  async function presignOne(file: File, section?: string) {
     const t = token.trim();
     const contentType = encodeURIComponent(guessContentType(file));
     const filename = encodeURIComponent(file.name);
-    const sec = resolveUploadSection();
+    const sec = section || resolveUploadSection();
     const out = await apiJson(
       `/api/admin/presign?section=${encodeURIComponent(sec)}&filename=${filename}&contentType=${contentType}`,
       { method: "GET", headers: { "x-admin-token": t }, cache: "no-store" }
@@ -339,6 +349,11 @@ export default function AdminPage() {
     }
     const sec = resolveUploadSection();
     const grp = resolveUploadGroup();
+    // Validate person is required for "Youtube Chanel Videos"
+    if (sec === "Youtube Chanel Videos" && !uploadPerson.trim()) {
+      pushLog("\u274C Person is required for Youtube Chanel Videos section");
+      return;
+    }
     setBusy(true);
     try {
       pushLog(`Uploading ${uploadFiles.length} file(s) to ${sec}${grp ? ` → ${grp}` : ""}...`);
@@ -378,6 +393,11 @@ export default function AdminPage() {
     }
     const sec = resolveUploadSection();
     const grp = resolveUploadGroup();
+    // Validate person is required for "Youtube Chanel Videos"
+    if (sec === "Youtube Chanel Videos" && !uploadPerson.trim()) {
+      pushLog("\u274C Person is required for Youtube Chanel Videos section");
+      return;
+    }
     setBusy(true);
     try {
       pushLog(`Importing from URL: ${uploadUrl.trim().slice(0, 80)}...`);
@@ -438,6 +458,8 @@ export default function AdminPage() {
     });
     setEditNewSection("");
     setEditNewGroup("");
+    setEditFile(null);
+    if (editFileInputRef.current) editFileInputRef.current.value = "";
   }
 
   function cancelEditing() {
@@ -445,6 +467,8 @@ export default function AdminPage() {
     setEditingFields({});
     setEditNewSection("");
     setEditNewGroup("");
+    setEditFile(null);
+    if (editFileInputRef.current) editFileInputRef.current.value = "";
   }
 
   function resolveEditSection(): string {
@@ -465,10 +489,33 @@ export default function AdminPage() {
       pushLog("\u274C Section is required");
       return;
     }
+    // Validate person is required for "Youtube Chanel Videos"
+    if (destSection === "Youtube Chanel Videos" && !editingFields.person?.trim()) {
+      pushLog("\u274C Person is required for Youtube Chanel Videos section");
+      return;
+    }
     setBusy(true);
     try {
       const sectionChanged = destSection !== it.section;
       const groupChanged = destGroup !== (it.group || "");
+      
+      let newUrl = it.url; // Keep existing URL by default
+      
+      // If a new file is selected, upload it first
+      if (editFile) {
+        pushLog(`Uploading new image for ${it.PK}...`);
+        const pres = await presignOne(editFile, destSection);
+        const contentType = guessContentType(editFile);
+        const putRes = await fetch(pres.uploadUrl, {
+          method: "PUT",
+          headers: { "content-type": contentType },
+          body: editFile,
+        });
+        if (!putRes.ok) throw new Error(`S3 upload failed (HTTP ${putRes.status}) ${editFile.name}`);
+        newUrl = pres.publicUrl;
+        pushLog(`\u2705 New image uploaded`);
+      }
+      
       const payload: any = {
         PK: it.PK,
         title: editingFields.title,
@@ -477,6 +524,7 @@ export default function AdminPage() {
         date: editingFields.date,
         section: destSection,
         group: destGroup,
+        url: newUrl, // Include URL (either existing or new)
       };
       const out = await apiJson("/api/admin/slides", {
         method: "PATCH",
@@ -495,6 +543,8 @@ export default function AdminPage() {
       setEditingFields({});
       setEditNewSection("");
       setEditNewGroup("");
+      setEditFile(null);
+      if (editFileInputRef.current) editFileInputRef.current.value = "";
       await refreshAll();
       if (sectionChanged || groupChanged) {
         setSection(destSection);
@@ -608,53 +658,92 @@ export default function AdminPage() {
   const filterLabel = section === ALL ? "All Sections" : section;
   const filterGroupLabel = group === ALL ? "All Groups" : group;
 
+  // Auto-scroll log to bottom
+  const logRef = useRef<HTMLPreElement>(null);
+  useEffect(() => {
+    if (logRef.current) {
+      logRef.current.scrollTop = logRef.current.scrollHeight;
+    }
+  }, [log]);
+
+  // Handle Escape key to close modals
+  useEffect(() => {
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (showUploadModal) setShowUploadModal(false);
+        if (showDeleteSectionModal) setShowDeleteSectionModal(false);
+        if (showDeleteGroupModal) setShowDeleteGroupModal(false);
+      }
+    };
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [showUploadModal, showDeleteSectionModal, showDeleteGroupModal]);
+
   return (
-    <div style={styles.page}>
-      <div style={styles.shell}>
-        <header style={styles.header}>
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-slate-100 to-slate-200 text-slate-900 font-sans">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+        {/* Header */}
+        <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
           <div>
-            <div style={styles.title}>Radio Olgoo Admin</div>
-            <div style={styles.subtitle}>Upload and manage media across all sections.</div>
+            <h1 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">
+              Radio Olgoo Admin
+            </h1>
           </div>
-          <div style={styles.headerRight}>
+          <div className="flex items-center gap-2 flex-wrap">
             <span
-              style={{
-                ...styles.pill,
-                background: authorized ? "rgba(22,163,74,0.14)" : "rgba(220,38,38,0.14)",
-                color: authorized ? "#166534" : "#991b1b",
-              }}
+              className={`px-2.5 py-1 rounded-full text-xs font-bold border ${
+                authorized
+                  ? "bg-green-50 text-green-700 border-green-200"
+                  : "bg-red-50 text-red-700 border-red-200"
+              }`}
             >
-              {authorized ? "Authorized" : "Locked"}
+              {authorized ? "✓ Authorized" : "🔒 Locked"}
             </span>
-            <button style={styles.button} onClick={refreshAll} disabled={!authorized || busy}>
-              Refresh
+            <button
+              className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 active:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed font-bold text-xs transition-colors shadow-sm"
+              onClick={refreshAll}
+              disabled={!authorized || busy}
+            >
+              ↻ Refresh
             </button>
+            {authorized && (
+              <button
+                className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 active:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed font-bold text-sm transition-colors shadow-lg"
+                onClick={() => setShowUploadModal(true)}
+                disabled={busy}
+              >
+                ➕ Add Media
+              </button>
+            )}
           </div>
         </header>
 
         {/* Token Section */}
-        <section style={styles.tokenCard}>
-          <div style={styles.cardHeader}>
-            <div>
-              <div style={styles.cardTitle}>Admin token</div>
-              <div style={styles.cardHint}>Enter the admin token to unlock this screen.</div>
-            </div>
+        <section className="bg-white/95 backdrop-blur-sm rounded-xl border border-slate-200 shadow-lg p-4 mb-4 max-w-2xl mx-auto">
+          <div className="mb-3">
+            <h2 className="text-base font-black text-slate-900 mb-1">Admin Token</h2>
+            <p className="text-xs text-slate-600">Enter the admin token to unlock this screen.</p>
           </div>
-          <div style={styles.row}>
+          <div className="flex flex-col sm:flex-row gap-2">
             <input
               type="password"
               placeholder="ADMIN_TOKEN"
               value={token}
               onChange={(e) => setToken(e.target.value)}
-              style={styles.input}
+              onKeyDown={(e) => e.key === "Enter" && verifyToken()}
+              className="flex-1 px-4 py-3 rounded-xl border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm font-medium placeholder:text-slate-400"
               autoComplete="off"
               spellCheck={false}
             />
-            <button style={styles.buttonPrimary} onClick={verifyToken} disabled={busy}>
+            <button
+              className="px-6 py-3 rounded-xl bg-slate-900 text-white hover:bg-slate-800 active:bg-slate-950 disabled:opacity-50 disabled:cursor-not-allowed font-bold text-sm transition-colors shadow-lg"
+              onClick={verifyToken}
+              disabled={busy}
+            >
               Verify
             </button>
             <button
-              style={styles.buttonGhost}
+              className="px-6 py-3 rounded-xl border border-slate-300 bg-transparent hover:bg-slate-50 active:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed font-bold text-sm transition-colors"
               onClick={() => {
                 setToken("");
                 setAuthorized(false);
@@ -668,452 +757,203 @@ export default function AdminPage() {
               Log out
             </button>
           </div>
-          {authError && <div style={styles.authError}>{"\u26A0\uFE0F"} {authError}</div>}
+          {authError && (
+            <div className="mt-4 px-4 py-3 rounded-xl border border-red-300 bg-red-50 text-red-700 font-bold text-sm">
+              ⚠️ {authError}
+            </div>
+          )}
         </section>
 
         {/* Gated Content */}
-        <div style={styles.gatedWrap}>
-          <div style={{ ...styles.gatedContent, ...(authorized ? styles.gateOn : styles.gateOff) }}>
-
-            {/* Filter Bar */}
-            <section style={styles.filterBar}>
-              <div style={styles.filterRow}>
-                <div style={styles.filterField}>
-                  <label style={styles.filterLabel}>SECTION</label>
-                  <select
-                    value={section}
-                    onChange={(e) => setSection(e.target.value)}
-                    style={styles.filterSelect}
-                    disabled={busy || !authorized}
-                  >
-                    <option value={ALL}>{"\u2014"} All Sections {"\u2014"}</option>
-                    {sectionList.map((s) => (
-                      <option key={s} value={s}>{s}</option>
-                    ))}
-                  </select>
-                </div>
-                <div style={styles.filterField}>
-                  <label style={styles.filterLabel}>GROUP</label>
-                  <select
-                    value={group}
-                    onChange={(e) => setGroup(e.target.value)}
-                    style={styles.filterSelect}
-                    disabled={busy || !authorized}
-                  >
-                    <option value={ALL}>{"\u2014"} All Groups {"\u2014"}</option>
-                    {groupOptions.map((g) => (
-                      <option key={g} value={g}>{g}</option>
-                    ))}
-                  </select>
-                </div>
-                <div style={styles.filterSearch}>
-                  <label style={styles.filterLabel}>SEARCH</label>
+        <div className="relative">
+          <div
+            className={`transition-all duration-200 ${
+              authorized ? "opacity-100" : "opacity-40 blur-sm pointer-events-none"
+            }`}
+          >
+            {/* Compact Filter Bar */}
+            <section className="sticky top-0 z-20 mb-3 bg-white/95 backdrop-blur-md rounded-lg border border-slate-200 shadow-sm p-2.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  value={section}
+                  onChange={(e) => setSection(e.target.value)}
+                  className="px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white font-semibold text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={busy || !authorized}
+                >
+                  <option value={ALL}>All Sections</option>
+                  {sectionList.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={group}
+                  onChange={(e) => setGroup(e.target.value)}
+                  className="px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white font-semibold text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={busy || !authorized}
+                >
+                  <option value={ALL}>All Groups</option>
+                  {groupOptions.map((g) => (
+                    <option key={g} value={g}>
+                      {g}
+                    </option>
+                  ))}
+                </select>
+                <div className="relative flex-1 min-w-[150px] max-w-[250px]">
                   <input
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
-                    placeholder="PK / title / description…"
-                    style={styles.filterInput}
+                    placeholder="Search..."
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                     disabled={busy || !authorized}
                   />
+                  {search && (
+                    <button
+                      onClick={() => setSearch("")}
+                      className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs"
+                      aria-label="Clear search"
+                    >
+                      ✕
+                    </button>
+                  )}
                 </div>
-                <div style={styles.filterMeta}>
-                  <div style={styles.filterCount}>{filteredItems.length} / {allItems.length} item(s)</div>
-                  <div style={styles.filterViewing}>
-                    Viewing: <b>{filterLabel}{group !== ALL ? ` → ${filterGroupLabel}` : ""}</b>
-                  </div>
-                </div>
-              </div>
-
-              {/* Delete Controls */}
-              <div style={{
-                marginTop: 16,
-                padding: '12px 16px',
-                background: 'rgba(220, 38, 38, 0.05)',
-                border: '1px solid rgba(185, 28, 28, 0.20)',
-                borderRadius: 14,
-                display: 'flex',
-                gap: 16,
-                flexWrap: 'wrap',
-                alignItems: 'center',
-              }}>
-                {section !== ALL && (
+                {(section !== ALL || group !== ALL || search) && (
                   <button
-                    style={{
-                      ...styles.dangerSmall,
-                      padding: '10px 18px',
-                      fontSize: 15,
-                      minWidth: 260,
-                    }}
                     onClick={() => {
-                      const count = allItems.filter(i => i.section === section).length;
-                      if (count === 0) {
-                        pushLog(`Section "${section}" is already empty → refreshing`);
-                        refreshAll();
-                        setSection(ALL);
-                      } else {
-                        setSectionToDelete(section);
-                        setTargetSection("");
-                        setTargetGroup(ALL);
-                        setShowDeleteSectionModal(true);
-                      }
+                      setSection(ALL);
+                      setGroup(ALL);
+                      setSearch("");
                     }}
-                    disabled={busy || deleteBusy}
+                    className="px-2 py-1 rounded text-xs text-slate-600 hover:text-slate-800 hover:bg-slate-100 transition-colors"
                   >
-                    🗑️ Delete Section "{section}" ({sectionItemCount} items)
+                    Clear
                   </button>
                 )}
-
-                {group !== ALL && (
-                  <button
-                    style={{
-                      ...styles.dangerSmall,
-                      padding: '10px 18px',
-                      fontSize: 15,
-                      minWidth: 260,
-                    }}
-                    onClick={() => {
-                      const count = allItems.filter(i => i.section === section && i.group === group).length;
-                      if (count === 0) {
-                        pushLog(`Group "${group}" in "{section}" is already empty → refreshing`);
-                        refreshAll();
-                        setGroup(ALL);
-                      } else {
-                        setSectionToDelete(section);
-                        setGroupToDelete(group);
-                        setTargetSection("");
-                        setTargetGroup(ALL);
-                        setShowDeleteGroupModal(true);
-                      }
-                    }}
-                    disabled={busy || deleteBusy}
-                  >
-                    🗑️ Delete Group "{group}" ({groupItemCount} items)
-                  </button>
-                )}
-
-                {section === ALL && group === ALL && (
-                  <span style={{ fontSize: 13, opacity: 0.7, fontStyle: 'italic' }}>
-                    Select a specific section or group to enable delete options
+                <div className="ml-auto flex items-center">
+                  <span className="px-2 py-1 rounded bg-slate-100 text-xs font-bold text-slate-700">
+                    {filteredItems.length}/{allItems.length}
                   </span>
-                )}
-              </div>
-            </section>
-
-            {/* ── Upload Section ──────────────────────────────────────── */}
-            <section style={styles.uploadCard}>
-              <div style={styles.cardHeader}>
-                <div>
-                  <div style={styles.cardTitle}>Add media</div>
-                  <div style={styles.cardHint}>Upload a file or import from a URL (X, YouTube, etc.)</div>
                 </div>
               </div>
 
-              <div style={styles.tabRow}>
-                <button
-                  style={uploadMode === "file" ? styles.tabActive : styles.tab}
-                  onClick={() => setUploadMode("file")}
-                  disabled={busy}
-                >
-                  {"\uD83D\uDCC1"} File Upload
-                </button>
-                <button
-                  style={uploadMode === "url" ? styles.tabActive : styles.tab}
-                  onClick={() => setUploadMode("url")}
-                  disabled={busy}
-                >
-                  {"\uD83D\uDD17"} Import from URL
-                </button>
-              </div>
-
-              <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 10 }}>
-                <div style={{ flex: 1, minWidth: 200 }}>
-                  <label style={styles.label}>Section (required)</label>
-                  <select
-                    value={uploadSection}
-                    onChange={(e) => {
-                      setUploadSection(e.target.value);
-                      setUploadGroup("");
-                      setUploadNewSection("");
-                    }}
-                    style={styles.filterSelect}
-                    disabled={busy || !authorized}
-                  >
-                    <option value="">-- Select --</option>
-                    {sectionList.map((s) => (
-                      <option key={s} value={s}>{s}</option>
-                    ))}
-                    <option value="__NEW__">{"\u2795"} Add New Section...</option>
-                  </select>
-                  {uploadSection === "__NEW__" && (
-                    <input
-                      value={uploadNewSection}
-                      onChange={(e) => setUploadNewSection(e.target.value)}
-                      placeholder="New section name"
-                      style={{ ...styles.input, marginTop: 8, border: "2px solid rgba(34,197,94,0.5)" }}
-                      autoFocus
-                      disabled={busy}
-                    />
-                  )}
-                </div>
-
-                {/* ── Group field with Create button ── */}
-                <div style={{ flex: 1, minWidth: 200 }}>
-                  <label style={styles.label}>Group (optional)</label>
-                  <select
-                    value={uploadGroup}
-                    onChange={(e) => {
-                      setUploadGroup(e.target.value);
-                      setUploadNewGroup("");
-                    }}
-                    style={styles.filterSelect}
-                    disabled={busy || !authorized || !uploadSection || uploadSection === "__NEW__"}
-                  >
-                    <option value="">(none)</option>
-                    {(uploadSection && sectionMap[uploadSection] || []).map((g) => (
-                      <option key={g} value={g}>{g}</option>
-                    ))}
-                    <option value="__NEW__">{"\u2795"} Add New Group...</option>
-                  </select>
-
-                  {uploadGroup === "__NEW__" && (
-                    <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8 }}>
-                      <input
-                        value={uploadNewGroup}
-                        onChange={(e) => setUploadNewGroup(e.target.value)}
-                        placeholder="New group name"
-                        style={{ ...styles.input, flex: 1, border: "2px solid rgba(34,197,94,0.5)" }}
-                        autoFocus
-                        disabled={busy}
-                      />
-                      <button
-                        style={{
-                          padding: "8px 12px",
-                          background: "#15803d",
-                          color: "white",
-                          border: "none",
-                          borderRadius: 8,
-                          cursor: "pointer",
-                          fontWeight: 800,
-                          fontSize: 13,
-                        }}
-                        onClick={async () => {
-                          if (!uploadNewGroup.trim()) {
-                            pushLog("\u274C Please enter a group name");
-                            return;
-                          }
-
-                          if (!uploadSection || uploadSection === "__NEW__") {
-                            pushLog("\u274C Select a section first");
-                            return;
-                          }
-
-                          setBusy(true);
-                          try {
-                            const finalSection = resolveUploadSection();
-                            const payload = {
-                              section: finalSection,
-                              group: uploadNewGroup.trim(),
-                            };
-
-                            const res = await fetch("/api/admin/create-group", {
-                              method: "POST",
-                              headers: {
-                                "Content-Type": "application/json",
-                                "x-admin-token": token,
-                              },
-                              body: JSON.stringify(payload),
-                            });
-
-                            const data = await res.json();
-
-                            if (res.ok && data.success) {
-                              pushLog(`\u2705 Group "${uploadNewGroup.trim()}" created in "${finalSection}"`);
-                              setUploadNewGroup("");
-                              setUploadGroup(uploadNewGroup.trim()); // auto-select
-                              await refreshAll();
-                              await new Promise(r => setTimeout(r, 800));
-                              await refreshAll(); // double refresh to be sure
-                            } else {
-                              pushLog(`\u274C Failed: ${data.error || "Unknown error"}`);
-                            }
-                          } catch (err: any) {
-                            pushLog(`\u274C Error creating group: ${err.message}`);
-                          } finally {
-                            setBusy(false);
-                          }
-                        }}
-                        disabled={busy || !uploadNewGroup.trim()}
-                      >
-                        Create Group
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <div style={styles.uploadGrid}>
-                <div style={styles.fieldBlock}>
-                  <label style={styles.label}>Title (required)</label>
-                  <input
-                    value={uploadTitle}
-                    onChange={(e) => setUploadTitle(e.target.value)}
-                    placeholder="Enter title"
-                    style={styles.input}
-                    disabled={busy || !authorized}
-                  />
-                </div>
-                <div style={styles.fieldBlock}>
-                  <label style={styles.label}>Person (optional)</label>
-                  <input
-                    value={uploadPerson}
-                    onChange={(e) => setUploadPerson(e.target.value)}
-                    placeholder="Speaker/Artist name"
-                    style={styles.input}
-                    disabled={busy || !authorized}
-                  />
-                </div>
-                <div style={styles.fieldBlock}>
-                  <label style={styles.label}>Date (optional)</label>
-                  <input
-                    type="date"
-                    value={uploadDate}
-                    onChange={(e) => setUploadDate(e.target.value)}
-                    style={styles.input}
-                    disabled={busy || !authorized}
-                  />
-                </div>
-              </div>
-
-              <div style={styles.fieldBlock}>
-                <label style={styles.label}>Description (optional)</label>
-                <textarea
-                  value={uploadDescription}
-                  onChange={(e) => setUploadDescription(e.target.value)}
-                  placeholder="Brief description"
-                  style={{ ...styles.input, minHeight: 60, resize: "vertical" }}
-                  disabled={busy || !authorized}
-                />
-              </div>
-
-              {uploadMode === "file" ? (
-                <>
-                  <div style={styles.fieldBlock}>
-                    <label style={styles.label}>Choose file(s)</label>
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      multiple
-                      accept="video/*,image/*"
-                      onChange={onPickUploadFiles}
-                      disabled={busy || !authorized}
-                    />
-                    {uploadFiles.length > 0 && (
-                      <div style={styles.miniNote}>Selected: {uploadFiles.length}</div>
-                    )}
-                  </div>
-                  <button
-                    style={styles.bigButton}
-                    onClick={uploadMedia}
-                    disabled={!authorized || busy || !uploadTitle.trim() || !uploadFiles.length}
-                  >
-                    {busy ? "Working..." : "Upload"}
-                  </button>
-                </>
-              ) : (
-                <>
-                  <div style={styles.fieldBlock}>
-                    <label style={styles.label}>Source URL (X, YouTube, etc.)</label>
-                    <input
-                      value={uploadUrl}
-                      onChange={(e) => setUploadUrl(e.target.value)}
-                      placeholder="https://x.com/user/status/123456789"
-                      style={{ ...styles.input, border: "2px solid rgba(139, 92, 246, 0.4)" }}
-                      disabled={busy || !authorized}
-                    />
-                    <div style={styles.miniNote}>
-                      Supported: X/Twitter, YouTube, Instagram, and 1000+ sites via yt-dlp
-                    </div>
-                  </div>
-                  <button
-                    style={styles.bigButtonPurple}
-                    onClick={importFromUrl}
-                    disabled={!authorized || busy || !uploadTitle.trim() || !uploadUrl.trim()}
-                  >
-                    {busy ? "Downloading & importing..." : "\uD83D\uDD17 Import from URL"}
-                  </button>
-                </>
-              )}
             </section>
 
             {/* ── Items List ──────────────────────────────────────────── */}
-            <section style={styles.card}>
-              <div style={styles.cardHeader}>
-                <div>
-                  <div style={styles.cardTitle}>
-                    Items {section !== ALL ? `in ${section}` : ""}{" "}
-                    {group !== ALL ? `→ ${group}` : ""}
-                  </div>
-                  <div style={styles.cardHint}>
-                    Edit details, move between sections, or delete items below.
-                  </div>
-                </div>
+            <section className="mb-4">
+              <div className="flex justify-between items-center mb-3">
+                <h2 className="text-base font-black text-slate-900">
+                  {filteredItems.length} Item{filteredItems.length !== 1 ? 's' : ''} {section !== ALL ? `in ${section}` : ""}{" "}
+                  {group !== ALL ? `→ ${group}` : ""}
+                </h2>
               </div>
 
-              <div style={styles.items}>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {filteredItems.map((it) => (
-                  <div key={it.PK} style={styles.item}>
-                    <div style={styles.itemTop}>
-                      <div style={styles.itemLeft}>
-                        <div style={styles.itemPK}>{it.PK}</div>
-                        <div style={styles.itemTitle}>{it.title}</div>
-                      </div>
-                      <div style={styles.itemActions}>
+                  <div
+                    key={it.PK}
+                    className={`group border border-slate-200 rounded-lg bg-white shadow-sm hover:shadow-lg transition-all overflow-hidden ${
+                      editingPK === it.PK ? "md:col-span-2 lg:col-span-3" : ""
+                    }`}
+                  >
+                    {/* Thumbnail Preview */}
+                    <div className="relative aspect-video bg-slate-100 overflow-hidden">
+                      {isVideo(it.url) ? (
+                        <video
+                          src={it.url}
+                          className="w-full h-full object-cover"
+                          preload="metadata"
+                          muted
+                        />
+                      ) : isImage(it.url) ? (
+                        <img
+                          src={it.url}
+                          alt={it.title}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center bg-slate-200">
+                          <span className="text-slate-400 text-2xl">📄</span>
+                        </div>
+                      )}
+                      {/* Action Buttons Overlay */}
+                      <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                         {editingPK === it.PK ? (
                           <>
                             <button
-                              style={styles.saveButton}
+                              className="p-1.5 rounded bg-green-500 text-white hover:bg-green-600 shadow-lg"
                               onClick={() => saveEditing(it)}
                               disabled={busy}
+                              title="Save"
                             >
-                              Save
+                              ✓
                             </button>
                             <button
-                              style={styles.cancelButton}
+                              className="p-1.5 rounded bg-slate-500 text-white hover:bg-slate-600 shadow-lg"
                               onClick={cancelEditing}
                               disabled={busy}
+                              title="Cancel"
                             >
-                              Cancel
+                              ✕
                             </button>
                           </>
                         ) : (
                           <>
                             <button
-                              style={styles.editButton}
+                              className="p-1.5 rounded bg-blue-500 text-white hover:bg-blue-600 shadow-lg"
                               onClick={() => startEditing(it)}
                               disabled={busy}
+                              title="Edit"
                             >
-                              Edit
+                              ✏️
                             </button>
                             <button
-                              style={styles.dangerSmall}
+                              className="p-1.5 rounded bg-red-500 text-white hover:bg-red-600 shadow-lg"
                               onClick={() => deleteItem(it)}
                               disabled={busy}
+                              title="Delete"
                             >
-                              Delete
+                              🗑️
                             </button>
                           </>
                         )}
                       </div>
                     </div>
 
-                    <div style={styles.itemMeta}>
-                      {editingPK === it.PK ? (
-                        <>
-                          <div style={styles.moveBox}>
-                            <div style={styles.moveBoxTitle}>{"\u27A1\uFE0F"} Section / Group</div>
-                            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                              <div style={{ flex: 1, minWidth: 200 }}>
-                                <label style={styles.label}>Section</label>
+                    {/* Card Content */}
+                    {editingPK !== it.PK ? (
+                      <div className="p-3">
+                        <div className="text-xs text-slate-500 font-bold mb-1 truncate">{it.PK}</div>
+                        <h3 className="text-sm font-black text-slate-900 mb-2 line-clamp-2 min-h-[2.5rem]">{it.title}</h3>
+                        <div className="space-y-1 text-xs text-slate-600">
+                          {it.section && (
+                            <div className="truncate"><span className="font-semibold">Section:</span> {it.section}</div>
+                          )}
+                          {it.group && (
+                            <div className="truncate"><span className="font-semibold">Group:</span> {it.group}</div>
+                          )}
+                          {it.person && (
+                            <div className="truncate"><span className="font-semibold">Person:</span> {it.person}</div>
+                          )}
+                        </div>
+                        <a
+                          href={it.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="mt-2 inline-block text-xs text-blue-600 hover:text-blue-700 font-semibold"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          🔗 Open
+                        </a>
+                      </div>
+                    ) : (
+                      <div className="p-4 border-t border-slate-200 bg-slate-50">
+                        <div className="space-y-3">
+                          <div className="p-4 rounded-xl border-2 border-blue-300 bg-blue-50">
+                            <div className="text-sm font-black text-blue-900 mb-3">➡️ Section / Group</div>
+                            <div className="flex flex-col sm:flex-row gap-4">
+                              <div className="flex-1 min-w-[200px]">
+                                <label className="block text-xs font-bold text-slate-700 mb-2">Section</label>
                                 <select
                                   value={editingFields.section || ""}
                                   onChange={(e) => {
@@ -1131,46 +971,50 @@ export default function AdminPage() {
                                       });
                                     }
                                   }}
-                                  style={styles.editSelect}
+                                  className="w-full px-4 py-2.5 rounded-lg border-2 border-blue-400 bg-white font-bold text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                                 >
                                   {sectionList.map((s) => (
-                                    <option key={s} value={s}>{s}</option>
+                                    <option key={s} value={s}>
+                                      {s}
+                                    </option>
                                   ))}
-                                  <option value="__NEW__">{"\u2795"} Add New Section...</option>
+                                  <option value="__NEW__">➕ Add New Section...</option>
                                 </select>
                                 {editingFields.section === "__NEW__" && (
                                   <input
                                     value={editNewSection}
                                     onChange={(e) => setEditNewSection(e.target.value)}
                                     placeholder="New section name"
-                                    style={{ ...styles.input, marginTop: 8, border: "2px solid rgba(34,197,94,0.5)" }}
+                                    className="w-full mt-2 px-4 py-2.5 rounded-lg border-2 border-green-400 bg-white focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all text-sm font-medium"
                                     autoFocus
                                   />
                                 )}
                               </div>
-                              <div style={{ flex: 1, minWidth: 200 }}>
-                                <label style={styles.label}>Group</label>
+                              <div className="flex-1 min-w-[200px]">
+                                <label className="block text-xs font-bold text-slate-700 mb-2">Group</label>
                                 <select
                                   value={editingFields.group || ""}
                                   onChange={(e) => {
                                     setEditNewGroup("");
                                     setEditingFields({ ...editingFields, group: e.target.value });
                                   }}
-                                  style={styles.editSelect}
+                                  className="w-full px-4 py-2.5 rounded-lg border-2 border-blue-400 bg-white font-bold text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                                   disabled={editingFields.section === "__NEW__"}
                                 >
                                   <option value="">(none)</option>
                                   {(editingFields.section && sectionMap[editingFields.section] || []).map((g) => (
-                                    <option key={g} value={g}>{g}</option>
+                                    <option key={g} value={g}>
+                                      {g}
+                                    </option>
                                   ))}
-                                  <option value="__NEW__">{"\u2795"} Add New Group...</option>
+                                  <option value="__NEW__">➕ Add New Group...</option>
                                 </select>
                                 {editingFields.group === "__NEW__" && (
                                   <input
                                     value={editNewGroup}
                                     onChange={(e) => setEditNewGroup(e.target.value)}
                                     placeholder="New group name"
-                                    style={{ ...styles.input, marginTop: 8, border: "2px solid rgba(34,197,94,0.5)" }}
+                                    className="w-full mt-2 px-4 py-2.5 rounded-lg border-2 border-green-400 bg-white focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all text-sm font-medium"
                                     autoFocus
                                   />
                                 )}
@@ -1178,92 +1022,100 @@ export default function AdminPage() {
                             </div>
                           </div>
 
-                          <div style={styles.fieldBlock}>
-                            <label style={styles.label}>Title</label>
+                          <div>
+                            <label className="block text-xs font-bold text-slate-700 mb-2">Title</label>
                             <input
                               value={editingFields.title || ""}
                               onChange={(e) => setEditingFields({ ...editingFields, title: e.target.value })}
-                              style={styles.input}
+                              className="w-full px-4 py-2.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm"
                             />
                           </div>
 
-                          <div style={styles.fieldBlock}>
-                            <label style={styles.label}>Person</label>
-                            <input
-                              value={editingFields.person || ""}
-                              onChange={(e) => setEditingFields({ ...editingFields, person: e.target.value })}
-                              style={styles.input}
-                            />
+                          <div>
+                            <label className="block text-xs font-bold text-slate-700 mb-2">
+                              Person {resolveEditSection() === "Youtube Chanel Videos" ? <span className="text-red-500">*</span> : "(optional)"}
+                            </label>
+                            {resolveEditSection() === "Youtube Chanel Videos" ? (
+                              <select
+                                value={editingFields.person || ""}
+                                onChange={(e) => setEditingFields({ ...editingFields, person: e.target.value })}
+                                className={`w-full px-4 py-2.5 rounded-lg border bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed ${
+                                  editingFields.person ? "border-slate-300" : "border-red-400"
+                                }`}
+                                disabled={busy}
+                              >
+                                <option value="">-- Select Person --</option>
+                                {profilePictures.map((profile) => (
+                                  <option key={profile.PK} value={profile.person || ""}>
+                                    {profile.person || "Unknown"}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : (
+                              <input
+                                value={editingFields.person || ""}
+                                onChange={(e) => setEditingFields({ ...editingFields, person: e.target.value })}
+                                className="w-full px-4 py-2.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                                disabled={busy}
+                              />
+                            )}
                           </div>
 
-                          <div style={styles.fieldBlock}>
-                            <label style={styles.label}>Date</label>
+                          <div>
+                            <label className="block text-xs font-bold text-slate-700 mb-2">Date</label>
                             <input
                               type="date"
                               value={editingFields.date || ""}
                               onChange={(e) => setEditingFields({ ...editingFields, date: e.target.value })}
-                              style={styles.input}
+                              className="w-full px-4 py-2.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm"
                             />
                           </div>
 
-                          <div style={styles.fieldBlock}>
-                            <label style={styles.label}>Description</label>
+                          <div>
+                            <label className="block text-xs font-bold text-slate-700 mb-2">Description</label>
                             <textarea
                               value={editingFields.description || ""}
                               onChange={(e) => setEditingFields({ ...editingFields, description: e.target.value })}
-                              style={{ ...styles.input, minHeight: 60, resize: "vertical" }}
+                              className="w-full px-4 py-2.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm min-h-[80px] resize-y"
                             />
                           </div>
-                        </>
-                      ) : (
-                        <>
-                          <div style={styles.itemLine}>
-                            <span style={styles.dim}>Section:</span> {it.section}
-                          </div>
-                          {it.group && (
-                            <div style={styles.itemLine}>
-                              <span style={styles.dim}>Group:</span> {it.group}
-                            </div>
-                          )}
-                          {it.person && (
-                            <div style={styles.itemLine}>
-                              <span style={styles.dim}>Person:</span> {it.person}
-                            </div>
-                          )}
-                          {it.date && (
-                            <div style={styles.itemLine}>
-                              <span style={styles.dim}>Date:</span> {it.date}
-                            </div>
-                          )}
-                          {it.description && (
-                            <div style={styles.itemLine}>
-                              <span style={styles.dim}>Desc:</span> {it.description}
-                            </div>
-                          )}
-                        </>
-                      )}
 
-                      <div style={styles.previewBox}>
-                        {isVideo(it.url) ? (
-                          <video key={it.url} src={it.url} controls preload="metadata" style={styles.video} />
-                        ) : isImage(it.url) ? (
-                          <img src={it.url} alt={it.title} style={styles.image} />
-                        ) : (
-                          <div style={styles.previewFallback}>No preview available</div>
-                        )}
+                          {/* Image Upload for Profile Pictures */}
+                          {resolveEditSection() === "Youtube_Channel_Profile_Picture" && (
+                            <div>
+                              <label className="block text-xs font-bold text-slate-700 mb-2">Replace Image (optional)</label>
+                              <input
+                                ref={editFileInputRef}
+                                type="file"
+                                accept="image/*"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0] || null;
+                                  setEditFile(file);
+                                  if (file) pushLog(`Selected: ${file.name}`);
+                                }}
+                                disabled={busy}
+                                className="w-full px-4 py-2.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                              />
+                              {editFile && (
+                                <div className="mt-2 text-xs text-slate-600 font-bold">
+                                  New file: {editFile.name} ({(editFile.size / 1024).toFixed(1)} KB)
+                                </div>
+                              )}
+                              {!editFile && it.url && (
+                                <div className="mt-2 text-xs text-slate-600 font-bold">
+                                  Current: <a href={it.url} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">View current image</a>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       </div>
-
-                      <div style={{ ...styles.itemLine, wordBreak: "break-all" }}>
-                        <a href={it.url} target="_blank" rel="noreferrer" style={styles.link}>
-                          Open in new tab
-                        </a>
-                      </div>
-                    </div>
+                    )}
                   </div>
                 ))}
 
                 {!filteredItems.length && (
-                  <div style={styles.empty}>
+                  <div className="opacity-70 font-bold p-4 rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 text-center text-sm text-slate-600">
                     {allItems.length === 0
                       ? "No items uploaded yet."
                       : `No items match the current filter (${filterLabel}${
@@ -1274,72 +1126,393 @@ export default function AdminPage() {
               </div>
             </section>
 
-            {/* Log */}
-            <section style={styles.card}>
-              <div style={styles.cardHeader}>
-                <div style={styles.cardTitle}>Log</div>
-                <button style={styles.buttonGhost} onClick={() => setLog([])} disabled={busy}>
-                  Clear
+            {/* Log - Collapsible */}
+            <section className="bg-white/90 backdrop-blur-sm rounded-xl border border-slate-200 shadow-md p-4 mb-4">
+              <div className="flex justify-between items-center">
+                <button
+                  onClick={() => setLogCollapsed(!logCollapsed)}
+                  className="flex items-center gap-2 text-sm font-black text-slate-900 hover:text-slate-700"
+                >
+                  <span>{logCollapsed ? "▶" : "▼"}</span>
+                  <span>Activity Log</span>
+                  {log.length > 0 && (
+                    <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-xs font-bold">
+                      {log.length}
+                    </span>
+                  )}
                 </button>
+                {!logCollapsed && (
+                  <button
+                    className="px-3 py-1 rounded-lg border border-slate-300 bg-transparent hover:bg-slate-50 active:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed font-bold text-xs transition-colors"
+                    onClick={() => setLog([])}
+                    disabled={busy}
+                  >
+                    Clear
+                  </button>
+                )}
               </div>
-              <pre style={styles.logBox}>{log.join("\n")}</pre>
+              {!logCollapsed && (
+                <pre
+                  ref={logRef}
+                  className="mt-3 bg-slate-900 text-green-300 p-3 rounded-lg overflow-auto max-h-[200px] text-xs font-mono leading-relaxed"
+                >
+                  {log.length > 0 ? log.join("\n") : "No log entries yet..."}
+                </pre>
+              )}
             </section>
           </div>
 
           {!authorized && (
-            <div style={styles.cloudOverlay}>
-              <div style={styles.cloudCard}>
-                <div style={styles.cloudTitle}>Locked</div>
-                <div style={styles.cloudText}>Enter a valid admin token above to unlock this screen.</div>
+            <div className="absolute inset-0 flex items-start justify-center pt-20 pointer-events-none">
+              <div className="w-full max-w-lg mx-4 rounded-2xl border border-slate-300 bg-white/80 backdrop-blur-md shadow-2xl p-6 text-center">
+                <div className="font-black text-lg text-slate-900 mb-2">🔒 Locked</div>
+                <div className="text-sm text-slate-600 font-semibold">
+                  Enter a valid admin token above to unlock this screen.
+                </div>
               </div>
             </div>
           )}
         </div>
 
-        {/* Delete Section Modal */}
-        {showDeleteSectionModal && (
+        {/* Upload Modal */}
+        {showUploadModal && (
           <div
-            style={{
-              position: "fixed",
-              inset: 0,
-              background: "rgba(0,0,0,0.5)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              zIndex: 1000,
-            }}
+            className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+            onClick={() => setShowUploadModal(false)}
           >
             <div
-              style={{
-                background: "white",
-                padding: 24,
-                borderRadius: 16,
-                maxWidth: 480,
-                width: "90%",
-                boxShadow: "0 10px 30px rgba(0,0,0,0.2)",
-              }}
+              className="bg-white rounded-2xl p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
             >
-              <h3 style={{ margin: "0 0 16px", color: "#991b1b" }}>
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-xl font-black text-slate-900">Add Media</h2>
+                <button
+                  onClick={() => setShowUploadModal(false)}
+                  className="p-2 rounded-lg hover:bg-slate-100 transition-colors"
+                  aria-label="Close"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Tabs */}
+              <div className="flex gap-2 mb-6 border-b-2 border-slate-200 pb-3">
+                <button
+                  className={`px-4 py-2 rounded-lg font-bold text-sm transition-all ${
+                    uploadMode === "file"
+                      ? "bg-slate-900 text-white"
+                      : "bg-transparent text-slate-600 hover:bg-slate-50"
+                  } disabled:opacity-50 disabled:cursor-not-allowed`}
+                  onClick={() => setUploadMode("file")}
+                  disabled={busy}
+                >
+                  📁 File Upload
+                </button>
+                <button
+                  className={`px-4 py-2 rounded-lg font-bold text-sm transition-all ${
+                    uploadMode === "url"
+                      ? "bg-slate-900 text-white"
+                      : "bg-transparent text-slate-600 hover:bg-slate-50"
+                  } disabled:opacity-50 disabled:cursor-not-allowed`}
+                  onClick={() => setUploadMode("url")}
+                  disabled={busy}
+                >
+                  🔗 Import from URL
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-2">
+                      Section <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      value={uploadSection}
+                      onChange={(e) => {
+                        setUploadSection(e.target.value);
+                        setUploadGroup("");
+                        setUploadNewSection("");
+                      }}
+                      className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white font-semibold text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                      disabled={busy || !authorized}
+                    >
+                      <option value="">-- Select --</option>
+                      {sectionList.map((s) => (
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
+                      ))}
+                      <option value="__NEW__">➕ Add New Section...</option>
+                    </select>
+                    {uploadSection === "__NEW__" && (
+                      <input
+                        value={uploadNewSection}
+                        onChange={(e) => setUploadNewSection(e.target.value)}
+                        placeholder="New section name"
+                        className="w-full mt-2 px-3 py-2 rounded-lg border-2 border-green-400 bg-white focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all text-sm font-medium"
+                        autoFocus
+                        disabled={busy}
+                      />
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-2">Group (optional)</label>
+                    <select
+                      value={uploadGroup}
+                      onChange={(e) => {
+                        setUploadGroup(e.target.value);
+                        setUploadNewGroup("");
+                      }}
+                      className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white font-semibold text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                      disabled={busy || !authorized || !uploadSection || uploadSection === "__NEW__"}
+                    >
+                      <option value="">(none)</option>
+                      {(uploadSection && sectionMap[uploadSection] || []).map((g) => (
+                        <option key={g} value={g}>
+                          {g}
+                        </option>
+                      ))}
+                      <option value="__NEW__">➕ Add New Group...</option>
+                    </select>
+                    {uploadGroup === "__NEW__" && (
+                      <div className="mt-2 flex items-center gap-2">
+                        <input
+                          value={uploadNewGroup}
+                          onChange={(e) => setUploadNewGroup(e.target.value)}
+                          placeholder="New group name"
+                          className="flex-1 px-3 py-2 rounded-lg border-2 border-green-400 bg-white focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all text-sm font-medium"
+                          autoFocus
+                          disabled={busy}
+                        />
+                        <button
+                          className="px-3 py-2 rounded-lg bg-green-600 text-white hover:bg-green-700 active:bg-green-800 disabled:opacity-50 disabled:cursor-not-allowed font-bold text-xs transition-colors"
+                          onClick={async () => {
+                            if (!uploadNewGroup.trim()) {
+                              pushLog("\u274C Please enter a group name");
+                              return;
+                            }
+                            if (!uploadSection || uploadSection === "__NEW__") {
+                              pushLog("\u274C Select a section first");
+                              return;
+                            }
+                            setBusy(true);
+                            try {
+                              const finalSection = resolveUploadSection();
+                              const payload = {
+                                section: finalSection,
+                                group: uploadNewGroup.trim(),
+                              };
+                              const res = await fetch("/api/admin/create-group", {
+                                method: "POST",
+                                headers: {
+                                  "Content-Type": "application/json",
+                                  "x-admin-token": token,
+                                },
+                                body: JSON.stringify(payload),
+                              });
+                              const data = await res.json();
+                              if (res.ok && data.success) {
+                                pushLog(`\u2705 Group "${uploadNewGroup.trim()}" created in "${finalSection}"`);
+                                setUploadNewGroup("");
+                                setUploadGroup(uploadNewGroup.trim());
+                                await refreshAll();
+                                await new Promise(r => setTimeout(r, 800));
+                                await refreshAll();
+                              } else {
+                                pushLog(`\u274C Failed: ${data.error || "Unknown error"}`);
+                              }
+                            } catch (err: any) {
+                              pushLog(`\u274C Error creating group: ${err.message}`);
+                            } finally {
+                              setBusy(false);
+                            }
+                          }}
+                          disabled={busy || !uploadNewGroup.trim()}
+                        >
+                          Create
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-2">
+                      Title <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      value={uploadTitle}
+                      onChange={(e) => setUploadTitle(e.target.value)}
+                      placeholder="Enter title"
+                      className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                      disabled={busy || !authorized}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-2">
+                      Person {resolveUploadSection() === "Youtube Chanel Videos" ? <span className="text-red-500">*</span> : "(optional)"}
+                    </label>
+                    {resolveUploadSection() === "Youtube Chanel Videos" ? (
+                      <select
+                        value={uploadPerson}
+                        onChange={(e) => setUploadPerson(e.target.value)}
+                        className={`w-full px-3 py-2 rounded-lg border bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed ${
+                          uploadPerson.trim() ? "border-slate-300" : "border-red-400"
+                        }`}
+                        disabled={busy || !authorized}
+                      >
+                        <option value="">-- Select Person --</option>
+                        {profilePictures.map((profile) => (
+                          <option key={profile.PK} value={profile.person || ""}>
+                            {profile.person || "Unknown"}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        value={uploadPerson}
+                        onChange={(e) => setUploadPerson(e.target.value)}
+                        placeholder="Speaker/Artist name"
+                        className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                        disabled={busy || !authorized}
+                      />
+                    )}
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-2">Date (optional)</label>
+                    <input
+                      type="date"
+                      value={uploadDate}
+                      onChange={(e) => setUploadDate(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                      disabled={busy || !authorized}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-2">Description (optional)</label>
+                  <textarea
+                    value={uploadDescription}
+                    onChange={(e) => setUploadDescription(e.target.value)}
+                    placeholder="Brief description"
+                    className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm min-h-[80px] resize-y disabled:opacity-50 disabled:cursor-not-allowed"
+                    disabled={busy || !authorized}
+                  />
+                </div>
+
+                {uploadMode === "file" ? (
+                  <>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-2">Choose file(s)</label>
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        multiple
+                        accept="video/*,image/*"
+                        onChange={onPickUploadFiles}
+                        disabled={busy || !authorized}
+                        className="w-full px-3 py-2 rounded-lg border-2 border-dashed border-slate-300 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer file:mr-4 file:py-1.5 file:px-3 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+                      />
+                      {uploadFiles.length > 0 && (
+                        <div className="mt-2 text-xs text-slate-600 font-bold">
+                          ✓ Selected: {uploadFiles.length} file(s)
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex gap-3 pt-4">
+                      <button
+                        className="flex-1 px-4 py-3 rounded-lg bg-slate-900 text-white hover:bg-slate-800 active:bg-slate-950 disabled:opacity-50 disabled:cursor-not-allowed font-black text-sm transition-colors shadow-lg"
+                        onClick={uploadMedia}
+                        disabled={
+                          !authorized || 
+                          busy || 
+                          !uploadTitle.trim() || 
+                          !uploadFiles.length ||
+                          (resolveUploadSection() === "Youtube Chanel Videos" && !uploadPerson.trim())
+                        }
+                      >
+                        {busy ? "⏳ Working..." : "⬆️ Upload"}
+                      </button>
+                      <button
+                        className="px-4 py-3 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 font-bold text-sm transition-colors"
+                        onClick={() => setShowUploadModal(false)}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-2">Source URL (X, YouTube, etc.)</label>
+                      <input
+                        value={uploadUrl}
+                        onChange={(e) => setUploadUrl(e.target.value)}
+                        placeholder="https://x.com/user/status/123456789"
+                        className="w-full px-3 py-2 rounded-lg border-2 border-purple-300 bg-white focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                        disabled={busy || !authorized}
+                      />
+                      <div className="mt-2 text-xs text-slate-600 font-bold">
+                        Supported: X/Twitter, YouTube, Instagram, and 1000+ sites via yt-dlp
+                      </div>
+                    </div>
+                    <div className="flex gap-3 pt-4">
+                      <button
+                        className="flex-1 px-4 py-3 rounded-lg bg-purple-600 text-white hover:bg-purple-700 active:bg-purple-800 disabled:opacity-50 disabled:cursor-not-allowed font-black text-sm transition-colors shadow-lg"
+                        onClick={importFromUrl}
+                        disabled={
+                          !authorized || 
+                          busy || 
+                          !uploadTitle.trim() || 
+                          !uploadUrl.trim() ||
+                          (resolveUploadSection() === "Youtube Chanel Videos" && !uploadPerson.trim())
+                        }
+                      >
+                        {busy ? "⏳ Downloading & importing..." : "🔗 Import from URL"}
+                      </button>
+                      <button
+                        className="px-4 py-3 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 font-bold text-sm transition-colors"
+                        onClick={() => setShowUploadModal(false)}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Delete Section Modal */}
+        {showDeleteSectionModal && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl">
+              <h3 className="text-xl font-black text-red-700 mb-4">
                 Delete Section: {sectionToDelete}
               </h3>
 
-              <p>
+              <p className="text-sm text-slate-700 mb-4">
                 {sectionItemCount > 0 ? (
-                  <>This section contains <strong>{sectionItemCount}</strong> items.</>
+                  <>This section contains <strong className="font-black">{sectionItemCount}</strong> items.</>
                 ) : (
                   <>This section is empty and will disappear after refresh.</>
                 )}
               </p>
 
               {sectionItemCount > 0 && (
-                <p style={{ margin: "16px 0" }}>
+                <p className="text-sm text-slate-600 mb-4">
                   You must move these items to another section before deletion.
                 </p>
               )}
 
               {sectionItemCount > 0 && (
-                <div style={{ margin: "16px 0" }}>
-                  <label style={{ fontWeight: 800, display: "block", marginBottom: 8 }}>
+                <div className="mb-4">
+                  <label className="block font-black text-sm text-slate-700 mb-2">
                     Move to section:
                   </label>
                   <select
@@ -1348,7 +1521,7 @@ export default function AdminPage() {
                       setTargetSection(e.target.value);
                       setTargetGroup(ALL);
                     }}
-                    style={styles.editSelect}
+                    className="w-full px-4 py-2.5 rounded-lg border-2 border-blue-400 bg-white font-bold text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                   >
                     <option value="">— Select target section —</option>
                     {sectionList
@@ -1363,14 +1536,14 @@ export default function AdminPage() {
               )}
 
               {sectionItemCount > 0 && targetSection && sectionMap[targetSection]?.length > 0 && (
-                <div style={{ margin: "16px 0" }}>
-                  <label style={{ fontWeight: 800, display: "block", marginBottom: 8 }}>
+                <div className="mb-4">
+                  <label className="block font-black text-sm text-slate-700 mb-2">
                     Move to group (optional):
                   </label>
                   <select
                     value={targetGroup}
                     onChange={(e) => setTargetGroup(e.target.value)}
-                    style={styles.editSelect}
+                    className="w-full px-4 py-2.5 rounded-lg border-2 border-blue-400 bg-white font-bold text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                   >
                     <option value={ALL}>No specific group (root of section)</option>
                     {sectionMap[targetSection].map((g) => (
@@ -1382,9 +1555,9 @@ export default function AdminPage() {
                 </div>
               )}
 
-              <div style={{ marginTop: 24, display: "flex", gap: 12, justifyContent: "flex-end" }}>
+              <div className="mt-6 flex gap-3 justify-end">
                 <button
-                  style={styles.cancelButton}
+                  className="px-4 py-2 rounded-lg border border-slate-300 bg-slate-50 text-slate-700 hover:bg-slate-100 active:bg-slate-200 font-black text-xs transition-colors"
                   onClick={() => {
                     setShowDeleteSectionModal(false);
                     setSectionToDelete("");
@@ -1397,20 +1570,19 @@ export default function AdminPage() {
 
                 {sectionItemCount > 0 && (
                   <button
-                    style={{
-                      ...styles.dangerSmall,
-                      opacity: deleteBusy || !targetSection ? 0.6 : 1,
-                    }}
+                    className={`px-4 py-2 rounded-lg border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 active:bg-red-200 font-black text-xs transition-colors ${
+                      deleteBusy || !targetSection ? "opacity-60 cursor-not-allowed" : ""
+                    }`}
                     disabled={deleteBusy || !targetSection}
                     onClick={handleDeleteSection}
                   >
-                    {deleteBusy ? "Moving & Deleting..." : "Move & Delete Section"}
+                    {deleteBusy ? "⏳ Moving & Deleting..." : "🗑️ Move & Delete Section"}
                   </button>
                 )}
 
                 {sectionItemCount === 0 && (
                   <button
-                    style={styles.buttonPrimary}
+                    className="px-4 py-2 rounded-lg bg-slate-900 text-white hover:bg-slate-800 active:bg-slate-950 font-black text-xs transition-colors"
                     onClick={() => {
                       refreshAll();
                       setShowDeleteSectionModal(false);
@@ -1427,48 +1599,29 @@ export default function AdminPage() {
 
         {/* Delete Group Modal */}
         {showDeleteGroupModal && (
-          <div
-            style={{
-              position: "fixed",
-              inset: 0,
-              background: "rgba(0,0,0,0.5)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              zIndex: 1000,
-            }}
-          >
-            <div
-              style={{
-                background: "white",
-                padding: 24,
-                borderRadius: 16,
-                maxWidth: 480,
-                width: "90%",
-                boxShadow: "0 10px 30px rgba(0,0,0,0.2)",
-              }}
-            >
-              <h3 style={{ margin: "0 0 16px", color: "#991b1b" }}>
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl">
+              <h3 className="text-xl font-black text-red-700 mb-4">
                 Delete Group: {groupToDelete} (in {sectionToDelete})
               </h3>
 
-              <p>
+              <p className="text-sm text-slate-700 mb-4">
                 {groupItemCount > 0 ? (
-                  <>This group contains <strong>{groupItemCount}</strong> items.</>
+                  <>This group contains <strong className="font-black">{groupItemCount}</strong> items.</>
                 ) : (
                   <>This group is empty and will disappear after refresh.</>
                 )}
               </p>
 
               {groupItemCount > 0 && (
-                <p style={{ margin: "16px 0" }}>
+                <p className="text-sm text-slate-600 mb-4">
                   Move these items to another group in the same section or to another section.
                 </p>
               )}
 
               {groupItemCount > 0 && (
-                <div style={{ margin: "16px 0" }}>
-                  <label style={{ fontWeight: 800, display: "block", marginBottom: 8 }}>
+                <div className="mb-4">
+                  <label className="block font-black text-sm text-slate-700 mb-2">
                     Move to section:
                   </label>
                   <select
@@ -1477,7 +1630,7 @@ export default function AdminPage() {
                       setTargetSection(e.target.value);
                       setTargetGroup(ALL);
                     }}
-                    style={styles.editSelect}
+                    className="w-full px-4 py-2.5 rounded-lg border-2 border-blue-400 bg-white font-bold text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                   >
                     <option value="">— Select target section —</option>
                     {sectionList.map((s) => (
@@ -1490,14 +1643,14 @@ export default function AdminPage() {
               )}
 
               {groupItemCount > 0 && targetSection && sectionMap[targetSection]?.length > 0 && (
-                <div style={{ margin: "16px 0" }}>
-                  <label style={{ fontWeight: 800, display: "block", marginBottom: 8 }}>
+                <div className="mb-4">
+                  <label className="block font-black text-sm text-slate-700 mb-2">
                     Move to group (optional):
                   </label>
                   <select
                     value={targetGroup}
                     onChange={(e) => setTargetGroup(e.target.value)}
-                    style={styles.editSelect}
+                    className="w-full px-4 py-2.5 rounded-lg border-2 border-blue-400 bg-white font-bold text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                   >
                     <option value={ALL}>No specific group (root of section)</option>
                     {sectionMap[targetSection]
@@ -1511,9 +1664,9 @@ export default function AdminPage() {
                 </div>
               )}
 
-              <div style={{ marginTop: 24, display: "flex", gap: 12, justifyContent: "flex-end" }}>
+              <div className="mt-6 flex gap-3 justify-end">
                 <button
-                  style={styles.cancelButton}
+                  className="px-4 py-2 rounded-lg border border-slate-300 bg-slate-50 text-slate-700 hover:bg-slate-100 active:bg-slate-200 font-black text-xs transition-colors"
                   onClick={() => {
                     setShowDeleteGroupModal(false);
                     setSectionToDelete("");
@@ -1527,20 +1680,19 @@ export default function AdminPage() {
 
                 {groupItemCount > 0 && (
                   <button
-                    style={{
-                      ...styles.dangerSmall,
-                      opacity: deleteBusy || !targetSection ? 0.6 : 1,
-                    }}
+                    className={`px-4 py-2 rounded-lg border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 active:bg-red-200 font-black text-xs transition-colors ${
+                      deleteBusy || !targetSection ? "opacity-60 cursor-not-allowed" : ""
+                    }`}
                     disabled={deleteBusy || !targetSection}
                     onClick={handleDeleteGroup}
                   >
-                    {deleteBusy ? "Moving & Deleting..." : "Move & Delete Group"}
+                    {deleteBusy ? "⏳ Moving & Deleting..." : "🗑️ Move & Delete Group"}
                   </button>
                 )}
 
                 {groupItemCount === 0 && (
                   <button
-                    style={styles.buttonPrimary}
+                    className="px-4 py-2 rounded-lg bg-slate-900 text-white hover:bg-slate-800 active:bg-slate-950 font-black text-xs transition-colors"
                     onClick={() => {
                       refreshAll();
                       setShowDeleteGroupModal(false);
@@ -1558,334 +1710,3 @@ export default function AdminPage() {
     </div>
   );
 }
-
-// ── Styles ─────────────────────────────────────────────────────────────
-const styles: Record<string, React.CSSProperties> = {
-  page: {
-    minHeight: "100vh",
-    background: "linear-gradient(180deg, #f7f7fb 0%, #f2f4f8 100%)",
-    fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
-    color: "#0f172a",
-  },
-  shell: { maxWidth: 1200, margin: "0 auto", padding: 18 },
-  header: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "flex-end",
-    gap: 12,
-    flexWrap: "wrap",
-    marginBottom: 10,
-  },
-  headerRight: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" },
-  title: { fontSize: 28, fontWeight: 950, letterSpacing: -0.3 },
-  subtitle: { marginTop: 4, opacity: 0.72, fontSize: 13 },
-  tokenCard: {
-    background: "rgba(255,255,255,0.95)",
-    borderRadius: 18,
-    border: "1px solid rgba(15, 23, 42, 0.10)",
-    boxShadow: "0 20px 60px rgba(2, 6, 23, 0.08)",
-    padding: 14,
-    marginBottom: 14,
-    maxWidth: 800,
-    margin: "0 auto 14px auto",
-  },
-  gatedWrap: { position: "relative" },
-  gatedContent: { transition: "filter 160ms ease, opacity 160ms ease" },
-  gateOn: { opacity: 1, filter: "none", pointerEvents: "auto" },
-  gateOff: { opacity: 0.35, filter: "blur(3px)", pointerEvents: "none" },
-  cloudOverlay: {
-    position: "absolute",
-    inset: 0,
-    display: "flex",
-    alignItems: "flex-start",
-    justifyContent: "center",
-    paddingTop: 80,
-    pointerEvents: "none",
-  },
-  cloudCard: {
-    width: "min(560px, 92%)",
-    borderRadius: 18,
-    border: "1px solid rgba(15, 23, 42, 0.12)",
-    background: "rgba(255,255,255,0.72)",
-    backdropFilter: "blur(10px)",
-    boxShadow: "0 20px 60px rgba(2, 6, 23, 0.10)",
-    padding: 14,
-    textAlign: "center",
-  },
-  cloudTitle: { fontWeight: 950, fontSize: 16 },
-  cloudText: { marginTop: 6, opacity: 0.75, fontSize: 13, fontWeight: 650 },
-  filterBar: {
-    position: "sticky",
-    top: 0,
-    zIndex: 20,
-    marginBottom: 14,
-    background: "rgba(255,255,255,0.92)",
-    borderRadius: 18,
-    border: "1px solid rgba(15, 23, 42, 0.10)",
-    boxShadow: "0 20px 60px rgba(2, 6, 23, 0.06)",
-    padding: 14,
-    backdropFilter: "blur(8px)",
-  },
-  filterRow: { display: "flex", gap: 22, alignItems: "end", flexWrap: "wrap" },
-  filterField: { minWidth: 200 },
-  filterLabel: { display: "block", fontWeight: 950, fontSize: 22, marginBottom: 10 },
-  filterSelect: {
-    width: "100%",
-    padding: "16px 18px",
-    borderRadius: 16,
-    border: "3px solid rgba(15, 23, 42, 0.85)",
-    background: "white",
-    fontWeight: 800,
-    fontSize: 18,
-  },
-  filterSearch: { flex: 1, minWidth: 280 },
-  filterInput: {
-    width: "100%",
-    padding: "16px 18px",
-    borderRadius: 16,
-    border: "3px solid rgba(15, 23, 42, 0.85)",
-    background: "white",
-    fontWeight: 700,
-    fontSize: 18,
-  },
-  filterMeta: { display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end", marginLeft: "auto" },
-  filterCount: {
-    fontWeight: 950,
-    fontSize: 14,
-    padding: "8px 12px",
-    borderRadius: 999,
-    border: "1px solid rgba(15, 23, 42, 0.12)",
-    background: "rgba(15, 23, 42, 0.04)",
-  },
-  filterViewing: { fontSize: 13, opacity: 0.75 },
-  uploadCard: {
-    background: "rgba(255,255,255,0.9)",
-    borderRadius: 18,
-    border: "1px solid rgba(15, 23, 42, 0.08)",
-    boxShadow: "0 20px 60px rgba(2, 6, 23, 0.06)",
-    padding: 14,
-    marginBottom: 14,
-    backdropFilter: "blur(6px)",
-    maxWidth: 800,
-    margin: "0 auto 14px auto",
-  },
-  card: {
-    background: "rgba(255,255,255,0.9)",
-    borderRadius: 18,
-    border: "1px solid rgba(15, 23, 42, 0.08)",
-    boxShadow: "0 20px 60px rgba(2, 6, 23, 0.06)",
-    padding: 14,
-    marginBottom: 14,
-    backdropFilter: "blur(6px)",
-  },
-  cardHeader: { display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, marginBottom: 10 },
-  cardTitle: { fontWeight: 950, fontSize: 16 },
-  cardHint: { opacity: 0.65, fontSize: 12 },
-  row: { display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" },
-  label: { display: "block", fontWeight: 850, marginBottom: 6, fontSize: 12, opacity: 0.85 },
-  input: {
-    width: "100%",
-    padding: "11px 12px",
-    borderRadius: 14,
-    border: "1px solid rgba(15, 23, 42, 0.14)",
-    background: "rgba(255,255,255,0.95)",
-    outline: "none",
-  },
-  pill: {
-    padding: "7px 10px",
-    borderRadius: 999,
-    fontWeight: 900,
-    fontSize: 12,
-    border: "1px solid rgba(15, 23, 42, 0.10)",
-  },
-  button: {
-    padding: "10px 12px",
-    borderRadius: 14,
-    border: "1px solid rgba(15, 23, 42, 0.12)",
-    background: "rgba(255,255,255,0.95)",
-    cursor: "pointer",
-    fontWeight: 900,
-  },
-  buttonGhost: {
-    padding: "10px 12px",
-    borderRadius: 14,
-    border: "1px solid rgba(15, 23, 42, 0.10)",
-    background: "transparent",
-    cursor: "pointer",
-    fontWeight: 900,
-  },
-  buttonPrimary: {
-    padding: "10px 14px",
-    borderRadius: 14,
-    border: "1px solid rgba(15, 23, 42, 0.12)",
-    background: "#0f172a",
-    color: "white",
-    cursor: "pointer",
-    fontWeight: 950,
-  },
-  bigButton: {
-    marginTop: 12,
-    width: "100%",
-    padding: "14px",
-    borderRadius: 16,
-    border: "1px solid rgba(15, 23, 42, 0.12)",
-    background: "#0f172a",
-    color: "white",
-    fontWeight: 950,
-    cursor: "pointer",
-    fontSize: 16,
-  },
-  bigButtonPurple: {
-    marginTop: 12,
-    width: "100%",
-    padding: "14px",
-    borderRadius: 16,
-    border: "1px solid rgba(139, 92, 246, 0.3)",
-    background: "#7c3aed",
-    color: "white",
-    fontWeight: 950,
-    cursor: "pointer",
-    fontSize: 16,
-  },
-  tabRow: {
-    display: "flex",
-    gap: 6,
-    marginBottom: 14,
-    borderBottom: "2px solid rgba(15, 23, 42, 0.08)",
-    paddingBottom: 10,
-  },
-  tab: {
-    padding: "10px 18px",
-    borderRadius: 12,
-    border: "1px solid rgba(15, 23, 42, 0.10)",
-    background: "transparent",
-    cursor: "pointer",
-    fontWeight: 800,
-    fontSize: 14,
-    opacity: 0.6,
-  },
-  tabActive: {
-    padding: "10px 18px",
-    borderRadius: 12,
-    border: "2px solid #0f172a",
-    background: "rgba(15, 23, 42, 0.06)",
-    cursor: "pointer",
-    fontWeight: 950,
-    fontSize: 14,
-  },
-  uploadGrid: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14, alignItems: "end" },
-  fieldBlock: { marginTop: 10 },
-  miniNote: { marginTop: 8, opacity: 0.72, fontSize: 12, fontWeight: 800 },
-  items: { display: "grid", gap: 10, marginTop: 12 },
-  item: {
-    border: "1px solid rgba(15, 23, 42, 0.10)",
-    borderRadius: 16,
-    padding: 12,
-    background: "white",
-    boxShadow: "0 10px 24px rgba(2, 6, 23, 0.04)",
-  },
-  itemTop: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 },
-  itemLeft: { display: "flex", flexDirection: "column", gap: 4 },
-  itemPK: { fontWeight: 950, fontSize: 12, opacity: 0.7 },
-  itemTitle: { fontWeight: 950, fontSize: 14 },
-  itemActions: { display: "flex", gap: 8 },
-  itemMeta: { marginTop: 10, display: "flex", flexDirection: "column", gap: 10 },
-  itemLine: { fontSize: 13, opacity: 0.9 },
-  dim: { opacity: 0.7, fontWeight: 800 },
-  link: { fontWeight: 900, textDecoration: "underline" },
-  previewBox: {
-    borderRadius: 14,
-    border: "1px solid rgba(15, 23, 42, 0.10)",
-    background: "rgba(15, 23, 42, 0.02)",
-    padding: 10,
-  },
-  video: { width: "100%", maxHeight: 280, borderRadius: 12, display: "block", background: "#000" },
-  image: { width: "100%", maxHeight: 280, objectFit: "contain", borderRadius: 12, display: "block" },
-  previewFallback: { padding: 12, opacity: 0.75, fontWeight: 800, fontSize: 12 },
-  moveBox: {
-    padding: 12,
-    borderRadius: 14,
-    border: "2px solid rgba(59, 130, 246, 0.30)",
-    background: "rgba(59, 130, 246, 0.06)",
-    marginBottom: 4,
-  },
-  moveBoxTitle: {
-    fontWeight: 950,
-    fontSize: 13,
-    marginBottom: 10,
-    color: "#1e40af",
-  },
-  editSelect: {
-    width: "100%",
-    padding: "10px 12px",
-    borderRadius: 12,
-    border: "2px solid rgba(59, 130, 246, 0.35)",
-    background: "white",
-    fontWeight: 800,
-    fontSize: 14,
-  },
-  editButton: {
-    padding: "8px 10px",
-    borderRadius: 12,
-    border: "1px solid rgba(59, 130, 246, 0.25)",
-    background: "rgba(59, 130, 246, 0.12)",
-    color: "#1e40af",
-    cursor: "pointer",
-    fontWeight: 950,
-  },
-  saveButton: {
-    padding: "8px 10px",
-    borderRadius: 12,
-    border: "1px solid rgba(34, 197, 94, 0.25)",
-    background: "rgba(34, 197, 94, 0.12)",
-    color: "#15803d",
-    cursor: "pointer",
-    fontWeight: 950,
-  },
-  cancelButton: {
-    padding: "8px 10px",
-    borderRadius: 12,
-    border: "1px solid rgba(107, 114, 128, 0.25)",
-    background: "rgba(107, 114, 128, 0.12)",
-    color: "#374151",
-    cursor: "pointer",
-    fontWeight: 950,
-  },
-  dangerSmall: {
-    padding: "8px 10px",
-    borderRadius: 12,
-    border: "1px solid rgba(185, 28, 28, 0.25)",
-    background: "rgba(220, 38, 38, 0.12)",
-    color: "#991b1b",
-    cursor: "pointer",
-    fontWeight: 950,
-  },
-  empty: {
-    opacity: 0.7,
-    fontWeight: 850,
-    padding: 12,
-    borderRadius: 16,
-    border: "1px dashed rgba(15, 23, 42, 0.18)",
-    background: "rgba(15, 23, 42, 0.02)",
-  },
-  logBox: {
-    marginTop: 10,
-    background: "#0b0b0b",
-    color: "#d7ffd7",
-    padding: 12,
-    borderRadius: 14,
-    overflow: "auto",
-    maxHeight: 260,
-    fontSize: 12,
-  },
-  authError: {
-    marginTop: 10,
-    padding: "10px 12px",
-    borderRadius: 14,
-    border: "1px solid rgba(185, 28, 28, 0.25)",
-    background: "rgba(220, 38, 38, 0.10)",
-    color: "#991b1b",
-    fontWeight: 900,
-    fontSize: 13,
-  },
-};
