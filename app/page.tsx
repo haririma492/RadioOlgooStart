@@ -1,69 +1,86 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import React, { useState } from "react";
+import Header from "@/components/Header/Header";
+import VideoHub from "@/components/VideoHub/VideoHub";
+import AudioHub from "@/components/AudioHub/AudioHub";
+import VideoSubmissionForm from "@/components/Forms/VideoSubmissionForm";
+import SocialLinksForm from "@/components/Forms/SocialLinksForm";
+import BreakingNewsBanner from "@/components/BreakingNews/BreakingNewsBanner";
+import Footer from "@/components/Footer/Footer";
+import FloatingVideoPlayer from "@/components/FloatingVideoPlayer/FloatingVideoPlayer";
 
-export default function SinglePhotoPage() {
-  const [photoUrl, setPhotoUrl] = useState("");
-  const [loading, setLoading] = useState(true);
+type PlayingVideo = {
+  url: string;
+  person?: string;
+  title?: string;
+  timestamp?: string;
+};
 
-  useEffect(() => {
-    loadPhoto();
-  }, []);
+export default function HomePage() {
+  const [playingVideo, setPlayingVideo] = useState<PlayingVideo | null>(null);
 
-  const loadPhoto = async () => {
-    try {
-      setLoading(true);
-
-      // The specific PK you want to display
-      const targetPK = "MEDIA#1770524535876#658dc883fa9147";
-      
-      // Fetch from your section (adjust section name as needed)
-const res = await fetch(`/api/slides?section=National+Anthems`);
-      const data = await res.json();
-      
-      const items = data.items || [];
-      
-      // Find the specific photo by PK
-      const photo = items.find((item: any) => item.PK === targetPK);
-      
-      if (photo?.url) {
-        setPhotoUrl(photo.url);
-      }
-
-    } catch (err) {
-      console.error("Failed to load photo:", err);
-    } finally {
-      setLoading(false);
-    }
+  const handleVideoPlay = (video: PlayingVideo) => {
+    setPlayingVideo(video);
   };
 
-  if (loading) {
-    return (
-      <div style={{ padding: "40px", textAlign: "center" }}>
-        Loading photo...
-      </div>
-    );
-  }
-
-  if (!photoUrl) {
-    return (
-      <div style={{ padding: "40px", textAlign: "center", color: "#999" }}>
-        Photo not found
-      </div>
-    );
-  }
+  const handleClosePlayer = () => {
+    setPlayingVideo(null);
+  };
 
   return (
-    <div style={{ padding: "40px", maxWidth: "800px", margin: "0 auto" }}>
-      <img
-        src={photoUrl}
-        alt="Photo"
+    <div className="relative min-h-screen text-white">
+      {/* Background Image - Fixed */}
+      <div
+        className="fixed inset-0 -z-10"
         style={{
-          width: "100%",
-          height: "auto",
-          borderRadius: "8px",
-          boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+          backgroundImage: "url('/images/full-site-background.webp')",
+          backgroundSize: 'cover',
+          backgroundPosition: 'left center',
+          backgroundRepeat: 'no-repeat',
         }}
+      />
+
+      {/* Background Color Overlay - Applied to all content except header */}
+      <div
+        className="fixed inset-0 -z-[9]"
+        style={{
+          backgroundColor: 'rgba(22, 28, 36, 0.05)', // Very minimal overlay to make background image highly visible
+        }}
+      />
+
+      {/* Header - Positioned above overlay with relative z-index */}
+      <div className="relative z-10">
+        <Header />
+      </div>
+
+      {/* Content with overlay - positioned below header */}
+      <div className="relative z-0">
+        <main className="container mx-auto px-4 py-8">
+          <VideoHub onVideoClick={(video) => {
+            handleVideoPlay({
+              url: video.url,
+              person: video.person || video.personName,
+              title: video.title,
+              timestamp: video.createdAt,
+            });
+          }} />
+          <AudioHub />
+          <VideoSubmissionForm />
+          <SocialLinksForm />
+        </main>
+        <BreakingNewsBanner />
+        <Footer />
+      </div>
+
+      {/* Floating Video Player */}
+      <FloatingVideoPlayer
+        isOpen={!!playingVideo}
+        onClose={handleClosePlayer}
+        videoUrl={playingVideo?.url}
+        person={playingVideo?.person}
+        title={playingVideo?.title}
+        timestamp={playingVideo?.timestamp}
       />
     </div>
   );

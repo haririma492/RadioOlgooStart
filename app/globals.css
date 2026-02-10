@@ -1,6 +1,16 @@
+@import "tailwindcss";
+
 html, body {
   margin: 0;
-  background: black;
   color: white;
-  font-family: Arial, sans-serif;
+}
+
+/* Hide scrollbar for horizontal scroll */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
 }

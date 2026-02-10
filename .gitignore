@@ -3,3 +3,8 @@
 .env.*.local
 .next
 node_modules
+DESIGN_GUIDELINES.md
+
+.cursor/
+yarn.lock
+package-lock.json
