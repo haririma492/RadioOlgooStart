@@ -48,6 +48,7 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
   const [selectedPerson, setSelectedPerson] = useState<string | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [modalPlayingVideo, setModalPlayingVideo] = useState<VideoItem | null>(null);
+  const [playingVideoOnCard, setPlayingVideoOnCard] = useState<{ personName: string; video: VideoItem } | null>(null);
   const hubContentRef = useRef<HTMLDivElement>(null);
 
   // Fetch media from API on mount
@@ -274,8 +275,13 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
     setExpandedPerson((prev) => (prev === personName ? null : personName));
   };
 
-  const handleVideoClickFromDropdown = (video: VideoItem) => {
-    if (onVideoClick) onVideoClick(video);
+  const handleVideoPlayOnCard = (personName: string, video: VideoItem) => {
+    setPlayingVideoOnCard({ personName, video });
+    setExpandedPerson(null);
+  };
+
+  const handleClearPlayingVideoOnCard = () => {
+    setPlayingVideoOnCard(null);
   };
 
   const handleCloseModal = () => {
@@ -367,7 +373,7 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
                 pictureUrl: getRezaPahlaviProfile() ?? "",
               }}
               videos={getRezaPahlaviVideos()}
-              onVideoClick={handleVideoClickFromDropdown}
+              onVideoClick={(video) => handleVideoPlayOnCard("Reza Pahlavi", video)}
               isExpanded={expandedPerson === "Reza Pahlavi"}
               onToggle={() => handleCardClick("Reza Pahlavi")}
               onViewAllClick={
@@ -375,6 +381,8 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
                   ? () => openModalForPerson("Reza Pahlavi")
                   : undefined
               }
+              playingVideo={playingVideoOnCard?.personName === "Reza Pahlavi" ? playingVideoOnCard.video : null}
+              onClearPlayingVideo={handleClearPlayingVideoOnCard}
             />
           </div>
         </div>
@@ -406,7 +414,7 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
                           pictureUrl: profile.pictureUrl,
                         }}
                         videos={personVideos}
-                        onVideoClick={handleVideoClickFromDropdown}
+                        onVideoClick={(video) => handleVideoPlayOnCard(profile.person, video)}
                         isExpanded={expandedPerson === profile.person}
                         onToggle={() => handleCardClick(profile.person)}
                         onViewAllClick={
@@ -414,6 +422,8 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
                             ? () => openModalForPerson(profile.person)
                             : undefined
                         }
+                        playingVideo={playingVideoOnCard?.personName === profile.person ? playingVideoOnCard.video : null}
+                        onClearPlayingVideo={handleClearPlayingVideoOnCard}
                       />
                     );
                   })}
@@ -438,7 +448,7 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
                           pictureUrl: profile.pictureUrl,
                         }}
                         videos={personVideos}
-                        onVideoClick={handleVideoClickFromDropdown}
+                        onVideoClick={(video) => handleVideoPlayOnCard(profile.person, video)}
                         isExpanded={expandedPerson === profile.person}
                         onToggle={() => handleCardClick(profile.person)}
                         onViewAllClick={
@@ -446,6 +456,8 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
                             ? () => openModalForPerson(profile.person)
                             : undefined
                         }
+                        playingVideo={playingVideoOnCard?.personName === profile.person ? playingVideoOnCard.video : null}
+                        onClearPlayingVideo={handleClearPlayingVideoOnCard}
                       />
                     );
                   })}
