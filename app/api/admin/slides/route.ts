@@ -1,290 +1,197 @@
 // app/api/admin/slides/route.ts
 //
-// ADMIN API: Manage media items (requires authentication)
-// Supports both MEDIA# and VIDEOARCHIVE# PK formats
+// ADMIN API: CRUD operations for media items
+// REQUIRES AUTHENTICATION via x-admin-token header
 //
-import { NextResponse } from "next/server";
-import { randomUUID } from "crypto";
+import { NextRequest, NextResponse } from "next/server";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import {
   DynamoDBDocumentClient,
-  PutCommand,
-  DeleteCommand,
-  UpdateCommand,
   ScanCommand,
+  PutCommand,
+  GetCommand,
+  DeleteCommand,
 } from "@aws-sdk/lib-dynamodb";
-import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function requireAdmin(req: Request) {
-  const incoming = (req.headers.get("x-admin-token") || "").trim();
-  const expected = (process.env.ADMIN_TOKEN || "").trim();
-  if (!expected) throw new Error("Missing ADMIN_TOKEN in env");
-  if (!incoming || incoming !== expected) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  return null;
-}
-
-function jsonOk(obj: any, status = 200) {
-  return NextResponse.json(obj, {
-    status,
-    headers: { "cache-control": "no-store" },
-  });
-}
-
-function jsonErr(error: string, status = 400, detail?: any) {
-  return jsonOk({ error, ...(detail ? { detail: String(detail) } : {}) }, status);
-}
-
+const region = process.env.AWS_REGION || "ca-central-1";
 const ddb = DynamoDBDocumentClient.from(
-  new DynamoDBClient({
-    region: process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || "ca-central-1",
-  }),
+  new DynamoDBClient({ region }),
   { marshallOptions: { removeUndefinedValues: true } }
 );
 
-const region = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || "ca-central-1";
-const bucket = (process.env.S3_BUCKET_NAME || "").trim();
-const bucketHost = bucket ? `${bucket}.s3.${region}.amazonaws.com` : "";
-const s3 = new S3Client({ region });
-
-function keyFromS3PublicUrl(urlStr: string): string | null {
-  try {
-    const u = new URL(urlStr);
-    if (!bucketHost) return null;
-    if (u.hostname !== bucketHost) return null;
-    const key = decodeURIComponent(u.pathname.replace(/^\//, ""));
-    return key || null;
-  } catch {
-    return null;
-  }
+function json(data: any, status = 200) {
+  return new NextResponse(JSON.stringify(data), {
+    status,
+    headers: {
+      "content-type": "application/json",
+      "cache-control": "no-store",
+    },
+  });
 }
 
-function tableName() {
-  const v = (process.env.DDB_TABLE_NAME || "").trim();
-  if (!v) throw new Error("Missing DDB_TABLE_NAME in env");
+function getEnv(name: string) {
+  const v = process.env[name];
+  if (!v) throw new Error(`Missing ${name} in env`);
   return v;
 }
 
-function generatePK(): string {
-  const ts = Date.now();
-  const rand = randomUUID().replace(/-/g, "").slice(0, 14);
-  return `MEDIA#${ts}#${rand}`;
+// Verify admin token
+function checkAuth(req: NextRequest): boolean {
+  const token = req.headers.get("x-admin-token");
+  const expected = process.env.ADMIN_TOKEN;
+  if (!expected || !token) return false;
+  return token === expected;
 }
 
-async function presignItems(items: any[]): Promise<any[]> {
-  if (!bucket) return items;
-
-  return Promise.all(
-    items.map(async (item) => {
-      let urlStr = String(item.url || "");
-      const key = keyFromS3PublicUrl(urlStr);
-
-      if (key) {
-        urlStr = await getSignedUrl(
-          s3,
-          new GetObjectCommand({ Bucket: bucket, Key: key }),
-          { expiresIn: 60 * 60 }
-        );
-      }
-
-      return { ...item, url: urlStr };
-    })
-  );
-}
-
-/**
- * GET - List items
- */
-export async function GET(req: Request) {
-  const auth = requireAdmin(req);
-  if (auth) return auth;
+// ─────────────────────────────────────────────────────────────────────
+// GET /api/admin/slides - List all items (admin view)
+// ─────────────────────────────────────────────────────────────────────
+export async function GET(req: NextRequest) {
+  if (!checkAuth(req)) {
+    return json({ error: "Unauthorized" }, 401);
+  }
 
   try {
-    const TableName = tableName();
-    const url = new URL(req.url);
-    const sectionFilter = url.searchParams.get("section");
-    const groupFilter = url.searchParams.get("group");
-
+    const TableName = getEnv("DDB_TABLE_NAME");
     const result = await ddb.send(new ScanCommand({ TableName }));
-    
-    // ✅ Accept both MEDIA# and VIDEOARCHIVE# formats
-    let items = (result.Items || []).filter((item) => {
-      if (!item.PK) return false;
-      const pk = String(item.PK);
+    const items = (result.Items || []).filter((x: any) => {
+      if (!x.PK) return false;
+      const pk = String(x.PK);
       return pk.startsWith("MEDIA#") || pk.startsWith("VIDEOARCHIVE#");
     });
 
-    if (sectionFilter) {
-      items = items.filter((item) => item.section === sectionFilter);
-    }
-
-    if (groupFilter) {
-      items = items.filter((item) => item.group === groupFilter);
-    }
-
-    items.sort((a, b) => {
-      const da = a.createdAt || "";
-      const db = b.createdAt || "";
-      return db.localeCompare(da);
+    // Sort by createdAt descending (newest first)
+    items.sort((a: any, b: any) => {
+      const dateA = a.createdAt || "";
+      const dateB = b.createdAt || "";
+      return dateB.localeCompare(dateA);
     });
 
-    items = await presignItems(items);
-
-    return jsonOk({
-      ok: true,
-      section: sectionFilter,
-      group: groupFilter,
-      count: items.length,
-      items,
-    });
+    return json({ ok: true, items, count: items.length });
   } catch (e: any) {
-    return jsonErr("Load failed", 500, e?.message ?? e);
+    return json({ error: "Server error", detail: e?.message || String(e) }, 500);
   }
 }
 
-/**
- * POST - Create new item
- */
-export async function POST(req: Request) {
-  const auth = requireAdmin(req);
-  if (auth) return auth;
+// ─────────────────────────────────────────────────────────────────────
+// POST /api/admin/slides - Create new item
+// ─────────────────────────────────────────────────────────────────────
+export async function POST(req: NextRequest) {
+  if (!checkAuth(req)) {
+    return json({ error: "Unauthorized" }, 401);
+  }
 
   try {
-    const TableName = tableName();
-    const body = await req.json().catch(() => null);
-    if (!body) return jsonErr("Bad JSON body", 400);
+    const body = await req.json();
+    const { url, section, title, group, person, date, description } = body;
 
-    const section = String(body.section || "").trim();
-    if (!section) return jsonErr("Missing section", 400);
+    if (!url || !section || !title) {
+      return json({ error: "Missing required fields: url, section, title" }, 400);
+    }
 
-    const url = String(body.url || "").trim();
-    if (!url) return jsonErr("Missing url", 400);
+    const TableName = getEnv("DDB_TABLE_NAME");
+    
+    // Generate PK
+    const timestamp = Date.now();
+    const rand = Math.random().toString(36).substring(2, 15);
+    const PK = `MEDIA#${timestamp}#${rand}`;
 
-    const title = String(body.title || "").trim();
-    if (!title) return jsonErr("Missing title", 400);
+    const now = new Date().toISOString();
 
-    const PK = generatePK();
-
-    const item: any = {
+    const Item: any = {
       PK,
       url,
       section,
       title,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      group: group || "",
+      person: person || "",
+      date: date || new Date().toISOString().split("T")[0], // Default to today if not provided
+      description: description || "",
+      active: true,
+      createdAt: now,  // ✅ Set creation timestamp
+      updatedAt: now,  // ✅ Set update timestamp
     };
 
-    if (body.group) item.group = String(body.group).trim();
-    if (body.person) item.person = String(body.person).trim();
-    if (body.date) item.date = String(body.date).trim();
-    if (body.description) item.description = String(body.description).trim();
-    if (body.active !== undefined) item.active = Boolean(body.active);
+    await ddb.send(new PutCommand({ TableName, Item }));
 
-    await ddb.send(new PutCommand({ TableName, Item: item }));
-
-    return jsonOk({ ok: true, PK, item });
+    return json({ ok: true, PK, title });
   } catch (e: any) {
-    return jsonErr("Create failed", 500, e?.message ?? e);
+    return json({ error: "Server error", detail: e?.message || String(e) }, 500);
   }
 }
 
-/**
- * PATCH - Update item
- */
-export async function PATCH(req: Request) {
-  const auth = requireAdmin(req);
-  if (auth) return auth;
+// ─────────────────────────────────────────────────────────────────────
+// PATCH /api/admin/slides - Update existing item
+// ─────────────────────────────────────────────────────────────────────
+export async function PATCH(req: NextRequest) {
+  if (!checkAuth(req)) {
+    return json({ error: "Unauthorized" }, 401);
+  }
 
   try {
-    const TableName = tableName();
-    const body = await req.json().catch(() => null);
-    if (!body) return jsonErr("Bad JSON body", 400);
+    const body = await req.json();
+    const { PK, date, ...otherFields } = body;
 
-    const PK = String(body.PK || "").trim();
-    if (!PK) return jsonErr("Missing PK", 400);
-
-    const updates: string[] = ["updatedAt = :upd"];
-    const values: any = { ":upd": new Date().toISOString() };
-    const names: Record<string, string> = {};
-
-    if (body.title !== undefined) {
-      updates.push("title = :title");
-      values[":title"] = String(body.title).trim();
-    }
-    if (body.description !== undefined) {
-      updates.push("description = :desc");
-      values[":desc"] = String(body.description).trim();
-    }
-    if (body.person !== undefined) {
-      updates.push("person = :person");
-      values[":person"] = String(body.person).trim();
-    }
-    if (body.date !== undefined) {
-      updates.push("#dt = :date");
-      values[":date"] = String(body.date).trim();
-      names["#dt"] = "date";
-    }
-    if (body.active !== undefined) {
-      updates.push("active = :active");
-      values[":active"] = Boolean(body.active);
-    }
-    if (body.section !== undefined) {
-      const newSection = String(body.section).trim();
-      if (!newSection) return jsonErr("Section cannot be empty", 400);
-      updates.push("#sec = :section");
-      values[":section"] = newSection;
-      names["#sec"] = "section";
-    }
-    if (body.group !== undefined) {
-      updates.push("#grp = :group");
-      values[":group"] = String(body.group).trim();
-      names["#grp"] = "group";
+    if (!PK) {
+      return json({ error: "Missing PK" }, 400);
     }
 
-    const updateExpression = `SET ${updates.join(", ")}`;
-    const expressionAttributeNames = Object.keys(names).length > 0 ? names : undefined;
+    const TableName = getEnv("DDB_TABLE_NAME");
 
-    await ddb.send(
-      new UpdateCommand({
+    // ✅ CRITICAL: Get existing item to preserve createdAt
+    const existingResult = await ddb.send(
+      new GetCommand({
         TableName,
         Key: { PK },
-        UpdateExpression: updateExpression,
-        ExpressionAttributeValues: values,
-        ...(expressionAttributeNames && {
-          ExpressionAttributeNames: expressionAttributeNames,
-        }),
       })
     );
 
-    return jsonOk({ ok: true, PK });
+    const existingItem = existingResult.Item;
+    if (!existingItem) {
+      return json({ error: "Item not found" }, 404);
+    }
+
+    // ✅ Build update with proper date handling
+    const updatedItem: any = {
+      ...otherFields,
+      PK,
+      date: date || existingItem.date || new Date().toISOString().split("T")[0], // Use provided date, or existing, or today
+      createdAt: existingItem.createdAt || new Date().toISOString(), // ✅ PRESERVE original creation time
+      updatedAt: new Date().toISOString(), // ✅ SET to current time
+    };
+
+    await ddb.send(new PutCommand({ TableName, Item: updatedItem }));
+
+    return json({ ok: true, PK });
   } catch (e: any) {
-    return jsonErr("Update failed", 500, e?.message ?? e);
+    return json({ error: "Server error", detail: e?.message || String(e) }, 500);
   }
 }
 
-/**
- * DELETE - Remove item
- */
-export async function DELETE(req: Request) {
-  const auth = requireAdmin(req);
-  if (auth) return auth;
+// ─────────────────────────────────────────────────────────────────────
+// DELETE /api/admin/slides?PK=xxx - Delete item
+// ─────────────────────────────────────────────────────────────────────
+export async function DELETE(req: NextRequest) {
+  if (!checkAuth(req)) {
+    return json({ error: "Unauthorized" }, 401);
+  }
 
   try {
-    const TableName = tableName();
-    const url = new URL(req.url);
-    const PK = (url.searchParams.get("PK") || "").trim();
+    const { searchParams } = new URL(req.url);
+    const PK = searchParams.get("PK");
 
-    if (!PK) return jsonErr("Missing PK", 400);
+    if (!PK) {
+      return json({ error: "Missing PK parameter" }, 400);
+    }
 
+    const TableName = getEnv("DDB_TABLE_NAME");
     await ddb.send(new DeleteCommand({ TableName, Key: { PK } }));
 
-    return jsonOk({ ok: true });
+    return json({ ok: true, PK });
   } catch (e: any) {
-    return jsonErr("Delete failed", 500, e?.message ?? e);
+    return json({ error: "Server error", detail: e?.message || String(e) }, 500);
   }
 }

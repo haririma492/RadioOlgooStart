@@ -63,84 +63,84 @@ function generatePK(): string {
   return `MEDIA#${Date.now()}#${uuidv4()}`;
 }
 
-// Download video using yt-dlp (SAME AS YOUR PYTHON VERSION!)
+// Download video using yt-dlp with progress tracking
 function downloadVideoYtDlp(videoUrl: string, outputPath: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const ytdlpPath = getYtDlpPath();
     
-    console.log(`   📥 Using: ${ytdlpPath}`);
-    console.log(`   📁 Output: ${outputPath}`);
-    console.log(`   🔗 URL: ${videoUrl}`);
+    console.log(`   📥 Starting yt-dlp download...`);
     
-    // Wrap paths with spaces in quotes
     const quotedYtdlpPath = ytdlpPath.includes(' ') ? `"${ytdlpPath}"` : ytdlpPath;
     const quotedOutputPath = outputPath.includes(' ') ? `"${outputPath}"` : outputPath;
     
-    // Build command as a single string for shell execution
-    const command = `${quotedYtdlpPath} -f best -o ${quotedOutputPath} --no-check-certificates --verbose "${videoUrl}"`;
-    
-    console.log(`   📝 Command: ${command}`);
+    const command = `${quotedYtdlpPath} -f best -o ${quotedOutputPath} --newline "${videoUrl}"`;
     
     const ytdlp = spawn(command, [], {
       windowsHide: true,
       shell: true,
     });
 
-    let stdoutOutput = "";
-    let stderrOutput = "";
+    let lastProgress = "";
 
     ytdlp.stdout.on("data", (data) => {
-      const line = data.toString();
-      stdoutOutput += line;
-      console.log(`   [stdout] ${line.trim()}`);
+      const line = data.toString().trim();
+      
+      // Show download progress
+      if (line.includes('[download]') && line.includes('%')) {
+        const match = line.match(/(\d+\.\d+)%/);
+        if (match) {
+          const progress = match[1];
+          if (progress !== lastProgress) {
+            process.stdout.write(`\r   ⬇️  Downloading: ${progress}%`);
+            lastProgress = progress;
+          }
+        }
+      } else if (line.includes('[download]') && line.includes('100%')) {
+        console.log(`\r   ✅ Download complete!                    `);
+      }
     });
 
     ytdlp.stderr.on("data", (data) => {
-      const line = data.toString();
-      stderrOutput += line;
-      console.log(`   [stderr] ${line.trim()}`);
+      const line = data.toString().trim();
+      if (line && !line.includes('WARNING')) {
+        console.log(`   ${line}`);
+      }
     });
 
     ytdlp.on("close", (code) => {
-      console.log(`   yt-dlp exit code: ${code}`);
-      
       if (code !== 0) {
-        const errorMsg = stderrOutput || stdoutOutput || "Unknown error";
-        console.error(`   Full output:\n${stdoutOutput}\n${stderrOutput}`);
-        reject(new Error(`yt-dlp failed (code ${code}): ${errorMsg.substring(0, 500)}`));
+        reject(new Error(`yt-dlp failed (code ${code})`));
         return;
       }
 
-      // Find downloaded file
       const extensions = ["", ".mp4", ".webm", ".mkv"];
       const basePath = outputPath.replace(/\.[^.]+$/, "");
       
       for (const ext of extensions) {
         const path = ext ? basePath + ext : outputPath;
         if (existsSync(path)) {
-          console.log(`   ✅ Found file: ${path}`);
           resolve(path);
           return;
         }
       }
 
-      console.error(`   ❌ File not found. Looking for: ${basePath}[.mp4/.webm/.mkv]`);
       reject(new Error("File not found after download"));
     });
 
     ytdlp.on("error", (error) => {
-      console.error(`   ❌ spawn error: ${error.message}`);
-      reject(new Error(`Failed to run yt-dlp: ${error.message}. Is yt-dlp installed and in PATH?`));
+      reject(new Error(`Failed to run yt-dlp: ${error.message}`));
     });
   });
 }
 
 // Upload to S3
 async function uploadToS3(filePath: string, s3Key: string): Promise<string> {
-  console.log(`   ⬆️  Uploading to S3...`);
+  const sizeMB = (statSync(filePath).size / (1024 * 1024)).toFixed(2);
+  
+  console.log(`   ⬆️  Uploading ${sizeMB} MB to S3...`);
+  const startTime = Date.now();
   
   const fileStream = createReadStream(filePath);
-  const sizeMB = (statSync(filePath).size / (1024 * 1024)).toFixed(2);
 
   await s3Client.send(new PutObjectCommand({
     Bucket: S3_BUCKET_VIDEOS,
@@ -150,9 +150,26 @@ async function uploadToS3(filePath: string, s3Key: string): Promise<string> {
     // Note: Bucket has ACLs disabled, so we rely on bucket policy for public access
   }));
 
+  const duration = ((Date.now() - startTime) / 1000).toFixed(1);
   const url = `https://${S3_BUCKET_VIDEOS}.s3.${AWS_REGION}.amazonaws.com/${s3Key}`;
-  console.log(`   ✅ Uploaded ${sizeMB} MB`);
+  
+  console.log(`   ✅ Upload complete! (${sizeMB} MB in ${duration}s)`);
   return url;
+}
+
+// Helper to parse YouTube upload date to YYYY-MM-DD format
+function parseYouTubeDate(uploadDate: string): string {
+  try {
+    // uploadDate is like "February 8, 2026" or similar
+    const date = new Date(uploadDate);
+    if (!isNaN(date.getTime())) {
+      return date.toISOString().split("T")[0]; // YYYY-MM-DD
+    }
+  } catch (error) {
+    console.log(`   ⚠️  Could not parse date: ${uploadDate}, using today`);
+  }
+  // Fallback to today if parsing fails
+  return new Date().toISOString().split("T")[0];
 }
 
 // Save to DynamoDB
@@ -214,6 +231,13 @@ export async function POST(request: NextRequest) {
 
         // Save to DB
         const pk = generatePK();
+        
+        // Parse YouTube upload date to use as createdAt
+        const youtubeUploadDate = parseYouTubeDate(video.uploadDate);
+        const youtubeCreatedAt = new Date(youtubeUploadDate).toISOString();
+        
+        console.log(`   📅 YouTube upload date: ${video.uploadDate} → ${youtubeUploadDate}`);
+        
         await saveToDynamoDB({
           PK: pk,
           url: s3Url,
@@ -221,9 +245,9 @@ export async function POST(request: NextRequest) {
           title: video.title,
           group: video.group,
           person: video.channelTitle,
-          date: new Date().toISOString().split("T")[0],
-          description: `Uploaded: ${video.uploadDate} | Views: ${video.viewCount?.toLocaleString() || "N/A"}`,
-          createdAt: new Date().toISOString(),
+          date: youtubeUploadDate, // Use YouTube upload date
+          description: `Views: ${video.viewCount?.toLocaleString() || "N/A"}`,
+          createdAt: youtubeCreatedAt, // Use YouTube upload date as creation timestamp
         });
 
         successCount++;

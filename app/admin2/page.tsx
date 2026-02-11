@@ -557,7 +557,7 @@ function ContentTable({
                       borderRadius: "4px",
                     }}
                   />
-                  <span style={{ fontSize: "11px" }}>{item[column.key]}</span>
+                  <span style={{ fontSize: "11px", color: "#000" }}>{item[column.key]}</span>
                 </div>
               );
             }
@@ -625,7 +625,7 @@ function ContentEditor({ item, onSave, onCancel }: { item: ContentItem | null; o
   return (
     <div style={modalOverlayStyle}>
       <div style={modalStyle}>
-        <h3>{item ? "Edit Content" : "Add New Content"}</h3>
+        <h3>{ item ? "Edit Content" : "Add New Content"}</h3>
         <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
           <div>
             <label>PK (e.g., HEADER#1, SECTION#1, GROUP#1#1, FOOTER#1):</label>
@@ -804,8 +804,19 @@ function ResizableTable({
   }, [resizing, onColumnResize]);
 
   return (
-    <div style={{ overflowX: "auto" }}>
-      <table style={{ borderCollapse: "collapse", fontSize: "13px" }}>
+    <div style={{ 
+      overflowX: "auto",
+      overflowY: "visible",
+      border: "1px solid #ddd",
+      borderRadius: "4px",
+      maxWidth: "100%",
+    }}>
+      <table style={{ 
+        borderCollapse: "collapse", 
+        fontSize: "13px",
+        minWidth: "100%",
+        width: "max-content",
+      }}>
         <thead>
           <tr style={{ background: "#f5f5f5" }}>
             {columns.map((col: any) => (
@@ -911,6 +922,8 @@ const thStyle: React.CSSProperties = {
   position: "sticky",
   top: 0,
   background: "#f5f5f5",
+  color: "#000", // FIX: Explicit black text
+  zIndex: 10,
 };
 
 const tdStyle: React.CSSProperties = {
@@ -918,6 +931,7 @@ const tdStyle: React.CSSProperties = {
   overflow: "hidden",
   textOverflow: "ellipsis",
   whiteSpace: "nowrap",
+  color: "#000", // FIX: Explicit black text
 };
 
 const modalOverlayStyle: React.CSSProperties = {
@@ -949,6 +963,7 @@ const inputStyle: React.CSSProperties = {
   border: "1px solid #ccc",
   borderRadius: "4px",
   fontSize: "14px",
+  color: "#000",
 };
 
 // Helpers
