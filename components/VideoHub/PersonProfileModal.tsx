@@ -91,7 +91,7 @@ export default function PersonProfileModal({
         }}
       >
         <div
-          className="relative bg-[#1a1a1a] rounded-lg p-6 max-w-4xl w-full mx-4 overflow-y-auto scrollbar-hide"
+          className="relative bg-[#1a1a1a] rounded-lg p-6 max-w-6xl w-full mx-4 overflow-y-auto scrollbar-hide"
           style={{
             pointerEvents: 'auto',
             maxHeight: 'calc(100vh - 2rem)',

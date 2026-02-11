@@ -22,6 +22,9 @@ type ProfileCardWithDropdownProps = {
   isExpanded: boolean;
   onToggle: () => void;
   onViewAllClick?: () => void;
+  /** When set, this card shows an inline video player instead of the profile image */
+  playingVideo?: VideoItem | null;
+  onClearPlayingVideo?: () => void;
 };
 
 export default function ProfileCardWithDropdown({
@@ -31,7 +34,11 @@ export default function ProfileCardWithDropdown({
   isExpanded,
   onToggle,
   onViewAllClick,
+  playingVideo = null,
+  onClearPlayingVideo,
 }: ProfileCardWithDropdownProps) {
+  const isPlayingOnCard = Boolean(playingVideo);
+
   return (
     <div className="relative">
       <button
@@ -39,8 +46,39 @@ export default function ProfileCardWithDropdown({
         onClick={onToggle}
         className="w-full cursor-pointer hover:opacity-90 transition-opacity text-left"
       >
-        <div className="relative w-full aspect-square rounded-lg overflow-hidden border border-white/20 bg-white/5">
-          {profile.pictureUrl ? (
+        <div className="relative w-full aspect-square rounded-lg overflow-hidden border border-white/20 bg-black">
+          {isPlayingOnCard && playingVideo ? (
+            <div
+              className="absolute inset-0"
+              onClick={(e) => e.stopPropagation()}
+              onDoubleClick={(e) => e.stopPropagation()}
+            >
+              <video
+                key={playingVideo.id}
+                src={playingVideo.url}
+                controls
+                autoPlay
+                className="w-full h-full object-contain"
+                controlsList="nodownload"
+              />
+              {onClearPlayingVideo && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onClearPlayingVideo();
+                  }}
+                  className="absolute top-1.5 right-1.5 w-8 h-8 rounded-full bg-black/70 hover:bg-black/90 text-white flex items-center justify-center transition-colors"
+                  aria-label="Stop video"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+              )}
+            </div>
+          ) : profile.pictureUrl ? (
             <img
               src={profile.pictureUrl}
               alt={profile.person}
@@ -59,7 +97,7 @@ export default function ProfileCardWithDropdown({
 
       {isExpanded && (
         <div
-          className="absolute left-0 z-20 mt-2 min-w-[100%] animate-dropdown-in"
+          className="absolute left-0 z-20 mt-2 w-full min-w-[480px] max-w-[min(100vw,480px)] animate-dropdown-in"
           style={{ top: "100%" }}
         >
           <ProfileCardDropdown
