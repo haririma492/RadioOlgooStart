@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import VideoCategoryBar from "./VideoCategoryBar";
-import VideoRow from "./VideoRow";
+import ProfileCardWithDropdown from "./ProfileCardWithDropdown";
 import PersonProfileModal from "./PersonProfileModal";
 
 type VideoItem = {
@@ -43,10 +43,12 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
   const [mediaItems, setMediaItems] = useState<MediaItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [expandedPerson, setExpandedPerson] = useState<string | null>(null);
+  const [activeCategory, setActiveCategory] = useState<string>("Political");
   const [selectedPerson, setSelectedPerson] = useState<string | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [modalPlayingVideo, setModalPlayingVideo] = useState<VideoItem | null>(null);
-  const [activeCategory, setActiveCategory] = useState<string>("Political");
+  const hubContentRef = useRef<HTMLDivElement>(null);
 
   // Fetch media from API on mount
   useEffect(() => {
@@ -77,6 +79,18 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
     }
 
     fetchMedia();
+  }, []);
+
+  // Click outside to close dropdown
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      const target = e.target as Node;
+      if (hubContentRef.current && !hubContentRef.current.contains(target)) {
+        setExpandedPerson(null);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
   // Get profiles from Youtube_Channel_Profile_Picture section, filtered by category
@@ -253,33 +267,35 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
       }));
   };
 
-  const profiles = useMemo(() => getProfiles(activeCategory), [mediaItems, activeCategory]);
   const politicalProfiles = useMemo(() => getProfiles("Political"), [mediaItems]);
   const militaryProfiles = useMemo(() => getProfiles("Military"), [mediaItems]);
-  const politicalVideos = useMemo(() => filterVideos("Political Analysis"), [mediaItems]);
-  const militaryVideos = useMemo(() => filterVideos("Military"), [mediaItems]);
 
-  const handleVideoClick = (video: VideoItem, playInModal: boolean = false) => {
-    if (playInModal) {
-      // Play in modal
-      setModalPlayingVideo(video);
-    } else {
-      // Send to bottom right corner
-      if (onVideoClick) {
-        onVideoClick(video);
-      }
-    }
+  const handleCardClick = (personName: string) => {
+    setExpandedPerson((prev) => (prev === personName ? null : personName));
   };
 
-  const handleProfileClick = (personName: string) => {
-    setSelectedPerson(personName);
-    setShowModal(true);
-    setModalPlayingVideo(null); // Reset video when opening modal
+  const handleVideoClickFromDropdown = (video: VideoItem) => {
+    if (onVideoClick) onVideoClick(video);
   };
 
   const handleCloseModal = () => {
     setShowModal(false);
     setSelectedPerson(null);
+    setModalPlayingVideo(null);
+  };
+
+  const handleVideoClickInModal = (video: VideoItem, playInModal: boolean) => {
+    if (playInModal) {
+      setModalPlayingVideo(video);
+    } else {
+      if (onVideoClick) onVideoClick(video);
+    }
+  };
+
+  const openModalForPerson = (personName: string) => {
+    setExpandedPerson(null);
+    setSelectedPerson(personName);
+    setShowModal(true);
     setModalPlayingVideo(null);
   };
 
@@ -340,26 +356,26 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
       </div>
 
       {/* Video Hub Main Content */}
-      <div className="w-full flex flex-col md:flex-row gap-6 md:gap-8 px-4 md:px-6 lg:px-8 pb-8 items-start">
+      <div ref={hubContentRef} className="w-full flex flex-col md:flex-row gap-6 md:gap-8 px-4 md:px-6 lg:px-8 pb-8 items-start">
         {/* Your Favourite Section - First on mobile, Right on desktop */}
         <div className="w-full md:w-[400px] lg:w-[450px] flex-shrink-0 flex flex-col order-1 md:order-2">
           <h2 className="text-white text-[24.64px] font-semibold leading-[1.5] mb-6">Your Favourite</h2>
-          <div
-            className="w-full rounded-lg overflow-hidden cursor-pointer hover:opacity-90 transition-opacity"
-            style={{ height: 'calc(2 * 180px + 32px)' }}
-            onClick={() => handleProfileClick("Reza Pahlavi")}
-          >
-            {getRezaPahlaviProfile() ? (
-              <img
-                src={getRezaPahlaviProfile()!}
-                alt="Reza Pahlavi"
-                className="w-full h-full rounded-lg object-cover"
-              />
-            ) : (
-              <div className="w-full h-full rounded-lg bg-white/10 flex items-center justify-center text-white text-4xl font-semibold">
-                R
-              </div>
-            )}
+          <div className="w-full max-w-[280px]">
+            <ProfileCardWithDropdown
+              profile={{
+                person: "Reza Pahlavi",
+                pictureUrl: getRezaPahlaviProfile() ?? "",
+              }}
+              videos={getRezaPahlaviVideos()}
+              onVideoClick={handleVideoClickFromDropdown}
+              isExpanded={expandedPerson === "Reza Pahlavi"}
+              onToggle={() => handleCardClick("Reza Pahlavi")}
+              onViewAllClick={
+                getRezaPahlaviVideos().length > 4
+                  ? () => openModalForPerson("Reza Pahlavi")
+                  : undefined
+              }
+            />
           </div>
         </div>
 
@@ -378,31 +394,29 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
             <div className="flex-1 space-y-8">
               {/* Political Cards */}
               <div>
+               
                 <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 md:gap-6">
-                  {politicalProfiles.map((profile) => (
-                    <div
-                      key={`Political-${profile.person}`}
-                      onClick={() => handleProfileClick(profile.person)}
-                      className="cursor-pointer hover:opacity-90 transition-opacity"
-                    >
-                      <div className="relative w-full aspect-square rounded-lg overflow-hidden border border-white/20 bg-white/5">
-                        {profile.pictureUrl ? (
-                          <img
-                            src={profile.pictureUrl}
-                            alt={profile.person}
-                            className="w-full h-full object-cover"
-                          />
-                        ) : (
-                          <div className="w-full h-full bg-white/10 flex items-center justify-center text-white text-2xl font-semibold">
-                            {profile.person.charAt(0).toUpperCase()}
-                          </div>
-                        )}
-                      </div>
-                      <div className="text-white text-sm mt-2 text-center truncate">
-                        {profile.person}
-                      </div>
-                    </div>
-                  ))}
+                  {politicalProfiles.map((profile) => {
+                    const personVideos = getVideosByPerson(profile.person);
+                    return (
+                      <ProfileCardWithDropdown
+                        key={`Political-${profile.person}`}
+                        profile={{
+                          person: profile.person,
+                          pictureUrl: profile.pictureUrl,
+                        }}
+                        videos={personVideos}
+                        onVideoClick={handleVideoClickFromDropdown}
+                        isExpanded={expandedPerson === profile.person}
+                        onToggle={() => handleCardClick(profile.person)}
+                        onViewAllClick={
+                          personVideos.length > 4
+                            ? () => openModalForPerson(profile.person)
+                            : undefined
+                        }
+                      />
+                    );
+                  })}
                   {politicalProfiles.length === 0 && !loading && (
                     <div className="col-span-full text-white/60 text-center py-4">
                       No profiles available for Political
@@ -414,30 +428,27 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
               {/* Military Cards */}
               <div>
                 <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 md:gap-6">
-                  {militaryProfiles.map((profile) => (
-                    <div
-                      key={`Military-${profile.person}`}
-                      onClick={() => handleProfileClick(profile.person)}
-                      className="cursor-pointer hover:opacity-90 transition-opacity"
-                    >
-                      <div className="relative w-full aspect-square rounded-lg overflow-hidden border border-white/20 bg-white/5">
-                        {profile.pictureUrl ? (
-                          <img
-                            src={profile.pictureUrl}
-                            alt={profile.person}
-                            className="w-full h-full object-cover"
-                          />
-                        ) : (
-                          <div className="w-full h-full bg-white/10 flex items-center justify-center text-white text-2xl font-semibold">
-                            {profile.person.charAt(0).toUpperCase()}
-                          </div>
-                        )}
-                      </div>
-                      <div className="text-white text-sm mt-2 text-center truncate">
-                        {profile.person}
-                      </div>
-                    </div>
-                  ))}
+                  {militaryProfiles.map((profile) => {
+                    const personVideos = getVideosByPerson(profile.person);
+                    return (
+                      <ProfileCardWithDropdown
+                        key={`Military-${profile.person}`}
+                        profile={{
+                          person: profile.person,
+                          pictureUrl: profile.pictureUrl,
+                        }}
+                        videos={personVideos}
+                        onVideoClick={handleVideoClickFromDropdown}
+                        isExpanded={expandedPerson === profile.person}
+                        onToggle={() => handleCardClick(profile.person)}
+                        onViewAllClick={
+                          personVideos.length > 4
+                            ? () => openModalForPerson(profile.person)
+                            : undefined
+                        }
+                      />
+                    );
+                  })}
                   {militaryProfiles.length === 0 && !loading && (
                     <div className="col-span-full text-white/60 text-center py-4">
                       No profiles available for Military
@@ -450,23 +461,22 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
         </div>
       </div>
 
-      {/* Person Profile Modal */}
       {selectedPerson && (
         <PersonProfileModal
           isOpen={showModal}
           onClose={handleCloseModal}
           personName={selectedPerson}
           profilePictureUrl={
-            selectedPerson === "Reza Pahlavi" 
-              ? getRezaPahlaviProfile() || ''
-              : getProfilePicture(selectedPerson) || ''
+            selectedPerson === "Reza Pahlavi"
+              ? getRezaPahlaviProfile() ?? ""
+              : getProfilePicture(selectedPerson) ?? ""
           }
           videos={
             selectedPerson === "Reza Pahlavi"
-              ? getRezaPahlaviVideos() // Show all videos for Reza Pahlavi (no category filter)
-              : getVideosByPerson(selectedPerson) // Show all videos for the person (no category filter)
+              ? getRezaPahlaviVideos()
+              : getVideosByPerson(selectedPerson)
           }
-          onVideoClick={(video, playInModal) => handleVideoClick(video, playInModal)}
+          onVideoClick={handleVideoClickInModal}
           playingVideo={modalPlayingVideo}
         />
       )}
