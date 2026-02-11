@@ -47,7 +47,8 @@ export default function ProfileCardDropdown({
       className="rounded-2xl overflow-hidden shadow-xl border border-white/20 bg-[#1a1a1a]"
       style={{
         maxHeight: "min(60vh, 420px)",
-        minWidth: "min(100%, 320px)",
+        minWidth: "min(100%, 480px)",
+        width: "min(100%, 480px)",
       }}
       onClick={(e) => e.stopPropagation()}
     >
