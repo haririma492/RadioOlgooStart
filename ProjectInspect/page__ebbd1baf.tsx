@@ -89,8 +89,6 @@ export default function AdminPage() {
   const [section, setSection] = useState<string>(ALL);
   const [group, setGroup] = useState<string>(ALL);
   const [search, setSearch] = useState<string>("");
-  const [personFilter, setPersonFilter] = useState<string>("");
-  const [titleFilter, setTitleFilter] = useState<string>("");
 
   const [uploadMode, setUploadMode] = useState<"file" | "url">("file");
 
@@ -116,23 +114,6 @@ export default function AdminPage() {
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [showDeleteSectionModal, setShowDeleteSectionModal] = useState(false);
   const [showDeleteGroupModal, setShowDeleteGroupModal] = useState(false);
-  const [showYouTubeModal, setShowYouTubeModal] = useState(false);
-  const [showYouTubeProgress, setShowYouTubeProgress] = useState(false);
-  const [youtubeVideos, setYoutubeVideos] = useState<any[]>([]);
-  const [youtubeProgress, setYoutubeProgress] = useState<{
-    current: number;
-    total: number;
-    currentVideo: string;
-    status: string;
-    details: Array<{
-      title: string;
-      status: 'fetching' | 'downloading' | 'uploading' | 'saving' | 'done' | 'error';
-      uploadDate?: string;
-      size?: string;
-      s3Url?: string;
-      error?: string;
-    }>;
-  }>({ current: 0, total: 0, currentVideo: '', status: '', details: [] });
   const [sectionToDelete, setSectionToDelete] = useState<string>("");
   const [groupToDelete, setGroupToDelete] = useState<string>("");
   const [targetSection, setTargetSection] = useState<string>("");
@@ -182,27 +163,6 @@ export default function AdminPage() {
   // Profile pictures for person dropdown (when section is "Youtube Chanel Videos")
   const profilePictures = useMemo(() => {
     return allItems.filter(item => item.section === "Youtube_Channel_Profile_Picture" && item.person);
-  }, [allItems]);
-
-  // Unique persons and titles for filter dropdowns
-  const uniquePersons = useMemo(() => {
-    const persons = new Set<string>();
-    allItems.forEach(item => {
-      if (item.person && item.person.trim()) {
-        persons.add(item.person.trim());
-      }
-    });
-    return Array.from(persons).sort();
-  }, [allItems]);
-
-  const uniqueTitles = useMemo(() => {
-    const titles = new Set<string>();
-    allItems.forEach(item => {
-      if (item.title && item.title.trim()) {
-        titles.add(item.title.trim());
-      }
-    });
-    return Array.from(titles).sort();
   }, [allItems]);
 
   useEffect(() => {
@@ -315,12 +275,6 @@ export default function AdminPage() {
     if (group !== ALL) {
       result = result.filter((it) => (it.group || "") === group);
     }
-    if (personFilter) {
-      result = result.filter((it) => (it.person || "").trim() === personFilter);
-    }
-    if (titleFilter) {
-      result = result.filter((it) => (it.title || "").trim() === titleFilter);
-    }
     const q = search.trim().toLowerCase();
     if (q) {
       result = result.filter((it) => {
@@ -332,7 +286,7 @@ export default function AdminPage() {
       });
     }
     return result;
-  }, [allItems, search, section, group, personFilter, titleFilter]);
+  }, [allItems, search, section, group]);
 
   // ── Upload helpers ───────────────────────────────────────────────────
   function onPickUploadFiles(e: React.ChangeEvent<HTMLInputElement>) {
@@ -719,58 +673,11 @@ export default function AdminPage() {
         if (showUploadModal) setShowUploadModal(false);
         if (showDeleteSectionModal) setShowDeleteSectionModal(false);
         if (showDeleteGroupModal) setShowDeleteGroupModal(false);
-        if (showYouTubeModal) setShowYouTubeModal(false);
       }
     };
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
-  }, [showUploadModal, showDeleteSectionModal, showDeleteGroupModal, showYouTubeModal]);
-
-  // Listen for YouTube progress updates
-  useEffect(() => {
-    const handleProgress = (e: any) => {
-      const { index, status, s3Url, size, error, allDone, current } = e.detail;
-      
-      if (allDone) {
-        // Mark all as done
-        setYoutubeProgress(prev => ({
-          ...prev,
-          current: prev.total,
-          status: '🎉 All videos processed!',
-        }));
-        return;
-      }
-      
-      setYoutubeProgress(prev => {
-        const newDetails = [...prev.details];
-        if (index !== undefined && newDetails[index]) {
-          newDetails[index] = {
-            ...newDetails[index],
-            status,
-            s3Url,
-            size,
-            error,
-          };
-        }
-        
-        return {
-          ...prev,
-          details: newDetails,
-          current: current !== undefined ? current + 1 : prev.current,
-          currentVideo: newDetails[index]?.title || prev.currentVideo,
-          status: status === 'downloading' ? `⬇️ Downloading video ${index + 1}...` :
-                  status === 'uploading' ? `⬆️ Uploading video ${index + 1}...` :
-                  status === 'saving' ? `💾 Saving video ${index + 1}...` :
-                  status === 'done' ? `✅ Video ${index + 1} complete!` :
-                  status === 'error' ? `❌ Video ${index + 1} failed` :
-                  prev.status,
-        };
-      });
-    };
-    
-    window.addEventListener('youtube-progress', handleProgress as EventListener);
-    return () => window.removeEventListener('youtube-progress', handleProgress as EventListener);
-  }, []);
+  }, [showUploadModal, showDeleteSectionModal, showDeleteGroupModal]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-slate-100 to-slate-200 text-slate-900 font-sans">
@@ -800,22 +707,13 @@ export default function AdminPage() {
               ↻ Refresh
             </button>
             {authorized && (
-              <>
-                <button
-                  className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 active:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed font-bold text-sm transition-colors shadow-lg"
-                  onClick={() => setShowUploadModal(true)}
-                  disabled={busy}
-                >
-                  ➕ Add Media
-                </button>
-                <button
-                  className="px-4 py-2 rounded-lg bg-red-600 text-white hover:bg-red-700 active:bg-red-800 disabled:opacity-50 disabled:cursor-not-allowed font-bold text-sm transition-colors shadow-lg"
-                  onClick={() => setShowYouTubeModal(true)}
-                  disabled={busy}
-                >
-                  📺 Add Latest Videos from YouTube Channel-s
-                </button>
-              </>
+              <button
+                className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 active:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed font-bold text-sm transition-colors shadow-lg"
+                onClick={() => setShowUploadModal(true)}
+                disabled={busy}
+              >
+                ➕ Add Media
+              </button>
             )}
           </div>
         </header>
@@ -902,32 +800,6 @@ export default function AdminPage() {
                     </option>
                   ))}
                 </select>
-                <select
-                  value={personFilter}
-                  onChange={(e) => setPersonFilter(e.target.value)}
-                  className="px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white font-semibold text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                  disabled={busy || !authorized}
-                >
-                  <option value="">All Persons</option>
-                  {uniquePersons.map((person) => (
-                    <option key={person} value={person}>
-                      {person}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  value={titleFilter}
-                  onChange={(e) => setTitleFilter(e.target.value)}
-                  className="px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white font-semibold text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                  disabled={busy || !authorized}
-                >
-                  <option value="">All Titles</option>
-                  {uniqueTitles.map((title) => (
-                    <option key={title} value={title}>
-                      {title}
-                    </option>
-                  ))}
-                </select>
                 <div className="relative flex-1 min-w-[150px] max-w-[250px]">
                   <input
                     value={search}
@@ -946,18 +818,16 @@ export default function AdminPage() {
                     </button>
                   )}
                 </div>
-                {(section !== ALL || group !== ALL || search || personFilter || titleFilter) && (
+                {(section !== ALL || group !== ALL || search) && (
                   <button
                     onClick={() => {
                       setSection(ALL);
                       setGroup(ALL);
                       setSearch("");
-                      setPersonFilter("");
-                      setTitleFilter("");
                     }}
                     className="px-2 py-1 rounded text-xs text-slate-600 hover:text-slate-800 hover:bg-slate-100 transition-colors"
                   >
-                    Clear All
+                    Clear
                   </button>
                 )}
                 <div className="ml-auto flex items-center">
@@ -1836,498 +1706,7 @@ export default function AdminPage() {
             </div>
           </div>
         )}
-
-        {/* YouTube Channel Import Modal */}
-        {showYouTubeModal && (
-          <YouTubeImportModal
-            token={token}
-            onClose={() => setShowYouTubeModal(false)}
-            onStartProgress={(videos) => {
-              setYoutubeVideos(videos);
-              setShowYouTubeModal(false);
-              setShowYouTubeProgress(true);
-              setYoutubeProgress({
-                current: 0,
-                total: videos.length,
-                currentVideo: '',
-                status: 'Starting...',
-                details: videos.map(v => ({
-                  title: v.title,
-                  status: 'fetching',
-                  uploadDate: v.uploadDate,
-                }))
-              });
-            }}
-            pushLog={pushLog}
-            allGroupOptions={allGroupOptions}
-            busy={busy}
-            setBusy={setBusy}
-          />
-        )}
-
-        {/* YouTube Progress View - Detailed Step by Step */}
-        {showYouTubeProgress && (
-          <div className="bg-white rounded-2xl p-6 shadow-lg mb-6">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl font-black text-slate-900">
-                🚀 Downloading & Uploading Videos
-              </h2>
-              <div className="text-sm font-bold text-slate-600">
-                {youtubeProgress.current} / {youtubeProgress.total} Complete
-              </div>
-            </div>
-
-            {/* Progress Bar */}
-            <div className="w-full bg-slate-200 rounded-full h-3 mb-6">
-              <div
-                className="bg-green-600 h-3 rounded-full transition-all duration-300"
-                style={{ width: `${(youtubeProgress.current / youtubeProgress.total) * 100}%` }}
-              />
-            </div>
-
-            {/* Current Status */}
-            {youtubeProgress.status && (
-              <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                <p className="text-sm font-bold text-blue-900">{youtubeProgress.status}</p>
-              </div>
-            )}
-
-            {/* Video Details */}
-            <div className="space-y-3 max-h-[600px] overflow-y-auto">
-              {youtubeProgress.details.map((video, idx) => (
-                <div
-                  key={idx}
-                  className={`p-4 rounded-lg border-2 ${
-                    video.status === 'done'
-                      ? 'bg-green-50 border-green-300'
-                      : video.status === 'error'
-                      ? 'bg-red-50 border-red-300'
-                      : video.status === 'downloading' || video.status === 'uploading' || video.status === 'saving'
-                      ? 'bg-blue-50 border-blue-300'
-                      : 'bg-slate-50 border-slate-200'
-                  }`}
-                >
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <h3 className="font-bold text-slate-900 mb-2">
-                        {idx + 1}. {video.title}
-                      </h3>
-                      
-                      {video.uploadDate && (
-                        <p className="text-xs text-slate-600 mb-1">
-                          📅 Uploaded: {video.uploadDate}
-                        </p>
-                      )}
-                      
-                      <div className="flex items-center gap-2">
-                        {video.status === 'fetching' && (
-                          <span className="text-sm text-slate-600">⏳ Waiting...</span>
-                        )}
-                        {video.status === 'downloading' && (
-                          <span className="text-sm text-blue-600 font-bold">⬇️ Downloading from YouTube...</span>
-                        )}
-                        {video.status === 'uploading' && (
-                          <span className="text-sm text-blue-600 font-bold">⬆️ Uploading to S3...</span>
-                        )}
-                        {video.status === 'saving' && (
-                          <span className="text-sm text-blue-600 font-bold">💾 Saving to DynamoDB...</span>
-                        )}
-                        {video.status === 'done' && (
-                          <>
-                            <span className="text-sm text-green-600 font-bold">✅ Complete!</span>
-                            {video.size && (
-                              <span className="text-xs text-slate-600">({video.size})</span>
-                            )}
-                          </>
-                        )}
-                        {video.status === 'error' && (
-                          <span className="text-sm text-red-600 font-bold">❌ Failed</span>
-                        )}
-                      </div>
-                      
-                      {video.s3Url && (
-                        <a
-                          href={video.s3Url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-xs text-blue-600 hover:underline mt-1 inline-block"
-                        >
-                          🔗 View in S3
-                        </a>
-                      )}
-                      
-                      {video.error && (
-                        <p className="text-xs text-red-600 mt-1">Error: {video.error}</p>
-                      )}
-                    </div>
-                    
-                    <div className="ml-4">
-                      {video.status === 'done' && (
-                        <div className="text-2xl">✅</div>
-                      )}
-                      {video.status === 'error' && (
-                        <div className="text-2xl">❌</div>
-                      )}
-                      {(video.status === 'downloading' || video.status === 'uploading' || video.status === 'saving') && (
-                        <div className="text-2xl animate-spin">⏳</div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* Done Button */}
-            {youtubeProgress.current === youtubeProgress.total && (
-              <div className="mt-6 flex gap-3">
-                <button
-                  onClick={async () => {
-                    setShowYouTubeProgress(false);
-                    setYoutubeVideos([]);
-                    await refreshAll();
-                  }}
-                  className="flex-1 px-4 py-3 rounded-lg bg-green-600 text-white hover:bg-green-700 font-bold text-sm transition-colors"
-                >
-                  ✅ Done! Refresh Page
-                </button>
-                <button
-                  onClick={() => setShowYouTubeModal(true)}
-                  className="px-4 py-3 rounded-lg bg-blue-600 text-white hover:bg-blue-700 font-bold text-sm transition-colors"
-                >
-                  ➕ Import More Videos
-                </button>
-              </div>
-            )}
-          </div>
-        )}
       </div>
     </div>
   );
-}
-
-// YouTube Import Modal Component
-function YouTubeImportModal({
-  token,
-  onClose,
-  onStartProgress,
-  pushLog,
-  allGroupOptions,
-  busy,
-  setBusy,
-}: {
-  token: string;
-  onClose: () => void;
-  onStartProgress: (videos: any[]) => void;
-  pushLog: (line: string) => void;
-  allGroupOptions: string[];
-  busy: boolean;
-  setBusy: (busy: boolean) => void;
-}) {
-  const [channels, setChannels] = useState<Array<{ url: string; group: string }>>([
-    { url: "", group: "" },
-  ]);
-  const [fetchedVideos, setFetchedVideos] = useState<any[]>([]);
-  const [fetching, setFetching] = useState(false);
-
-  const addChannel = () => {
-    setChannels([...channels, { url: "", group: "" }]);
-  };
-
-  const removeChannel = (index: number) => {
-    setChannels(channels.filter((_, i) => i !== index));
-  };
-
-  const updateChannel = (index: number, field: "url" | "group", value: string) => {
-    const updated = [...channels];
-    updated[index][field] = value;
-    setChannels(updated);
-  };
-
-  const fetchVideos = async () => {
-    const validChannels = channels.filter((ch) => ch.url.trim() && ch.group.trim());
-    
-    if (validChannels.length === 0) {
-      alert("Please enter at least one channel URL with a group selected");
-      return;
-    }
-
-    setFetching(true);
-    setBusy(true);
-    setFetchedVideos([]);
-
-    try {
-      pushLog(`Fetching videos from ${validChannels.length} channel(s)...`);
-
-      const response = await fetch("/api/admin/youtube/fetch-videos", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-admin-token": token,
-        },
-        body: JSON.stringify({ channels: validChannels }),
-      });
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || "Failed to fetch videos");
-      }
-
-      const data = await response.json();
-      setFetchedVideos(data.videos || []);
-      pushLog(`✅ Fetched ${data.videos.length} total videos`);
-    } catch (error: any) {
-      pushLog(`❌ Error: ${error.message}`);
-      alert(`Error: ${error.message}`);
-    } finally {
-      setFetching(false);
-      setBusy(false);
-    }
-  };
-
-  const startDownloading = () => {
-    if (fetchedVideos.length === 0) {
-      alert("No videos to download");
-      return;
-    }
-
-    // Pass videos to parent and close modal
-    onStartProgress(fetchedVideos);
-    
-    // Start the download process
-    downloadVideosWithProgress(fetchedVideos, token, pushLog);
-  };
-
-  return (
-    <div
-      className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
-      onClick={onClose}
-    >
-      <div
-        className="bg-white rounded-2xl p-6 max-w-4xl w-full max-h-[90vh] overflow-y-auto shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex justify-between items-center mb-6">
-          <h2 className="text-xl font-black text-slate-900">
-            📺 Import Latest Videos from YouTube Channel-s
-          </h2>
-          <button
-            onClick={onClose}
-            className="p-2 rounded-lg hover:bg-slate-100 transition-colors"
-            aria-label="Close"
-          >
-            ✕
-          </button>
-        </div>
-
-        <div className="space-y-4 mb-6">
-          <p className="text-sm text-slate-600">
-            Enter YouTube channel URLs and select a group for each. Last 5 videos from each channel will be fetched.
-          </p>
-
-          {channels.map((channel, index) => (
-            <div key={index} className="flex gap-2 items-start">
-              <div className="flex-1">
-                <input
-                  type="text"
-                  value={channel.url}
-                  onChange={(e) => updateChannel(index, "url", e.target.value)}
-                  placeholder="https://www.youtube.com/@ChannelName"
-                  className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                  disabled={fetching}
-                />
-              </div>
-              <div className="w-48">
-                <select
-                  value={channel.group}
-                  onChange={(e) => updateChannel(index, "group", e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                  disabled={fetching}
-                >
-                  <option value="">Select Group</option>
-                  {allGroupOptions.map((group) => (
-                    <option key={group} value={group}>
-                      {group}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              {channels.length > 1 && (
-                <button
-                  onClick={() => removeChannel(index)}
-                  className="p-2 rounded-lg bg-red-100 text-red-700 hover:bg-red-200 transition-colors"
-                  disabled={fetching}
-                >
-                  ✕
-                </button>
-              )}
-            </div>
-          ))}
-
-          <button
-            onClick={addChannel}
-            className="px-4 py-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-sm font-bold transition-colors"
-            disabled={fetching}
-          >
-            ➕ Add Another Channel
-          </button>
-        </div>
-
-        <div className="flex gap-3 mb-6">
-          <button
-            onClick={fetchVideos}
-            disabled={fetching}
-            className="flex-1 px-4 py-3 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed font-bold text-sm transition-colors"
-          >
-            {fetching ? "⏳ Fetching..." : "🔍 Fetch Videos"}
-          </button>
-        </div>
-
-        {fetchedVideos.length > 0 && (
-          <>
-            <div className="mb-4">
-              <h3 className="text-lg font-bold text-slate-900 mb-3">
-                📋 Fetched Videos ({fetchedVideos.length})
-              </h3>
-              <div className="space-y-3 max-h-96 overflow-y-auto">
-                {fetchedVideos.map((video, index) => (
-                  <div
-                    key={index}
-                    className="p-4 border border-slate-200 rounded-lg bg-slate-50"
-                  >
-                    <div className="flex justify-between items-start mb-2">
-                      <div className="flex-1">
-                        <h4 className="font-bold text-sm text-slate-900 mb-1">
-                          {video.title}
-                        </h4>
-                        <div className="text-xs text-slate-600 space-y-1">
-                          <div>📺 Channel: {video.channelTitle}</div>
-                          <div>📅 Uploaded: {video.uploadDate}</div>
-                          <div>👁️ Views: {video.viewCount?.toLocaleString()}</div>
-                          <div>🏷️ Group: {video.group}</div>
-                        </div>
-                      </div>
-                      <a
-                        href={video.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="px-3 py-1 rounded bg-blue-500 text-white text-xs font-bold hover:bg-blue-600 transition-colors"
-                      >
-                        ▶️ Test
-                      </a>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <button
-              onClick={startDownloading}
-              disabled={fetching}
-              className="w-full px-4 py-3 rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed font-bold text-sm transition-colors shadow-lg"
-            >
-              📥 Start Download & Upload Process
-            </button>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// Function to download videos with real-time progress updates
-async function downloadVideosWithProgress(
-  videos: any[],
-  token: string,
-  pushLog: (line: string) => void
-) {
-  for (let i = 0; i < videos.length; i++) {
-    const video = videos[i];
-    
-    try {
-      pushLog(`\n📹 Video ${i + 1}/${videos.length}: ${video.title}`);
-      
-      // Update progress: downloading
-      window.dispatchEvent(new CustomEvent('youtube-progress', {
-        detail: {
-          index: i,
-          status: 'downloading',
-          current: i,
-        }
-      }));
-      
-      pushLog(`   ⬇️ Downloading from YouTube...`);
-      
-      // Update progress: uploading
-      window.dispatchEvent(new CustomEvent('youtube-progress', {
-        detail: {
-          index: i,
-          status: 'uploading',
-        }
-      }));
-      
-      pushLog(`   ⬆️ Uploading to S3...`);
-      
-      // Call API to download and upload this single video
-      const response = await fetch("/api/admin/youtube/download-upload", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-admin-token": token,
-        },
-        body: JSON.stringify({ videos: [video] }),
-      });
-
-      if (!response.ok) {
-        throw new Error("Upload failed");
-      }
-
-      const data = await response.json();
-      const result = data.results[0];
-      
-      if (result.success) {
-        // Update progress: saving
-        window.dispatchEvent(new CustomEvent('youtube-progress', {
-          detail: {
-            index: i,
-            status: 'saving',
-          }
-        }));
-        
-        pushLog(`   💾 Saving to DynamoDB...`);
-        
-        // Update progress: done
-        window.dispatchEvent(new CustomEvent('youtube-progress', {
-          detail: {
-            index: i,
-            status: 'done',
-            s3Url: result.s3Url,
-            size: '45 MB', // TODO: Get actual size
-          }
-        }));
-        
-        pushLog(`   ✅ Complete! S3 URL: ${result.s3Url}`);
-      } else {
-        throw new Error(result.error || "Unknown error");
-      }
-    } catch (error: any) {
-      pushLog(`   ❌ Failed: ${error.message}`);
-      
-      window.dispatchEvent(new CustomEvent('youtube-progress', {
-        detail: {
-          index: i,
-          status: 'error',
-          error: error.message,
-        }
-      }));
-    }
-  }
-  
-  // All done
-  window.dispatchEvent(new CustomEvent('youtube-progress', {
-    detail: {
-      allDone: true,
-    }
-  }));
-  
-  pushLog(`\n🎉 All videos processed!`);
 }

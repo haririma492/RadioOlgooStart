@@ -1,4 +1,3 @@
-﻿// Original: app\api\admin\create-group\route.ts
 // app/api/admin/create-group/route.ts
 // API route to create a new group (registers it with a placeholder item)
 

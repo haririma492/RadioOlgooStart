@@ -1,11 +1,12 @@
-﻿
+
 ================================================================================
 BASIC PROJECT INFO
 ================================================================================
 Root: C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart
 Node:  C:\Program Files\nodejs\node.exe
 npm:   C:\Program Files\nodejs\npm.ps1
-Time:  2026-02-06T22:50:25
+Time:  2026-02-10T19:02:50
+ProjectInspect: C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\ProjectInspect
 
 ================================================================================
 KEY FILES (existence + location)
@@ -28,12 +29,15 @@ TREE: app (depth 6)
 ================================================================================
 TREE: C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\app (depth=6)
 [D] admin
+[F] admin-extract-into-app.zip
   [F] admin\page.tsx
   [D] admin\slides
-    [F] admin\slides\route.ts
-[F] admin-extract-into-app.zip
+[D] admin2
+  [F] admin2\page.tsx
 [D] api
   [D] api\admin
+    [D] api\admin\content
+      [F] api\admin\content\route.ts
     [D] api\admin\create-group
       [F] api\admin\create-group\route.ts
     [D] api\admin\envcheck
@@ -42,6 +46,8 @@ TREE: C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOl
       [F] api\admin\groups\route.ts
     [D] api\admin\import-url
       [F] api\admin\import-url\route.ts
+    [D] api\admin\list-all
+      [F] api\admin\list-all\route.ts
     [D] api\admin\migrate-old
       [F] api\admin\migrate-old\route.ts
     [D] api\admin\presign
@@ -50,6 +56,8 @@ TREE: C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOl
       [F] api\admin\slides\route.ts
     [D] api\admin\validate
       [F] api\admin\validate\route.ts
+  [D] api\media
+    [F] api\media\route.ts
   [D] api\photos
     [F] api\photos\route.ts
   [D] api\slides
@@ -65,25 +73,25 @@ TREE: src\app (depth 6)
 NOT FOUND: C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\src\app
 
 ================================================================================
-ALL ROUTE HANDLERS (route.ts/route.js) and PAGES API
+ALL ROUTE HANDLERS (route.ts/route.js/route.tsx/route.jsx) and PAGES API
 ================================================================================
-C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\.next\server\app\api\admin\create-group\route.js
-C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\.next\server\app\api\admin\presign\route.js
 C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\.next\server\app\api\admin\slides\route.js
 C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\.next\server\app\api\admin\validate\route.js
-C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\.next\types\app\api\admin\create-group\route.ts
-C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\.next\types\app\api\admin\presign\route.ts
+C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\.next\server\app\api\media\route.js
 C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\.next\types\app\api\admin\slides\route.ts
 C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\.next\types\app\api\admin\validate\route.ts
-C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\app\admin\slides\route.ts
+C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\.next\types\app\api\media\route.ts
+C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\app\api\admin\content\route.ts
 C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\app\api\admin\create-group\route.ts
 C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\app\api\admin\envcheck\route.ts
 C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\app\api\admin\groups\route.ts
 C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\app\api\admin\import-url\route.ts
+C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\app\api\admin\list-all\route.ts
 C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\app\api\admin\migrate-old\route.ts
 C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\app\api\admin\presign\route.ts
 C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\app\api\admin\slides\route.ts
 C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\app\api\admin\validate\route.ts
+C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\app\api\media\route.ts
 C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\app\api\photos\route.ts
 C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\app\api\slides\route.ts
 
@@ -93,6 +101,48 @@ DUPLICATE app vs src\app CHECK (same relative files)
 Either app/ or src/app does not exist; no duplicate comparison done.
 
 ================================================================================
+FLAT COPY (IDEMPOTENT): ALL .ts/.tsx INTO ProjectInspect (flat)
+================================================================================
+Found 35 TypeScript files (.ts/.tsx).
+COPIED: components\AudioHub\AudioCategoryBar.tsx  ->  ProjectInspect\AudioCategoryBar.tsx
+COPIED: components\AudioHub\AudioHub.tsx  ->  ProjectInspect\AudioHub.tsx
+COPIED: components\AudioHub\AudioRow.tsx  ->  ProjectInspect\AudioRow.tsx
+COPIED: components\BreakingNews\BreakingNewsBanner.tsx  ->  ProjectInspect\BreakingNewsBanner.tsx
+COPIED: components\FloatingVideoPlayer\FloatingVideoPlayer.tsx  ->  ProjectInspect\FloatingVideoPlayer.tsx
+COPIED: components\Footer\Footer.tsx  ->  ProjectInspect\Footer.tsx
+COPIED: components\Header\Header.tsx  ->  ProjectInspect\Header.tsx
+COPIED: app\layout.tsx  ->  ProjectInspect\layout.tsx
+COPIED: components\LiveChannels\LiveChannels.tsx  ->  ProjectInspect\LiveChannels.tsx
+COPIED: next-env.d.ts  ->  ProjectInspect\next-env.d.ts
+COPIED: app\admin\page.tsx  ->  ProjectInspect\page__ebbd1baf.tsx
+COPIED: app\admin2\page.tsx  ->  ProjectInspect\page__6d05c752.tsx
+COPIED: app\page.tsx  ->  ProjectInspect\page__55a0ae4f.tsx
+COPIED: components\VideoHub\PersonProfileModal.tsx  ->  ProjectInspect\PersonProfileModal.tsx
+COPIED: components\RadioWall.tsx  ->  ProjectInspect\RadioWall.tsx
+COPIED: app\api\admin\content\route.ts  ->  ProjectInspect\route__63f12f9d.ts
+COPIED: app\api\admin\create-group\route.ts  ->  ProjectInspect\route__866df6fd.ts
+COPIED: app\api\admin\envcheck\route.ts  ->  ProjectInspect\route__9c638e00.ts
+COPIED: app\api\admin\groups\route.ts  ->  ProjectInspect\route__ac2586e2.ts
+COPIED: app\api\admin\import-url\route.ts  ->  ProjectInspect\route__885c8031.ts
+COPIED: app\api\admin\list-all\route.ts  ->  ProjectInspect\route__f122ed7d.ts
+COPIED: app\api\admin\migrate-old\route.ts  ->  ProjectInspect\route__3e686616.ts
+COPIED: app\api\admin\presign\route.ts  ->  ProjectInspect\route__c390dcf7.ts
+COPIED: app\api\admin\slides\route.ts  ->  ProjectInspect\route__3b084f58.ts
+COPIED: app\api\admin\validate\route.ts  ->  ProjectInspect\route__ee53eed6.ts
+COPIED: app\api\media\route.ts  ->  ProjectInspect\route__80c2bd64.ts
+COPIED: app\api\photos\route.ts  ->  ProjectInspect\route__06efaee0.ts
+COPIED: app\api\slides\route.ts  ->  ProjectInspect\route__3069a2bd.ts
+COPIED: components\Forms\SocialLinksForm.tsx  ->  ProjectInspect\SocialLinksForm.tsx
+COPIED: lib\timeUtils.ts  ->  ProjectInspect\timeUtils.ts
+COPIED: components\VideoHub\VideoCategoryBar.tsx  ->  ProjectInspect\VideoCategoryBar.tsx
+COPIED: components\VideoHub\VideoHub.tsx  ->  ProjectInspect\VideoHub.tsx
+COPIED: components\VideoModal\VideoModal.tsx  ->  ProjectInspect\VideoModal.tsx
+COPIED: components\VideoHub\VideoRow.tsx  ->  ProjectInspect\VideoRow.tsx
+COPIED: components\Forms\VideoSubmissionForm.tsx  ->  ProjectInspect\VideoSubmissionForm.tsx
+
+Summary: copied=35, skipped=0
+
+================================================================================
 DONE
 ================================================================================
-Wrote: C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\project-inspect.txt
+Wrote: C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\ProjectInspect\project-inspect.txt

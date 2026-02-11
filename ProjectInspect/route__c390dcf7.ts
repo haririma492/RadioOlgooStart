@@ -1,4 +1,3 @@
-﻿// Original: app\api\admin\presign\route.ts
 // app/api/admin/presign/route.ts
 //
 // GENERIC S3 PATHS: media/<timestamp>-<filename>
@@ -129,7 +128,7 @@ export async function GET(req: Request) {
         status: 200,
         headers: {
           "Content-Type": "application/json",
-          "Access-Control-Allow-Origin": "*", // â† Change to your domain later
+          "Access-Control-Allow-Origin": "*", // ← Change to your domain later
           "Access-Control-Allow-Methods": "GET, OPTIONS",
           "Access-Control-Allow-Headers": "Content-Type, x-admin-token",
         },

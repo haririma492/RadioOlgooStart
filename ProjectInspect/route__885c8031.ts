@@ -1,8 +1,7 @@
-﻿// Original: app\api\admin\import-url\route.ts
 // app/api/admin/import-url/route.ts
 //
 // Import video from URL (X/Twitter, YouTube, etc.) using yt-dlp.
-// Server-side: yt-dlp downloads â†’ S3 upload â†’ DynamoDB register.
+// Server-side: yt-dlp downloads → S3 upload → DynamoDB register.
 //
 // REQUIRES: yt-dlp installed on the server (pip install yt-dlp)
 //
@@ -22,7 +21,7 @@ export const dynamic = "force-dynamic";
 // Allow up to 5 minutes for large video downloads
 export const maxDuration = 300;
 
-// â”€â”€ Clients â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Clients ────────────────────────────────────────────────────────────
 const region = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || "ca-central-1";
 const bucket = (process.env.S3_BUCKET_NAME || "").trim();
 
@@ -128,7 +127,7 @@ export async function POST(req: Request) {
     return jsonErr("Invalid URL format", 400);
   }
 
-  // â”€â”€ 1. Download with yt-dlp â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── 1. Download with yt-dlp ──────────────────────────────────────────
   const workDir = join(tmpdir(), `import-${Date.now()}-${randomUUID().slice(0, 8)}`);
   mkdirSync(workDir, { recursive: true });
 
@@ -176,7 +175,7 @@ export async function POST(req: Request) {
     return jsonErr(`Download failed: ${msg.slice(0, 500)}`, 500);
   }
 
-  // â”€â”€ 2. Upload to S3 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── 2. Upload to S3 ─────────────────────────────────────────────────
   let s3PublicUrl: string;
   try {
     const fileBuffer = readFileSync(downloadedFile);
@@ -200,7 +199,7 @@ export async function POST(req: Request) {
     return jsonErr(`S3 upload failed: ${e?.message}`, 500);
   }
 
-  // â”€â”€ 3. Register in DynamoDB â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── 3. Register in DynamoDB ──────────────────────────────────────────
   let PK: string;
   try {
     PK = generatePK();
@@ -227,7 +226,7 @@ export async function POST(req: Request) {
     return jsonErr(`DynamoDB failed: ${e?.message}`, 500);
   }
 
-  // â”€â”€ 4. Cleanup â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── 4. Cleanup ───────────────────────────────────────────────────────
   cleanup(workDir);
 
   return jsonOk({

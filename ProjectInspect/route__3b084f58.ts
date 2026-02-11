@@ -1,9 +1,7 @@
-﻿// Original: app\api\admin\slides\route.ts
-// Original: app\api\admin\slides\route.ts
 // app/api/admin/slides/route.ts
 //
-// GENERIC PK SYSTEM: PK = MEDIA#<timestamp>#<random14>
-// Section/group are just attributes â€” items can move freely between them.
+// ADMIN API: Manage media items (requires authentication)
+// Supports both MEDIA# and VIDEOARCHIVE# PK formats
 //
 import { NextResponse } from "next/server";
 import { randomUUID } from "crypto";
@@ -20,9 +18,6 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-// Sections are fully dynamic â€” no hardcoded validation list.
-// Any non-empty string is accepted as a valid section name.
 
 function requireAdmin(req: Request) {
   const incoming = (req.headers.get("x-admin-token") || "").trim();
@@ -45,7 +40,6 @@ function jsonErr(error: string, status = 400, detail?: any) {
   return jsonOk({ error, ...(detail ? { detail: String(detail) } : {}) }, status);
 }
 
-// â”€â”€ DynamoDB â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const ddb = DynamoDBDocumentClient.from(
   new DynamoDBClient({
     region: process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || "ca-central-1",
@@ -76,16 +70,12 @@ function tableName() {
   return v;
 }
 
-// â”€â”€ Generic PK generator â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// Format: MEDIA#<timestamp>#<random14>
-// Example: MEDIA#1738704123456#a1b2c3d4e5f6ab
 function generatePK(): string {
   const ts = Date.now();
   const rand = randomUUID().replace(/-/g, "").slice(0, 14);
   return `MEDIA#${ts}#${rand}`;
 }
 
-// â”€â”€ Helper: presign S3 URLs in items â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 async function presignItems(items: any[]): Promise<any[]> {
   if (!bucket) return items;
 
@@ -98,7 +88,7 @@ async function presignItems(items: any[]): Promise<any[]> {
         urlStr = await getSignedUrl(
           s3,
           new GetObjectCommand({ Bucket: bucket, Key: key }),
-          { expiresIn: 60 * 60 } // 1 hour
+          { expiresIn: 60 * 60 }
         );
       }
 
@@ -109,9 +99,6 @@ async function presignItems(items: any[]): Promise<any[]> {
 
 /**
  * GET - List items
- * Query params:
- *   - section: (optional) filter by section
- *   - group: (optional) filter by group
  */
 export async function GET(req: Request) {
   const auth = requireAdmin(req);
@@ -124,28 +111,28 @@ export async function GET(req: Request) {
     const groupFilter = url.searchParams.get("group");
 
     const result = await ddb.send(new ScanCommand({ TableName }));
-    let items = (result.Items || []).filter(
-      (item) => item.PK && String(item.PK).startsWith("MEDIA#")
-    );
+    
+    // ✅ Accept both MEDIA# and VIDEOARCHIVE# formats
+    let items = (result.Items || []).filter((item) => {
+      if (!item.PK) return false;
+      const pk = String(item.PK);
+      return pk.startsWith("MEDIA#") || pk.startsWith("VIDEOARCHIVE#");
+    });
 
-    // Filter by section
     if (sectionFilter) {
       items = items.filter((item) => item.section === sectionFilter);
     }
 
-    // Filter by group
     if (groupFilter) {
       items = items.filter((item) => item.group === groupFilter);
     }
 
-    // Sort by createdAt descending
     items.sort((a, b) => {
       const da = a.createdAt || "";
       const db = b.createdAt || "";
       return db.localeCompare(da);
     });
 
-    // Presign S3 URLs
     items = await presignItems(items);
 
     return jsonOk({
@@ -173,9 +160,7 @@ export async function POST(req: Request) {
     if (!body) return jsonErr("Bad JSON body", 400);
 
     const section = String(body.section || "").trim();
-    if (!section) {
-      return jsonErr("Missing section", 400);
-    }
+    if (!section) return jsonErr("Missing section", 400);
 
     const url = String(body.url || "").trim();
     if (!url) return jsonErr("Missing url", 400);
@@ -183,7 +168,6 @@ export async function POST(req: Request) {
     const title = String(body.title || "").trim();
     if (!title) return jsonErr("Missing title", 400);
 
-    // Generate generic PK â€” not tied to any section
     const PK = generatePK();
 
     const item: any = {
@@ -195,7 +179,6 @@ export async function POST(req: Request) {
       updatedAt: new Date().toISOString(),
     };
 
-    // Optional fields
     if (body.group) item.group = String(body.group).trim();
     if (body.person) item.person = String(body.person).trim();
     if (body.date) item.date = String(body.date).trim();
@@ -211,8 +194,7 @@ export async function POST(req: Request) {
 }
 
 /**
- * PATCH - Update item (title, description, section, group, etc.)
- * Now supports moving items between sections and groups!
+ * PATCH - Update item
  */
 export async function PATCH(req: Request) {
   const auth = requireAdmin(req);
@@ -226,7 +208,6 @@ export async function PATCH(req: Request) {
     const PK = String(body.PK || "").trim();
     if (!PK) return jsonErr("Missing PK", 400);
 
-    // Build update expression dynamically
     const updates: string[] = ["updatedAt = :upd"];
     const values: any = { ":upd": new Date().toISOString() };
     const names: Record<string, string> = {};
@@ -252,19 +233,13 @@ export async function PATCH(req: Request) {
       updates.push("active = :active");
       values[":active"] = Boolean(body.active);
     }
-
-    // â”€â”€ NEW: Allow moving between sections â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if (body.section !== undefined) {
       const newSection = String(body.section).trim();
-      if (!newSection) {
-        return jsonErr("Section cannot be empty", 400);
-      }
+      if (!newSection) return jsonErr("Section cannot be empty", 400);
       updates.push("#sec = :section");
       values[":section"] = newSection;
       names["#sec"] = "section";
     }
-
-    // â”€â”€ NEW: Allow moving between groups â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if (body.group !== undefined) {
       updates.push("#grp = :group");
       values[":group"] = String(body.group).trim();
@@ -272,8 +247,7 @@ export async function PATCH(req: Request) {
     }
 
     const updateExpression = `SET ${updates.join(", ")}`;
-    const expressionAttributeNames =
-      Object.keys(names).length > 0 ? names : undefined;
+    const expressionAttributeNames = Object.keys(names).length > 0 ? names : undefined;
 
     await ddb.send(
       new UpdateCommand({

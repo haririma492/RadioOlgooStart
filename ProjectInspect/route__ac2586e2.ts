@@ -1,4 +1,3 @@
-﻿// Original: app\api\admin\groups\route.ts
 // app/api/admin/groups/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import {
@@ -12,7 +11,7 @@ import {
   ScanCommand,
 } from "@aws-sdk/lib-dynamodb";
 
-// âœ… Force dynamic (prevents Next from caching at the route level)
+// ✅ Force dynamic (prevents Next from caching at the route level)
 export const dynamic = "force-dynamic";
 
 const REGION = process.env.AWS_REGION || "ca-central-1";
@@ -60,7 +59,7 @@ function requireAdmin(req: NextRequest): NextResponse | null {
  * - type: "group"
  * - createdAt: ISO string
  *
- * If your table is different, tell me your PK/SK pattern and Iâ€™ll adapt it.
+ * If your table is different, tell me your PK/SK pattern and I’ll adapt it.
  */
 function makeKeys(section: string, group: string) {
   const sec = section.trim();
@@ -87,14 +86,14 @@ export async function GET(req: NextRequest) {
     return noStoreJson({ ok: false, error: "Missing ?section=" }, 400);
   }
 
-  // âœ… Always return ALL items (no Limit=6 bug), with pagination loop.
+  // ✅ Always return ALL items (no Limit=6 bug), with pagination loop.
   const items: any[] = [];
   let lastKey: any | undefined = undefined;
 
   // Strategy:
   // 1) If you have a GSI for section, use it (faster in large tables).
   // 2) Otherwise query the pk = GROUP#<section> (best).
-  // 3) If your table doesnâ€™t have those keys, fallback to Scan with filter (slow).
+  // 3) If your table doesn’t have those keys, fallback to Scan with filter (slow).
   try {
     // Best case: query by PK pattern shown above
     do {
@@ -196,7 +195,7 @@ export async function POST(req: NextRequest) {
   };
 
   try {
-    // âœ… Prevent duplicates (same pk+sk)
+    // ✅ Prevent duplicates (same pk+sk)
     await ddb.send(
       new PutCommand({
         TableName: TABLE,

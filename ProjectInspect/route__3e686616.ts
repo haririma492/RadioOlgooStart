@@ -1,4 +1,3 @@
-﻿// Original: app\api\admin\migrate-old\route.ts
 // app/api/admin/migrate-old/route.ts
 import { NextResponse } from "next/server";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";

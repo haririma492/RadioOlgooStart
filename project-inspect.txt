@@ -5,7 +5,7 @@ BASIC PROJECT INFO
 Root: C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart
 Node:  C:\Program Files\nodejs\node.exe
 npm:   C:\Program Files\nodejs\npm.ps1
-Time:  2026-02-06T22:50:25
+Time:  2026-02-10T18:35:31
 
 ================================================================================
 KEY FILES (existence + location)
@@ -30,10 +30,13 @@ TREE: C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOl
 [D] admin
   [F] admin\page.tsx
   [D] admin\slides
-    [F] admin\slides\route.ts
+[D] admin2
+  [F] admin2\page.tsx
 [F] admin-extract-into-app.zip
 [D] api
   [D] api\admin
+    [D] api\admin\content
+      [F] api\admin\content\route.ts
     [D] api\admin\create-group
       [F] api\admin\create-group\route.ts
     [D] api\admin\envcheck
@@ -42,6 +45,8 @@ TREE: C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOl
       [F] api\admin\groups\route.ts
     [D] api\admin\import-url
       [F] api\admin\import-url\route.ts
+    [D] api\admin\list-all
+      [F] api\admin\list-all\route.ts
     [D] api\admin\migrate-old
       [F] api\admin\migrate-old\route.ts
     [D] api\admin\presign
@@ -50,6 +55,8 @@ TREE: C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOl
       [F] api\admin\slides\route.ts
     [D] api\admin\validate
       [F] api\admin\validate\route.ts
+  [D] api\media
+    [F] api\media\route.ts
   [D] api\photos
     [F] api\photos\route.ts
   [D] api\slides
@@ -67,23 +74,128 @@ NOT FOUND: C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\Ra
 ================================================================================
 ALL ROUTE HANDLERS (route.ts/route.js) and PAGES API
 ================================================================================
-C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\.next\server\app\api\admin\create-group\route.js
-C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\.next\server\app\api\admin\presign\route.js
 C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\.next\server\app\api\admin\slides\route.js
 C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\.next\server\app\api\admin\validate\route.js
-C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\.next\types\app\api\admin\create-group\route.ts
-C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\.next\types\app\api\admin\presign\route.ts
+C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\.next\server\app\api\media\route.js
 C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\.next\types\app\api\admin\slides\route.ts
 C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\.next\types\app\api\admin\validate\route.ts
-C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\app\admin\slides\route.ts
+C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\.next\types\app\api\media\route.ts
+C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\app\api\admin\content\route.ts
 C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\app\api\admin\create-group\route.ts
 C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\app\api\admin\envcheck\route.ts
 C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\app\api\admin\groups\route.ts
 C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\app\api\admin\import-url\route.ts
+C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\app\api\admin\list-all\route.ts
 C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\app\api\admin\migrate-old\route.ts
 C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\app\api\admin\presign\route.ts
 C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\app\api\admin\slides\route.ts
 C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\app\api\admin\validate\route.ts
+C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\app\api\media\route.ts
+C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\app\api\photos\route.ts
+C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\app\api\slides\route.ts
+
+================================================================================
+DUPLICATE app vs src\app CHECK (same relative files)
+================================================================================
+Either app/ or src/app does not exist; no duplicate comparison done.
+
+================================================================================
+DONE
+================================================================================
+Wrote: C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\project-inspect.txt
+
+================================================================================
+BASIC PROJECT INFO
+================================================================================
+Root: C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart
+Node:  C:\Program Files\nodejs\node.exe
+npm:   C:\Program Files\nodejs\npm.ps1
+Time:  2026-02-10T18:59:30
+
+================================================================================
+KEY FILES (existence + location)
+================================================================================
+FOUND: package.json
+FOUND: next.config.js
+MISSING: next.config.mjs
+FOUND: tsconfig.json
+FOUND: app\layout.tsx
+FOUND: app\page.tsx
+MISSING: src\app\layout.tsx
+MISSING: src\app\page.tsx
+FOUND: app\api\slides\route.ts
+MISSING: src\app\api\slides\route.ts
+FOUND: app\api\admin\presign\route.ts
+MISSING: src\app\api\admin\presign\route.ts
+
+================================================================================
+TREE: app (depth 6)
+================================================================================
+TREE: C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\app (depth=6)
+[D] admin
+[F] admin-extract-into-app.zip
+  [F] admin\page.tsx
+  [D] admin\slides
+[D] admin2
+  [F] admin2\page.tsx
+[D] api
+  [D] api\admin
+    [D] api\admin\content
+      [F] api\admin\content\route.ts
+    [D] api\admin\create-group
+      [F] api\admin\create-group\route.ts
+    [D] api\admin\envcheck
+      [F] api\admin\envcheck\route.ts
+    [D] api\admin\groups
+      [F] api\admin\groups\route.ts
+    [D] api\admin\import-url
+      [F] api\admin\import-url\route.ts
+    [D] api\admin\list-all
+      [F] api\admin\list-all\route.ts
+    [D] api\admin\migrate-old
+      [F] api\admin\migrate-old\route.ts
+    [D] api\admin\presign
+      [F] api\admin\presign\route.ts
+    [D] api\admin\slides
+      [F] api\admin\slides\route.ts
+    [D] api\admin\validate
+      [F] api\admin\validate\route.ts
+  [D] api\media
+    [F] api\media\route.ts
+  [D] api\photos
+    [F] api\photos\route.ts
+  [D] api\slides
+    [F] api\slides\route.ts
+[F] globals.css
+[F] layout.tsx
+[F] page.tsx
+[F] README.txt
+
+================================================================================
+TREE: src\app (depth 6)
+================================================================================
+NOT FOUND: C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\src\app
+
+================================================================================
+ALL ROUTE HANDLERS (route.ts/route.js) and PAGES API
+================================================================================
+C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\.next\server\app\api\admin\slides\route.js
+C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\.next\server\app\api\admin\validate\route.js
+C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\.next\server\app\api\media\route.js
+C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\.next\types\app\api\admin\slides\route.ts
+C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\.next\types\app\api\admin\validate\route.ts
+C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\.next\types\app\api\media\route.ts
+C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\app\api\admin\content\route.ts
+C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\app\api\admin\create-group\route.ts
+C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\app\api\admin\envcheck\route.ts
+C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\app\api\admin\groups\route.ts
+C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\app\api\admin\import-url\route.ts
+C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\app\api\admin\list-all\route.ts
+C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\app\api\admin\migrate-old\route.ts
+C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\app\api\admin\presign\route.ts
+C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\app\api\admin\slides\route.ts
+C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\app\api\admin\validate\route.ts
+C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\app\api\media\route.ts
 C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\app\api\photos\route.ts
 C:\Users\MasoudHariri\OneDrive - olgoo.com\Olgoo1 - Documents\Code\RadioOlgooStart\app\api\slides\route.ts
 
