@@ -248,39 +248,33 @@ export default function Admin2Page() {
   // Login form
   if (!authenticated) {
     return (
-      <div style={{ padding: "40px", maxWidth: "400px", margin: "0 auto" }}>
-        <h1>Admin Login</h1>
+      <div className="min-h-screen bg-slate-100 text-slate-900" style={{ padding: "40px", maxWidth: "400px", margin: "0 auto" }}>
+        <h1 className="text-2xl font-bold text-slate-900">Admin Login</h1>
         <form onSubmit={handleLogin}>
           <div style={{ marginBottom: "16px" }}>
-            <label style={{ display: "block", marginBottom: "8px" }}>
+            <label className="block text-slate-700 mb-2 font-medium">
               Admin Token:
             </label>
             <input
               type="password"
               value={token}
               onChange={(e) => setToken(e.target.value)}
-              style={{
-                width: "100%",
-                padding: "8px",
-                fontSize: "14px",
-                border: "1px solid #ccc",
-                borderRadius: "4px",
-              }}
+              className="w-full px-3 py-2 text-slate-900 bg-white border border-slate-300 rounded"
               required
             />
           </div>
           <button type="submit" style={buttonStyle}>
             Login
           </button>
-          {error && <div style={{ color: "red", marginTop: "16px" }}>{error}</div>}
+          {error && <div className="text-red-600 mt-4">{error}</div>}
         </form>
       </div>
     );
   }
 
-  // Main view with tabs
+  // Main view with tabs — use light bg and dark text so content is visible (body has color:white globally)
   return (
-    <div style={{ padding: "20px" }}>
+    <div className="min-h-screen bg-slate-100 text-slate-900" style={{ padding: "20px" }}>
       {/* Tabs */}
       <div style={{ borderBottom: "2px solid #ddd", marginBottom: "20px" }}>
         <button
@@ -288,7 +282,7 @@ export default function Admin2Page() {
           style={{
             ...tabButtonStyle,
             borderBottom: activeTab === "media" ? "3px solid #0070f3" : "none",
-            color: activeTab === "media" ? "#0070f3" : "#666",
+            color: activeTab === "media" ? "#0070f3" : "#374151",
           }}
         >
           Media Items ({mediaItems.length})
@@ -298,7 +292,7 @@ export default function Admin2Page() {
           style={{
             ...tabButtonStyle,
             borderBottom: activeTab === "content" ? "3px solid #0070f3" : "none",
-            color: activeTab === "content" ? "#0070f3" : "#666",
+            color: activeTab === "content" ? "#0070f3" : "#374151",
           }}
         >
           Website Content ({contentItems.length})
@@ -378,9 +372,9 @@ function MediaTable({
   });
 
   return (
-    <div>
+    <div className="text-slate-900">
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "20px" }}>
-        <h2>Media Items</h2>
+        <h2 className="text-xl font-bold text-slate-900">Media Items</h2>
         <div style={{ display: "flex", gap: "10px" }}>
           {selectedPKs.size > 0 && (
             <button onClick={onDelete} disabled={deleting} style={{ ...buttonStyle, background: "#dc2626" }}>
@@ -482,9 +476,9 @@ function ContentTable({
   });
 
   return (
-    <div>
+    <div className="text-slate-900">
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "20px" }}>
-        <h2>Website Content</h2>
+        <h2 className="text-xl font-bold text-slate-900">Website Content</h2>
         <div style={{ display: "flex", gap: "10px" }}>
           <button onClick={onShowAddForm} style={{ ...buttonStyle, background: "#16a34a" }}>
             + Add New
@@ -509,7 +503,7 @@ function ContentTable({
       )}
 
       {loading ? (
-        <div>Loading...</div>
+        <div className="text-slate-700">Loading...</div>
       ) : (
         <ResizableTable
           columns={[
@@ -625,22 +619,22 @@ function ContentEditor({ item, onSave, onCancel }: { item: ContentItem | null; o
   return (
     <div style={modalOverlayStyle}>
       <div style={modalStyle}>
-        <h3>{ item ? "Edit Content" : "Add New Content"}</h3>
-        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+        <h3 className="text-lg font-bold text-slate-900">{item ? "Edit Content" : "Add New Content"}</h3>
+        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "12px" }} className="text-slate-900">
           <div>
-            <label>PK (e.g., HEADER#1, SECTION#1, GROUP#1#1, FOOTER#1):</label>
+            <label className="block text-slate-700 font-medium mb-1">PK (e.g., HEADER#1, SECTION#1, GROUP#1#1, FOOTER#1):</label>
             <input
               type="text"
               value={formData.PK}
               onChange={(e) => setFormData({ ...formData, PK: e.target.value })}
-              style={inputStyle}
+              style={{ ...inputStyle, color: "#0f172a", background: "#fff" }}
               required
               disabled={!!item}
             />
           </div>
 
           <div>
-            <label>Type:</label>
+            <label className="block text-slate-700 font-medium mb-1">Type:</label>
             <select
               value={formData.type}
               onChange={(e) => setFormData({ ...formData, type: e.target.value })}
@@ -655,7 +649,7 @@ function ContentEditor({ item, onSave, onCancel }: { item: ContentItem | null; o
           </div>
 
           <div>
-            <label>Text:</label>
+            <label className="block text-slate-700 font-medium mb-1">Text:</label>
             <textarea
               value={formData.text}
               onChange={(e) => setFormData({ ...formData, text: e.target.value })}
@@ -666,7 +660,7 @@ function ContentEditor({ item, onSave, onCancel }: { item: ContentItem | null; o
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
             <div>
-              <label>Font Family:</label>
+              <label className="block text-slate-700 font-medium mb-1">Font Family:</label>
               <input
                 type="text"
                 value={formData.fontFamily}
@@ -676,7 +670,7 @@ function ContentEditor({ item, onSave, onCancel }: { item: ContentItem | null; o
             </div>
 
             <div>
-              <label>Font Size:</label>
+              <label className="block text-slate-700 font-medium mb-1">Font Size:</label>
               <input
                 type="text"
                 value={formData.fontSize}
@@ -686,7 +680,7 @@ function ContentEditor({ item, onSave, onCancel }: { item: ContentItem | null; o
             </div>
 
             <div>
-              <label>Font Weight:</label>
+              <label className="block text-slate-700 font-medium mb-1">Font Weight:</label>
               <select
                 value={formData.fontWeight}
                 onChange={(e) => setFormData({ ...formData, fontWeight: e.target.value })}
@@ -700,7 +694,7 @@ function ContentEditor({ item, onSave, onCancel }: { item: ContentItem | null; o
             </div>
 
             <div>
-              <label>Text Color:</label>
+              <label className="block text-slate-700 font-medium mb-1">Text Color:</label>
               <input
                 type="color"
                 value={formData.color}
@@ -710,7 +704,7 @@ function ContentEditor({ item, onSave, onCancel }: { item: ContentItem | null; o
             </div>
 
             <div>
-              <label>Text Align:</label>
+              <label className="block text-slate-700 font-medium mb-1">Text Align:</label>
               <select
                 value={formData.textAlign}
                 onChange={(e) => setFormData({ ...formData, textAlign: e.target.value })}
@@ -723,7 +717,7 @@ function ContentEditor({ item, onSave, onCancel }: { item: ContentItem | null; o
             </div>
 
             <div>
-              <label>Background Color:</label>
+              <label className="block text-slate-700 font-medium mb-1">Background Color:</label>
               <input
                 type="color"
                 value={formData.backgroundColor === "transparent" ? "#ffffff" : formData.backgroundColor}
@@ -734,7 +728,7 @@ function ContentEditor({ item, onSave, onCancel }: { item: ContentItem | null; o
           </div>
 
           <div>
-            <label>
+            <label className="text-slate-700">
               <input
                 type="checkbox"
                 checked={formData.active}
@@ -804,21 +798,10 @@ function ResizableTable({
   }, [resizing, onColumnResize]);
 
   return (
-    <div style={{ 
-      overflowX: "auto",
-      overflowY: "visible",
-      border: "1px solid #ddd",
-      borderRadius: "4px",
-      maxWidth: "100%",
-    }}>
-      <table style={{ 
-        borderCollapse: "collapse", 
-        fontSize: "13px",
-        minWidth: "100%",
-        width: "max-content",
-      }}>
+    <div className="text-slate-900" style={{ overflowX: "auto" }}>
+      <table style={{ borderCollapse: "collapse", fontSize: "13px", color: "#111827" }}>
         <thead>
-          <tr style={{ background: "#f5f5f5" }}>
+          <tr style={{ background: "#f1f5f9" }}>
             {columns.map((col: any) => (
               <th
                 key={col.key}
@@ -828,6 +811,7 @@ function ResizableTable({
                   minWidth: col.width,
                   maxWidth: col.width,
                   position: "relative",
+                  color: "#0f172a",
                 }}
               >
                 {col.key === "checkbox" ? (
@@ -861,8 +845,9 @@ function ResizableTable({
             <tr
               key={item.PK || idx}
               style={{
-                borderBottom: "1px solid #ddd",
-                background: selectedPKs.has(item.PK) ? "#e0f2fe" : idx % 2 === 0 ? "white" : "#fafafa",
+                borderBottom: "1px solid #e2e8f0",
+                background: selectedPKs.has(item.PK) ? "#e0f2fe" : idx % 2 === 0 ? "#ffffff" : "#f8fafc",
+                color: "#0f172a",
               }}
             >
               {columns.map((col: any) => (
@@ -873,6 +858,7 @@ function ResizableTable({
                     width: col.width,
                     minWidth: col.width,
                     maxWidth: col.width,
+                    color: "#0f172a",
                   }}
                 >
                   {renderCell(item, col)}
@@ -884,7 +870,7 @@ function ResizableTable({
       </table>
 
       {data.length === 0 && (
-        <div style={{ padding: "40px", textAlign: "center", color: "#999" }}>
+        <div style={{ padding: "40px", textAlign: "center", color: "#64748b" }} className="text-slate-600">
           No items found
         </div>
       )}
@@ -916,14 +902,13 @@ const tabButtonStyle: React.CSSProperties = {
 
 const thStyle: React.CSSProperties = {
   padding: "12px 8px",
-  borderBottom: "2px solid #ddd",
+  borderBottom: "2px solid #e2e8f0",
   fontWeight: "600",
   textAlign: "left",
   position: "sticky",
   top: 0,
-  background: "#f5f5f5",
-  color: "#000", // FIX: Explicit black text
-  zIndex: 10,
+  background: "#f1f5f9",
+  color: "#0f172a",
 };
 
 const tdStyle: React.CSSProperties = {
@@ -931,7 +916,7 @@ const tdStyle: React.CSSProperties = {
   overflow: "hidden",
   textOverflow: "ellipsis",
   whiteSpace: "nowrap",
-  color: "#000", // FIX: Explicit black text
+  color: "#0f172a",
 };
 
 const modalOverlayStyle: React.CSSProperties = {
@@ -955,15 +940,17 @@ const modalStyle: React.CSSProperties = {
   width: "90%",
   maxHeight: "90vh",
   overflow: "auto",
+  color: "#0f172a",
 };
 
 const inputStyle: React.CSSProperties = {
   width: "100%",
   padding: "8px",
-  border: "1px solid #ccc",
+  border: "1px solid #cbd5e1",
   borderRadius: "4px",
   fontSize: "14px",
-  color: "#000",
+  color: "#0f172a",
+  background: "#ffffff",
 };
 
 // Helpers
