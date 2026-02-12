@@ -1,5 +1,6 @@
 // app/api/admin/youtube/download-upload/route.ts
 // Use yt-dlp via command line - same as Python version!
+export const runtime = "nodejs";
 import { NextRequest, NextResponse } from "next/server";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
