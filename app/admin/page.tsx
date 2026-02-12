@@ -20,9 +20,7 @@ type MediaItem = {
   createdAt?: string;
 };
 
-type ItemsGetResponse =
-  | { ok: true; items: MediaItem[]; count?: number }
-  | { error: string };
+type ItemsGetResponse = { ok: true; items: MediaItem[]; count?: number } | { error: string };
 
 const ALL = "__ALL__"; // sentinel for "show everything"
 
@@ -37,12 +35,7 @@ function isVideo(url: string): boolean {
 
 function isImage(url: string): boolean {
   const u = (url || "").toLowerCase();
-  return (
-    u.includes(".jpg") ||
-    u.includes(".jpeg") ||
-    u.includes(".png") ||
-    u.includes(".webp")
-  );
+  return u.includes(".jpg") || u.includes(".jpeg") || u.includes(".png") || u.includes(".webp");
 }
 
 // ── Default sections & groups (used only as fallback when no data exists) ─────
@@ -75,6 +68,15 @@ function buildSectionMap(
     if (grp) map[sec].add(grp);
   }
 
+  // If truly empty, fall back to defaults (so UI isn't blank)
+  if (Object.keys(map).length === 0) {
+    const fallback: Record<string, Set<string>> = {};
+    for (const [sec, groups] of Object.entries(DEFAULT_SECTION_GROUPS)) {
+      fallback[sec] = new Set(groups);
+    }
+    for (const sec of Object.keys(fallback)) map[sec] = fallback[sec];
+  }
+
   const result: Record<string, string[]> = {};
   for (const sec of Object.keys(map).sort()) {
     result[sec] = Array.from(map[sec]).sort();
@@ -103,7 +105,7 @@ export default function AdminPage() {
 
   const [uploadFiles, setUploadFiles] = useState<File[]>([]);
   const [uploadUrl, setUploadUrl] = useState<string>("");
-  const [uploadTitle, setUploadTitle] = useState<string>("");
+  const [uploadTitle, setUploadTitle] = useState<string>(""); // used ONLY for URL import
   const [uploadPerson, setUploadPerson] = useState<string>("");
   const [uploadDate, setUploadDate] = useState<string>("");
   const [uploadDescription, setUploadDescription] = useState<string>("");
@@ -151,6 +153,10 @@ export default function AdminPage() {
   // Track known groups (newly created ones) so they appear even without items
   const [knownGroups, setKnownGroups] = useState<Record<string, Set<string>>>({});
 
+  // SIGNED URL CACHE: PK -> signed URL
+  const [signedUrlByPk, setSignedUrlByPk] = useState<Record<string, string>>({});
+  const [signBusyByPk, setSignBusyByPk] = useState<Record<string, boolean>>({});
+
   // ── Derived: dynamic section → groups map ────────────────────────────
   const sectionMap = useMemo(() => buildSectionMap(allItems, knownGroups), [allItems, knownGroups]);
   const sectionList = useMemo(() => Object.keys(sectionMap).sort(), [sectionMap]);
@@ -158,9 +164,7 @@ export default function AdminPage() {
   const groupOptions = useMemo(() => {
     if (section === ALL) {
       const all = new Set<string>();
-      for (const groups of Object.values(sectionMap)) {
-        for (const g of groups) all.add(g);
-      }
+      for (const groups of Object.values(sectionMap)) for (const g of groups) all.add(g);
       return Array.from(all).sort();
     }
     return sectionMap[section] || [];
@@ -168,9 +172,7 @@ export default function AdminPage() {
 
   const allGroupOptions = useMemo(() => {
     const all = new Set<string>();
-    for (const groups of Object.values(sectionMap)) {
-      for (const g of groups) all.add(g);
-    }
+    for (const groups of Object.values(sectionMap)) for (const g of groups) all.add(g);
     return Array.from(all).sort();
   }, [sectionMap]);
 
@@ -193,9 +195,7 @@ export default function AdminPage() {
   const uniquePersons = useMemo(() => {
     const persons = new Set<string>();
     allItems.forEach((item) => {
-      if (item.person && item.person.trim()) {
-        persons.add(item.person.trim());
-      }
+      if (item.person && item.person.trim()) persons.add(item.person.trim());
     });
     return Array.from(persons).sort();
   }, [allItems]);
@@ -203,9 +203,7 @@ export default function AdminPage() {
   const uniqueTitles = useMemo(() => {
     const titles = new Set<string>();
     allItems.forEach((item) => {
-      if (item.title && item.title.trim()) {
-        titles.add(item.title.trim());
-      }
+      if (item.title && item.title.trim()) titles.add(item.title.trim());
     });
     return Array.from(titles).sort();
   }, [allItems]);
@@ -257,6 +255,55 @@ export default function AdminPage() {
     return "application/octet-stream";
   }
 
+  // ────────────────────────────────────────────────────────────────────
+  // Signed URL helpers
+  // ────────────────────────────────────────────────────────────────────
+  function s3KeyFromPublicUrl(publicUrl: string): string | null {
+    try {
+      const u = new URL(publicUrl);
+      // expected: https://<bucket>.s3.<region>.amazonaws.com/<key>
+      const key = u.pathname?.replace(/^\/+/, "");
+      if (!key) return null;
+      return key;
+    } catch {
+      return null;
+    }
+  }
+
+  async function ensureSignedUrl(it: MediaItem) {
+    // If already signed, do nothing.
+    if (signedUrlByPk[it.PK]) return;
+
+    // Only useful for S3 http(s) URLs (private buckets)
+    const key = s3KeyFromPublicUrl(it.url);
+    if (!key) return;
+
+    if (signBusyByPk[it.PK]) return;
+
+    setSignBusyByPk((prev) => ({ ...prev, [it.PK]: true }));
+    try {
+      const out = await apiJson(`/api/admin/presign-get?key=${encodeURIComponent(key)}`, {
+        method: "GET",
+        cache: "no-store",
+      });
+      if (!out.ok || !out.data?.ok || !out.data?.url) {
+        // Don’t spam log; only log once per item if needed.
+        pushLog(`⚠️ presign-get failed for ${it.PK} (HTTP ${out.status})`);
+        return;
+      }
+      const signed = String(out.data.url);
+      setSignedUrlByPk((prev) => ({ ...prev, [it.PK]: signed }));
+    } catch (e: any) {
+      pushLog(`⚠️ presign-get error for ${it.PK}: ${e?.message ?? String(e)}`);
+    } finally {
+      setSignBusyByPk((prev) => ({ ...prev, [it.PK]: false }));
+    }
+  }
+
+  function renderableUrl(it: MediaItem): string {
+    return signedUrlByPk[it.PK] || it.url;
+  }
+
   // ── Auth ──────────────────────────────────────────────────────────────
   async function verifyToken() {
     const t = token.trim();
@@ -303,6 +350,8 @@ export default function AdminPage() {
       if ((data as any).error) throw new Error((data as any).error);
       const loaded = (data as any).items || [];
       setAllItems(loaded);
+      setSignedUrlByPk({}); // reset cache on refresh
+      setSignBusyByPk({});
       pushLog(`Loaded: ${loaded.length} total items`);
     } catch (e: any) {
       pushLog(`❌ ${e?.message ?? String(e)}`);
@@ -314,18 +363,11 @@ export default function AdminPage() {
   // ── Client-side filtering ────────────────────────────────────────────
   const filteredItems: MediaItem[] = useMemo(() => {
     let result = allItems;
-    if (section !== ALL) {
-      result = result.filter((it) => it.section === section);
-    }
-    if (group !== ALL) {
-      result = result.filter((it) => (it.group || "") === group);
-    }
-    if (personFilter) {
-      result = result.filter((it) => (it.person || "").trim() === personFilter);
-    }
-    if (titleFilter) {
-      result = result.filter((it) => (it.title || "").trim() === titleFilter);
-    }
+    if (section !== ALL) result = result.filter((it) => it.section === section);
+    if (group !== ALL) result = result.filter((it) => (it.group || "") === group);
+    if (personFilter) result = result.filter((it) => (it.person || "").trim() === personFilter);
+    if (titleFilter) result = result.filter((it) => (it.title || "").trim() === titleFilter);
+
     const q = search.trim().toLowerCase();
     if (q) {
       result = result.filter((it) => {
@@ -397,20 +439,22 @@ export default function AdminPage() {
     const sec = resolveUploadSection();
     const grp = resolveUploadGroup();
 
-    // NEW RULES:
+    // RULES (per your decision):
     // - Must be authorized
     // - Must select SECTION + GROUP
     // - Must pick at least 1 file
-    // - Title is auto from filename (per-file)
-    // - Person is optional (always)
+    // - Title auto from filename (per file)
+    // - Person optional (always) except Youtube Chanel Videos section
     if (!authorized || !sec || !grp || uploadFiles.length === 0) {
       pushLog("❌ Upload requirements not met (need Section, Group, and file(s))");
       return;
     }
+    if (sec === "Youtube Chanel Videos" && !uploadPerson.trim()) {
+      pushLog("❌ Person is required for Youtube Chanel Videos section");
+      return;
+    }
 
-    // Helper: convert "My Video File.mp4" -> "My Video File"
-    const titleFromFilename = (name: string) =>
-      (name || "").replace(/\.[^/.]+$/, "").trim() || name;
+    const titleFromFilename = (name: string) => (name || "").replace(/\.[^/.]+$/, "").trim() || name;
 
     setBusy(true);
     try {
@@ -430,9 +474,9 @@ export default function AdminPage() {
         await registerOne({
           url: pres.publicUrl,
           section: sec,
-          group: grp, // REQUIRED now
-          title: titleFromFilename(f.name), // AUTO title per file
-          person: uploadPerson.trim() || undefined, // OPTIONAL always
+          group: grp,
+          title: titleFromFilename(f.name),
+          person: uploadPerson.trim() || undefined,
           date: uploadDate.trim() || undefined,
           description: uploadDescription.trim() || undefined,
         });
@@ -450,17 +494,8 @@ export default function AdminPage() {
   }
 
   async function importFromUrl() {
-    // NEW RULES for URL import:
-    // - Must select SECTION + GROUP
-    // - Must provide URL + Title (no filename available)
-    // - Person optional always
-    if (
-      !authorized ||
-      !uploadUrl.trim() ||
-      !uploadTitle.trim() ||
-      !resolveUploadSection() ||
-      !resolveUploadGroup()
-    ) {
+    // URL import still needs title, and your group/section rules still apply.
+    if (!authorized || !uploadUrl.trim() || !uploadTitle.trim() || !resolveUploadSection() || !resolveUploadGroup()) {
       pushLog("❌ Import requirements not met");
       return;
     }
@@ -468,14 +503,19 @@ export default function AdminPage() {
     const sec = resolveUploadSection();
     const grp = resolveUploadGroup();
 
+    if (sec === "Youtube Chanel Videos" && !uploadPerson.trim()) {
+      pushLog("❌ Person is required for Youtube Chanel Videos section");
+      return;
+    }
+
     setBusy(true);
     try {
       pushLog(`Importing from URL: ${uploadUrl.trim().slice(0, 80)}...`);
       const payload: any = {
         url: uploadUrl.trim(),
         section: sec,
-        group: grp, // REQUIRED now
         title: uploadTitle.trim(),
+        group: grp,
       };
       if (uploadPerson.trim()) payload.person = uploadPerson.trim();
       if (uploadDate.trim()) payload.date = uploadDate.trim();
@@ -560,20 +600,21 @@ export default function AdminPage() {
       pushLog("❌ Section is required");
       return;
     }
+    if (destSection === "Youtube Chanel Videos" && !editingFields.person?.trim()) {
+      pushLog("❌ Person is required for Youtube Chanel Videos section");
+      return;
+    }
 
-    // NEW RULES:
-    // - Person is optional always (no special requirement)
-    // - Group is optional in edit (keep as-is; upload requires group)
     setBusy(true);
     try {
       const sectionChanged = destSection !== it.section;
       const groupChanged = destGroup !== (it.group || "");
 
-      let newUrl = it.url; // Keep existing URL by default
+      let newUrl = it.url;
 
-      // If a new file is selected, upload it first
+      // If a new file is selected, upload it first (used for profile pictures replacement)
       if (editFile) {
-        pushLog(`Uploading new image for ${it.PK}...`);
+        pushLog(`Uploading new file for ${it.PK}...`);
         const pres = await presignOne(editFile, destSection);
         const contentType = guessContentType(editFile);
         const putRes = await fetch(pres.uploadUrl, {
@@ -583,7 +624,7 @@ export default function AdminPage() {
         });
         if (!putRes.ok) throw new Error(`S3 upload failed (HTTP ${putRes.status}) ${editFile.name}`);
         newUrl = pres.publicUrl;
-        pushLog(`✅ New image uploaded`);
+        pushLog(`✅ New file uploaded`);
       }
 
       const payload: any = {
@@ -594,7 +635,7 @@ export default function AdminPage() {
         date: editingFields.date,
         section: destSection,
         group: destGroup,
-        url: newUrl, // Include URL (either existing or new)
+        url: newUrl,
       };
 
       const out = await apiJson("/api/admin/slides", {
@@ -602,23 +643,16 @@ export default function AdminPage() {
         headers: { "content-type": "application/json", "x-admin-token": token },
         body: JSON.stringify(payload),
       });
+
       if (!out.ok) throw new Error(out.data?.detail || out.data?.error || "Update failed");
 
-      if (sectionChanged) {
-        pushLog(`➡️ Moved ${it.PK}: ${it.section} → ${destSection}`);
-      } else if (groupChanged) {
-        pushLog(`➡️ Moved ${it.PK}: group ${it.group || "(none)"} → ${destGroup || "(none)"}`);
-      } else {
-        pushLog(`✏️ Updated: ${it.PK}`);
-      }
+      if (sectionChanged) pushLog(`➡️ Moved ${it.PK}: ${it.section} → ${destSection}`);
+      else if (groupChanged) pushLog(`➡️ Moved ${it.PK}: group ${it.group || "(none)"} → ${destGroup || "(none)"}`);
+      else pushLog(`✏️ Updated: ${it.PK}`);
 
-      setEditingPK("");
-      setEditingFields({});
-      setEditNewSection("");
-      setEditNewGroup("");
-      setEditFile(null);
-      if (editFileInputRef.current) editFileInputRef.current.value = "";
+      cancelEditing();
       await refreshAll();
+
       if (sectionChanged || groupChanged) {
         setSection(destSection);
         setTimeout(() => setGroup(destGroup || ALL), 50);
@@ -657,11 +691,8 @@ export default function AdminPage() {
             headers: { "content-type": "application/json", "x-admin-token": token },
             body: JSON.stringify(payload),
           });
-          if (out.ok) {
-            success++;
-          } else {
-            pushLog(`Failed to move ${item.PK}: ${out.data?.error || out.data?.detail || "Unknown error"}`);
-          }
+          if (out.ok) success++;
+          else pushLog(`Failed to move ${item.PK}: ${out.data?.error || out.data?.detail || "Unknown error"}`);
         }
         pushLog(`Moved ${success} of ${count} items`);
       }
@@ -685,34 +716,31 @@ export default function AdminPage() {
     }
     setDeleteBusy(true);
     const targetGrp = targetGroup === ALL ? "" : targetGroup;
-    pushLog(`Deleting group "${groupToDelete}" in "${sectionToDelete}" → "${targetSection}" / "${targetGrp || "(none)"}"`);
+    pushLog(
+      `Deleting group "${groupToDelete}" in "${sectionToDelete}" → "${targetSection}" / "${targetGrp || "(none)"}"`
+    );
     try {
       const itemsToMove = allItems.filter((i) => i.section === sectionToDelete && i.group === groupToDelete);
       const count = itemsToMove.length;
+
       if (count === 0) {
         pushLog(`Group "${groupToDelete}" is already empty → refreshing`);
       } else {
         pushLog(`Moving ${count} items`);
         let success = 0;
         for (const item of itemsToMove) {
-          const payload = {
-            PK: item.PK,
-            section: targetSection,
-            group: targetGrp,
-          };
+          const payload = { PK: item.PK, section: targetSection, group: targetGrp };
           const out = await apiJson("/api/admin/slides", {
             method: "PATCH",
             headers: { "content-type": "application/json", "x-admin-token": token },
             body: JSON.stringify(payload),
           });
-          if (out.ok) {
-            success++;
-          } else {
-            pushLog(`Failed to move ${item.PK}: ${out.data?.error || out.data?.detail || "Unknown error"}`);
-          }
+          if (out.ok) success++;
+          else pushLog(`Failed to move ${item.PK}: ${out.data?.error || out.data?.detail || "Unknown error"}`);
         }
         pushLog(`Moved ${success} of ${count} items`);
       }
+
       await refreshAll();
       await new Promise((r) => setTimeout(r, 600));
       setShowDeleteGroupModal(false);
@@ -732,9 +760,7 @@ export default function AdminPage() {
   // Auto-scroll log to bottom
   const logRef = useRef<HTMLPreElement>(null);
   useEffect(() => {
-    if (logRef.current) {
-      logRef.current.scrollTop = logRef.current.scrollHeight;
-    }
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
   }, [log]);
 
   // Handle Escape key to close modals
@@ -757,7 +783,6 @@ export default function AdminPage() {
       const { index, status, s3Url, size, error, allDone, current } = e.detail;
 
       if (allDone) {
-        // Mark all as done
         setYoutubeProgress((prev) => ({
           ...prev,
           current: prev.total,
@@ -769,13 +794,7 @@ export default function AdminPage() {
       setYoutubeProgress((prev) => {
         const newDetails = [...prev.details];
         if (index !== undefined && newDetails[index]) {
-          newDetails[index] = {
-            ...newDetails[index],
-            status,
-            s3Url,
-            size,
-            error,
-          };
+          newDetails[index] = { ...newDetails[index], status, s3Url, size, error };
         }
 
         return {
@@ -809,7 +828,9 @@ export default function AdminPage() {
         {/* Header */}
         <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
           <div>
-            <h1 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">Radio Olgoo Admin</h1>
+            <h1 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">
+              Radio Olgoo Admin
+            </h1>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <span
@@ -879,6 +900,8 @@ export default function AdminPage() {
                 setAuthError("");
                 clearUpload();
                 setAllItems([]);
+                setSignedUrlByPk({});
+                setSignBusyByPk({});
                 pushLog("Logged out");
               }}
               disabled={busy}
@@ -1007,277 +1030,337 @@ export default function AdminPage() {
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {filteredItems.map((it) => (
-                  <div
-                    key={it.PK}
-                    className={`group border border-slate-200 rounded-lg bg-white shadow-sm hover:shadow-lg transition-all overflow-hidden ${
-                      editingPK === it.PK ? "md:col-span-2 lg:col-span-3" : ""
-                    }`}
-                  >
-                    {/* Thumbnail Preview */}
-                    <div className="relative aspect-video bg-slate-100 overflow-hidden">
-                      {isVideo(it.url) ? (
-                        <video src={it.url} className="w-full h-full object-cover" preload="metadata" muted />
-                      ) : isImage(it.url) ? (
-                        <img src={it.url} alt={it.title} className="w-full h-full object-cover" />
-                      ) : (
-                        <div className="w-full h-full flex items-center justify-center bg-slate-200">
-                          <span className="text-slate-400 text-2xl">📄</span>
-                        </div>
-                      )}
+                {filteredItems.map((it) => {
+                  const src = renderableUrl(it);
+                  const usingSigned = !!signedUrlByPk[it.PK];
+                  const signBusy = !!signBusyByPk[it.PK];
 
-                      {/* Action Buttons Overlay */}
-                      <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                        {editingPK === it.PK ? (
-                          <>
-                            <button
-                              className="p-1.5 rounded bg-green-500 text-white hover:bg-green-600 shadow-lg"
-                              onClick={() => saveEditing(it)}
-                              disabled={busy}
-                              title="Save"
-                            >
-                              ✓
-                            </button>
-                            <button
-                              className="p-1.5 rounded bg-slate-500 text-white hover:bg-slate-600 shadow-lg"
-                              onClick={cancelEditing}
-                              disabled={busy}
-                              title="Cancel"
-                            >
-                              ✕
-                            </button>
-                          </>
+                  return (
+                    <div
+                      key={it.PK}
+                      className={`group border border-slate-200 rounded-lg bg-white shadow-sm hover:shadow-lg transition-all overflow-hidden ${
+                        editingPK === it.PK ? "md:col-span-2 lg:col-span-3" : ""
+                      }`}
+                      onMouseEnter={() => {
+                        // best-effort: fetch signed url for private S3 objects so preview works on Vercel
+                        if (isVideo(it.url) || isImage(it.url)) void ensureSignedUrl(it);
+                      }}
+                    >
+                      {/* Thumbnail Preview */}
+                      <div className="relative aspect-video bg-slate-100 overflow-hidden">
+                        {isVideo(it.url) ? (
+                          <video src={src} className="w-full h-full object-cover" preload="metadata" muted />
+                        ) : isImage(it.url) ? (
+                          <img src={src} alt={it.title} className="w-full h-full object-cover" />
                         ) : (
-                          <>
-                            <button
-                              className="p-1.5 rounded bg-blue-500 text-white hover:bg-blue-600 shadow-lg"
-                              onClick={() => startEditing(it)}
-                              disabled={busy}
-                              title="Edit"
-                            >
-                              ✏️
-                            </button>
-                            <button
-                              className="p-1.5 rounded bg-red-500 text-white hover:bg-red-600 shadow-lg"
-                              onClick={() => deleteItem(it)}
-                              disabled={busy}
-                              title="Delete"
-                            >
-                              🗑️
-                            </button>
-                          </>
+                          <div className="w-full h-full flex items-center justify-center bg-slate-200">
+                            <span className="text-slate-400 text-2xl">📄</span>
+                          </div>
                         )}
-                      </div>
-                    </div>
 
-                    {/* Card Content */}
-                    {editingPK !== it.PK ? (
-                      <div className="p-3">
-                        <div className="text-xs text-slate-500 font-bold mb-1 truncate">{it.PK}</div>
-                        <h3 className="text-sm font-black text-slate-900 mb-2 line-clamp-2 min-h-[2.5rem]">
-                          {it.title}
-                        </h3>
-                        <div className="space-y-1 text-xs text-slate-600">
-                          {it.section && (
-                            <div className="truncate">
-                              <span className="font-semibold">Section:</span> {it.section}
-                            </div>
-                          )}
-                          {it.group && (
-                            <div className="truncate">
-                              <span className="font-semibold">Group:</span> {it.group}
-                            </div>
-                          )}
-                          {it.person && (
-                            <div className="truncate">
-                              <span className="font-semibold">Person:</span> {it.person}
-                            </div>
+                        {/* Signed URL status badge */}
+                        {(isVideo(it.url) || isImage(it.url)) && (
+                          <div className="absolute left-2 top-2">
+                            {signBusy ? (
+                              <span className="px-2 py-1 rounded bg-slate-900/80 text-white text-[11px] font-black">
+                                ⏳ signing
+                              </span>
+                            ) : usingSigned ? (
+                              <span className="px-2 py-1 rounded bg-emerald-600/90 text-white text-[11px] font-black">
+                                🔓 signed
+                              </span>
+                            ) : (
+                              <span className="px-2 py-1 rounded bg-slate-700/70 text-white text-[11px] font-black">
+                                link
+                              </span>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Action Buttons Overlay */}
+                        <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          {editingPK === it.PK ? (
+                            <>
+                              <button
+                                className="p-1.5 rounded bg-green-500 text-white hover:bg-green-600 shadow-lg"
+                                onClick={() => saveEditing(it)}
+                                disabled={busy}
+                                title="Save"
+                              >
+                                ✓
+                              </button>
+                              <button
+                                className="p-1.5 rounded bg-slate-500 text-white hover:bg-slate-600 shadow-lg"
+                                onClick={cancelEditing}
+                                disabled={busy}
+                                title="Cancel"
+                              >
+                                ✕
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <button
+                                className="p-1.5 rounded bg-blue-500 text-white hover:bg-blue-600 shadow-lg"
+                                onClick={() => startEditing(it)}
+                                disabled={busy}
+                                title="Edit"
+                              >
+                                ✏️
+                              </button>
+                              <button
+                                className="p-1.5 rounded bg-red-500 text-white hover:bg-red-600 shadow-lg"
+                                onClick={() => deleteItem(it)}
+                                disabled={busy}
+                                title="Delete"
+                              >
+                                🗑️
+                              </button>
+                            </>
                           )}
                         </div>
-                        <a
-                          href={it.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="mt-2 inline-block text-xs text-blue-600 hover:text-blue-700 font-semibold"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          🔗 Open
-                        </a>
                       </div>
-                    ) : (
-                      <div className="p-4 border-t border-slate-200 bg-slate-50">
-                        <div className="space-y-3">
-                          <div className="p-4 rounded-xl border-2 border-blue-300 bg-blue-50">
-                            <div className="text-sm font-black text-blue-900 mb-3">➡️ Section / Group</div>
-                            <div className="flex flex-col sm:flex-row gap-4">
-                              <div className="flex-1 min-w-[200px]">
-                                <label className="block text-xs font-bold text-slate-700 mb-2">Section</label>
-                                <select
-                                  value={editingFields.section || ""}
-                                  onChange={(e) => {
-                                    const val = e.target.value;
-                                    setEditNewSection("");
-                                    setEditNewGroup("");
-                                    if (val === "__NEW__") {
-                                      setEditingFields({ ...editingFields, section: "__NEW__", group: "" });
-                                    } else {
-                                      const newGroups = sectionMap[val] || [];
-                                      setEditingFields({
-                                        ...editingFields,
-                                        section: val,
-                                        group: newGroups[0] || "",
-                                      });
-                                    }
-                                  }}
-                                  className="w-full px-4 py-2.5 rounded-lg border-2 border-blue-400 bg-white font-bold text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                                >
-                                  {sectionList.map((s) => (
-                                    <option key={s} value={s}>
-                                      {s}
-                                    </option>
-                                  ))}
-                                  <option value="__NEW__">➕ Add New Section...</option>
-                                </select>
-                                {editingFields.section === "__NEW__" && (
-                                  <input
-                                    value={editNewSection}
-                                    onChange={(e) => setEditNewSection(e.target.value)}
-                                    placeholder="New section name"
-                                    className="w-full mt-2 px-4 py-2.5 rounded-lg border-2 border-green-400 bg-white focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all text-sm font-medium"
-                                    autoFocus
-                                  />
-                                )}
+
+                      {/* Card Content */}
+                      {editingPK !== it.PK ? (
+                        <div className="p-3">
+                          <div className="text-xs text-slate-500 font-bold mb-1 truncate">{it.PK}</div>
+                          <h3 className="text-sm font-black text-slate-900 mb-2 line-clamp-2 min-h-[2.5rem]">
+                            {it.title}
+                          </h3>
+                          <div className="space-y-1 text-xs text-slate-600">
+                            {it.section && (
+                              <div className="truncate">
+                                <span className="font-semibold">Section:</span> {it.section}
                               </div>
-
-                              <div className="flex-1 min-w-[200px]">
-                                <label className="block text-xs font-bold text-slate-700 mb-2">Group</label>
-                                <select
-                                  value={editingFields.group || ""}
-                                  onChange={(e) => {
-                                    setEditNewGroup("");
-                                    setEditingFields({ ...editingFields, group: e.target.value });
-                                  }}
-                                  className="w-full px-4 py-2.5 rounded-lg border-2 border-blue-400 bg-white font-bold text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                                  disabled={editingFields.section === "__NEW__"}
-                                >
-                                  <option value="">-- Select --</option>
-                                  {((editingFields.section && sectionMap[editingFields.section]) || []).map((g) => (
-                                    <option key={g} value={g}>
-                                      {g}
-                                    </option>
-                                  ))}
-                                  <option value="__NEW__">➕ Add New Group...</option>
-                                </select>
-                                {editingFields.group === "__NEW__" && (
-                                  <input
-                                    value={editNewGroup}
-                                    onChange={(e) => setEditNewGroup(e.target.value)}
-                                    placeholder="New group name"
-                                    className="w-full mt-2 px-4 py-2.5 rounded-lg border-2 border-green-400 bg-white focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all text-sm font-medium"
-                                    autoFocus
-                                  />
-                                )}
+                            )}
+                            {it.group && (
+                              <div className="truncate">
+                                <span className="font-semibold">Group:</span> {it.group}
                               </div>
-                            </div>
-                          </div>
-
-                          <div>
-                            <label className="block text-xs font-bold text-slate-700 mb-2">Title</label>
-                            <input
-                              value={editingFields.title || ""}
-                              onChange={(e) => setEditingFields({ ...editingFields, title: e.target.value })}
-                              className="w-full px-4 py-2.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm"
-                            />
-                          </div>
-
-                          <div>
-                            <label className="block text-xs font-bold text-slate-700 mb-2">Person (optional)</label>
-
-                            {/* Keep dropdown for convenience when editing Youtube Chanel Videos, but it is NOT required */}
-                            {resolveEditSection() === "Youtube Chanel Videos" ? (
-                              <select
-                                value={editingFields.person || ""}
-                                onChange={(e) => setEditingFields({ ...editingFields, person: e.target.value })}
-                                className="w-full px-4 py-2.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                                disabled={busy}
-                              >
-                                <option value="">-- (none) --</option>
-                                {profilePictures.map((profile) => (
-                                  <option key={profile.PK} value={profile.person || ""}>
-                                    {profile.person || "Unknown"}
-                                  </option>
-                                ))}
-                              </select>
-                            ) : (
-                              <input
-                                value={editingFields.person || ""}
-                                onChange={(e) => setEditingFields({ ...editingFields, person: e.target.value })}
-                                className="w-full px-4 py-2.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                                disabled={busy}
-                              />
+                            )}
+                            {it.person && (
+                              <div className="truncate">
+                                <span className="font-semibold">Person:</span> {it.person}
+                              </div>
                             )}
                           </div>
 
-                          <div>
-                            <label className="block text-xs font-bold text-slate-700 mb-2">Date</label>
-                            <input
-                              type="date"
-                              value={editingFields.date || ""}
-                              onChange={(e) => setEditingFields({ ...editingFields, date: e.target.value })}
-                              className="w-full px-4 py-2.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm"
-                            />
-                          </div>
+                          <div className="mt-2 flex items-center gap-3">
+                            <a
+                              href={src}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-block text-xs text-blue-600 hover:text-blue-700 font-semibold"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              🔗 Open
+                            </a>
 
-                          <div>
-                            <label className="block text-xs font-bold text-slate-700 mb-2">Description</label>
-                            <textarea
-                              value={editingFields.description || ""}
-                              onChange={(e) => setEditingFields({ ...editingFields, description: e.target.value })}
-                              className="w-full px-4 py-2.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm min-h-[80px] resize-y"
-                            />
-                          </div>
-
-                          {/* Image Upload for Profile Pictures */}
-                          {resolveEditSection() === "Youtube_Channel_Profile_Picture" && (
-                            <div>
-                              <label className="block text-xs font-bold text-slate-700 mb-2">Replace Image (optional)</label>
-                              <input
-                                ref={editFileInputRef}
-                                type="file"
-                                accept="image/*"
-                                onChange={(e) => {
-                                  const file = e.target.files?.[0] || null;
-                                  setEditFile(file);
-                                  if (file) pushLog(`Selected: ${file.name}`);
+                            {(isVideo(it.url) || isImage(it.url)) && (
+                              <button
+                                className="text-xs font-bold text-slate-700 hover:text-slate-900"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void ensureSignedUrl(it);
                                 }}
-                                disabled={busy}
-                                className="w-full px-4 py-2.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                              />
-                              {editFile && (
-                                <div className="mt-2 text-xs text-slate-600 font-bold">
-                                  New file: {editFile.name} ({(editFile.size / 1024).toFixed(1)} KB)
-                                </div>
-                              )}
-                              {!editFile && it.url && (
-                                <div className="mt-2 text-xs text-slate-600 font-bold">
-                                  Current:{" "}
-                                  <a
-                                    href={it.url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="text-blue-500 hover:underline"
+                                disabled={signBusy}
+                                title="Get signed URL"
+                              >
+                                {signBusy ? "⏳ Signing..." : "🔓 Get signed"}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="p-4 border-t border-slate-200 bg-slate-50">
+                          <div className="space-y-3">
+                            <div className="p-4 rounded-xl border-2 border-blue-300 bg-blue-50">
+                              <div className="text-sm font-black text-blue-900 mb-3">➡️ Section / Group</div>
+                              <div className="flex flex-col sm:flex-row gap-4">
+                                <div className="flex-1 min-w-[200px]">
+                                  <label className="block text-xs font-bold text-slate-700 mb-2">Section</label>
+                                  <select
+                                    value={editingFields.section || ""}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      setEditNewSection("");
+                                      setEditNewGroup("");
+                                      if (val === "__NEW__") {
+                                        setEditingFields({ ...editingFields, section: "__NEW__", group: "" });
+                                      } else {
+                                        const newGroups = sectionMap[val] || [];
+                                        setEditingFields({
+                                          ...editingFields,
+                                          section: val,
+                                          group: newGroups[0] || "",
+                                        });
+                                      }
+                                    }}
+                                    className="w-full px-4 py-2.5 rounded-lg border-2 border-blue-400 bg-white font-bold text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                                   >
-                                    View current image
-                                  </a>
+                                    {sectionList.map((s) => (
+                                      <option key={s} value={s}>
+                                        {s}
+                                      </option>
+                                    ))}
+                                    <option value="__NEW__">➕ Add New Section...</option>
+                                  </select>
+                                  {editingFields.section === "__NEW__" && (
+                                    <input
+                                      value={editNewSection}
+                                      onChange={(e) => setEditNewSection(e.target.value)}
+                                      placeholder="New section name"
+                                      className="w-full mt-2 px-4 py-2.5 rounded-lg border-2 border-green-400 bg-white focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all text-sm font-medium"
+                                      autoFocus
+                                    />
+                                  )}
                                 </div>
+
+                                <div className="flex-1 min-w-[200px]">
+                                  <label className="block text-xs font-bold text-slate-700 mb-2">Group</label>
+                                  <select
+                                    value={editingFields.group || ""}
+                                    onChange={(e) => {
+                                      setEditNewGroup("");
+                                      setEditingFields({ ...editingFields, group: e.target.value });
+                                    }}
+                                    className="w-full px-4 py-2.5 rounded-lg border-2 border-blue-400 bg-white font-bold text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                    disabled={editingFields.section === "__NEW__"}
+                                  >
+                                    <option value="">-- Select --</option>
+                                    {((editingFields.section && sectionMap[String(editingFields.section)]) || []).map(
+                                      (g) => (
+                                        <option key={g} value={g}>
+                                          {g}
+                                        </option>
+                                      )
+                                    )}
+                                    <option value="__NEW__">➕ Add New Group...</option>
+                                  </select>
+                                  {editingFields.group === "__NEW__" && (
+                                    <input
+                                      value={editNewGroup}
+                                      onChange={(e) => setEditNewGroup(e.target.value)}
+                                      placeholder="New group name"
+                                      className="w-full mt-2 px-4 py-2.5 rounded-lg border-2 border-green-400 bg-white focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all text-sm font-medium"
+                                      autoFocus
+                                    />
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-bold text-slate-700 mb-2">Title</label>
+                              <input
+                                value={editingFields.title || ""}
+                                onChange={(e) => setEditingFields({ ...editingFields, title: e.target.value })}
+                                className="w-full px-4 py-2.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-bold text-slate-700 mb-2">
+                                Person{" "}
+                                {resolveEditSection() === "Youtube Chanel Videos" ? (
+                                  <span className="text-red-500">*</span>
+                                ) : (
+                                  "(optional)"
+                                )}
+                              </label>
+
+                              {resolveEditSection() === "Youtube Chanel Videos" ? (
+                                <select
+                                  value={editingFields.person || ""}
+                                  onChange={(e) => setEditingFields({ ...editingFields, person: e.target.value })}
+                                  className={`w-full px-4 py-2.5 rounded-lg border bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed ${
+                                    editingFields.person ? "border-slate-300" : "border-red-400"
+                                  }`}
+                                  disabled={busy}
+                                >
+                                  <option value="">-- Select Person --</option>
+                                  {profilePictures.map((profile) => (
+                                    <option key={profile.PK} value={profile.person || ""}>
+                                      {profile.person || "Unknown"}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <input
+                                  value={editingFields.person || ""}
+                                  onChange={(e) => setEditingFields({ ...editingFields, person: e.target.value })}
+                                  className="w-full px-4 py-2.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                                  disabled={busy}
+                                />
                               )}
                             </div>
-                          )}
+
+                            <div>
+                              <label className="block text-xs font-bold text-slate-700 mb-2">Date</label>
+                              <input
+                                type="date"
+                                value={editingFields.date || ""}
+                                onChange={(e) => setEditingFields({ ...editingFields, date: e.target.value })}
+                                className="w-full px-4 py-2.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-bold text-slate-700 mb-2">Description</label>
+                              <textarea
+                                value={editingFields.description || ""}
+                                onChange={(e) =>
+                                  setEditingFields({ ...editingFields, description: e.target.value })
+                                }
+                                className="w-full px-4 py-2.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm min-h-[80px] resize-y"
+                              />
+                            </div>
+
+                            {/* Image Upload for Profile Pictures */}
+                            {resolveEditSection() === "Youtube_Channel_Profile_Picture" && (
+                              <div>
+                                <label className="block text-xs font-bold text-slate-700 mb-2">
+                                  Replace Image (optional)
+                                </label>
+                                <input
+                                  ref={editFileInputRef}
+                                  type="file"
+                                  accept="image/*"
+                                  onChange={(e) => {
+                                    const file = e.target.files?.[0] || null;
+                                    setEditFile(file);
+                                    if (file) pushLog(`Selected: ${file.name}`);
+                                  }}
+                                  disabled={busy}
+                                  className="w-full px-4 py-2.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                                />
+                                {editFile && (
+                                  <div className="mt-2 text-xs text-slate-600 font-bold">
+                                    New file: {editFile.name} ({(editFile.size / 1024).toFixed(1)} KB)
+                                  </div>
+                                )}
+                                {!editFile && it.url && (
+                                  <div className="mt-2 text-xs text-slate-600 font-bold">
+                                    Current:{" "}
+                                    <a
+                                      href={renderableUrl(it)}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="text-blue-500 hover:underline"
+                                    >
+                                      View current image
+                                    </a>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    )}
-                  </div>
-                ))}
+                      )}
+                    </div>
+                  );
+                })}
 
                 {!filteredItems.length && (
                   <div className="opacity-70 font-bold p-4 rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 text-center text-sm text-slate-600">
@@ -1362,7 +1445,9 @@ export default function AdminPage() {
               <div className="flex gap-2 mb-6 border-b-2 border-slate-200 pb-3">
                 <button
                   className={`px-4 py-2 rounded-lg font-bold text-sm transition-all ${
-                    uploadMode === "file" ? "bg-slate-900 text-white" : "bg-transparent text-slate-600 hover:bg-slate-50"
+                    uploadMode === "file"
+                      ? "bg-slate-900 text-white"
+                      : "bg-transparent text-slate-600 hover:bg-slate-50"
                   } disabled:opacity-50 disabled:cursor-not-allowed`}
                   onClick={() => setUploadMode("file")}
                   disabled={busy}
@@ -1371,7 +1456,9 @@ export default function AdminPage() {
                 </button>
                 <button
                   className={`px-4 py-2 rounded-lg font-bold text-sm transition-all ${
-                    uploadMode === "url" ? "bg-slate-900 text-white" : "bg-transparent text-slate-600 hover:bg-slate-50"
+                    uploadMode === "url"
+                      ? "bg-slate-900 text-white"
+                      : "bg-transparent text-slate-600 hover:bg-slate-50"
                   } disabled:opacity-50 disabled:cursor-not-allowed`}
                   onClick={() => setUploadMode("url")}
                   disabled={busy}
@@ -1420,6 +1507,7 @@ export default function AdminPage() {
                     <label className="block text-xs font-bold text-slate-700 mb-2">
                       Group <span className="text-red-500">*</span>
                     </label>
+
                     <select
                       value={uploadGroup}
                       onChange={(e) => {
@@ -1430,7 +1518,7 @@ export default function AdminPage() {
                       disabled={busy || !authorized || !uploadSection || uploadSection === "__NEW__"}
                     >
                       <option value="">-- Select --</option>
-                      {((uploadSection && sectionMap[uploadSection]) || []).map((g) => (
+                      {(uploadSection && sectionMap[uploadSection] ? sectionMap[uploadSection] : []).map((g) => (
                         <option key={g} value={g}>
                           {g}
                         </option>
@@ -1462,26 +1550,24 @@ export default function AdminPage() {
                             setBusy(true);
                             try {
                               const finalSection = resolveUploadSection();
-                              const payload = {
-                                section: finalSection,
-                                group: uploadNewGroup.trim(),
-                              };
+                              const payload = { section: finalSection, group: uploadNewGroup.trim() };
                               const res = await fetch("/api/admin/create-group", {
                                 method: "POST",
-                                headers: {
-                                  "Content-Type": "application/json",
-                                  "x-admin-token": token,
-                                },
+                                headers: { "Content-Type": "application/json", "x-admin-token": token },
                                 body: JSON.stringify(payload),
                               });
                               const data = await res.json();
                               if (res.ok && data.success) {
                                 pushLog(`✅ Group "${uploadNewGroup.trim()}" created in "${finalSection}"`);
-                                const createdName = uploadNewGroup.trim();
+                                // make it appear immediately in UI even before refresh is reflected
+                                setKnownGroups((prev) => {
+                                  const copy: Record<string, Set<string>> = { ...prev };
+                                  if (!copy[finalSection]) copy[finalSection] = new Set();
+                                  copy[finalSection].add(uploadNewGroup.trim());
+                                  return copy;
+                                });
+                                setUploadGroup(uploadNewGroup.trim());
                                 setUploadNewGroup("");
-                                setUploadGroup(createdName);
-                                await refreshAll();
-                                await new Promise((r) => setTimeout(r, 800));
                                 await refreshAll();
                               } else {
                                 pushLog(`❌ Failed: ${data.error || "Unknown error"}`);
@@ -1501,19 +1587,13 @@ export default function AdminPage() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  {/* Title behavior differs by mode */}
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-2">
-                      Title{" "}
-                      {uploadMode === "url" ? (
-                        <span className="text-red-500">*</span>
-                      ) : (
-                        <span className="text-slate-500">(auto from filename)</span>
-                      )}
-                    </label>
-
-                    {uploadMode === "url" ? (
+                {/* URL mode needs Title; FILE mode auto-title from filename */}
+                {uploadMode === "url" ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-2">
+                        Title <span className="text-red-500">*</span>
+                      </label>
                       <input
                         value={uploadTitle}
                         onChange={(e) => setUploadTitle(e.target.value)}
@@ -1521,57 +1601,114 @@ export default function AdminPage() {
                         className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                         disabled={busy || !authorized}
                       />
-                    ) : (
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-2">
+                        Person{" "}
+                        {resolveUploadSection() === "Youtube Chanel Videos" ? (
+                          <span className="text-red-500">*</span>
+                        ) : (
+                          "(optional)"
+                        )}
+                      </label>
+                      {resolveUploadSection() === "Youtube Chanel Videos" ? (
+                        <select
+                          value={uploadPerson}
+                          onChange={(e) => setUploadPerson(e.target.value)}
+                          className={`w-full px-3 py-2 rounded-lg border bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed ${
+                            uploadPerson.trim() ? "border-slate-300" : "border-red-400"
+                          }`}
+                          disabled={busy || !authorized}
+                        >
+                          <option value="">-- Select Person --</option>
+                          {profilePictures.map((profile) => (
+                            <option key={profile.PK} value={profile.person || ""}>
+                              {profile.person || "Unknown"}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input
+                          value={uploadPerson}
+                          onChange={(e) => setUploadPerson(e.target.value)}
+                          placeholder="Speaker/Artist name"
+                          className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                          disabled={busy || !authorized}
+                        />
+                      )}
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-2">Date (optional)</label>
                       <input
-                        value=""
-                        readOnly
-                        placeholder="Auto-filled from each filename (MyVideo.mp4 → MyVideo)"
-                        className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 text-slate-600 cursor-not-allowed text-sm"
-                        disabled
-                      />
-                    )}
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-2">Person (optional)</label>
-
-                    {/* Keep dropdown for convenience when section is Youtube Chanel Videos, but NOT required */}
-                    {resolveUploadSection() === "Youtube Chanel Videos" ? (
-                      <select
-                        value={uploadPerson}
-                        onChange={(e) => setUploadPerson(e.target.value)}
+                        type="date"
+                        value={uploadDate}
+                        onChange={(e) => setUploadDate(e.target.value)}
                         className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                         disabled={busy || !authorized}
-                      >
-                        <option value="">-- (none) --</option>
-                        {profilePictures.map((profile) => (
-                          <option key={profile.PK} value={profile.person || ""}>
-                            {profile.person || "Unknown"}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-2">
+                        Title
+                      </label>
+                      <div className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-slate-50 text-sm font-bold text-slate-600">
+                        Auto from filename (.mp4 → title)
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-2">
+                        Person{" "}
+                        {resolveUploadSection() === "Youtube Chanel Videos" ? (
+                          <span className="text-red-500">*</span>
+                        ) : (
+                          "(optional)"
+                        )}
+                      </label>
+                      {resolveUploadSection() === "Youtube Chanel Videos" ? (
+                        <select
+                          value={uploadPerson}
+                          onChange={(e) => setUploadPerson(e.target.value)}
+                          className={`w-full px-3 py-2 rounded-lg border bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed ${
+                            uploadPerson.trim() ? "border-slate-300" : "border-red-400"
+                          }`}
+                          disabled={busy || !authorized}
+                        >
+                          <option value="">-- Select Person --</option>
+                          {profilePictures.map((profile) => (
+                            <option key={profile.PK} value={profile.person || ""}>
+                              {profile.person || "Unknown"}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input
+                          value={uploadPerson}
+                          onChange={(e) => setUploadPerson(e.target.value)}
+                          placeholder="Speaker/Artist name"
+                          className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                          disabled={busy || !authorized}
+                        />
+                      )}
+                    </div>
+
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs font-bold text-slate-700 mb-2">Date (optional)</label>
                       <input
-                        value={uploadPerson}
-                        onChange={(e) => setUploadPerson(e.target.value)}
-                        placeholder="Speaker/Artist name"
+                        type="date"
+                        value={uploadDate}
+                        onChange={(e) => setUploadDate(e.target.value)}
                         className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                         disabled={busy || !authorized}
                       />
-                    )}
+                    </div>
                   </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-2">Date (optional)</label>
-                    <input
-                      type="date"
-                      value={uploadDate}
-                      onChange={(e) => setUploadDate(e.target.value)}
-                      className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                      disabled={busy || !authorized}
-                    />
-                  </div>
-                </div>
+                )}
 
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-2">Description (optional)</label>
@@ -1609,9 +1746,10 @@ export default function AdminPage() {
                         disabled={
                           !authorized ||
                           busy ||
-                          !resolveUploadSection() ||
-                          !resolveUploadGroup() ||
-                          !uploadFiles.length
+                          !uploadFiles.length ||
+                          !resolveUploadSection().trim() ||
+                          !resolveUploadGroup().trim() ||
+                          (resolveUploadSection() === "Youtube Chanel Videos" && !uploadPerson.trim())
                         }
                       >
                         {busy ? "⏳ Working..." : "⬆️ Upload"}
@@ -1647,10 +1785,11 @@ export default function AdminPage() {
                         disabled={
                           !authorized ||
                           busy ||
-                          !resolveUploadSection() ||
-                          !resolveUploadGroup() ||
                           !uploadTitle.trim() ||
-                          !uploadUrl.trim()
+                          !uploadUrl.trim() ||
+                          !resolveUploadSection().trim() ||
+                          !resolveUploadGroup().trim() ||
+                          (resolveUploadSection() === "Youtube Chanel Videos" && !uploadPerson.trim())
                         }
                       >
                         {busy ? "⏳ Downloading & importing..." : "🔗 Import from URL"}
@@ -1686,46 +1825,50 @@ export default function AdminPage() {
               </p>
 
               {sectionItemCount > 0 && (
-                <p className="text-sm text-slate-600 mb-4">You must move these items to another section before deletion.</p>
-              )}
+                <>
+                  <p className="text-sm text-slate-600 mb-4">
+                    You must move these items to another section before deletion.
+                  </p>
 
-              {sectionItemCount > 0 && (
-                <div className="mb-4">
-                  <label className="block font-black text-sm text-slate-700 mb-2">Move to section:</label>
-                  <select
-                    value={targetSection}
-                    onChange={(e) => {
-                      setTargetSection(e.target.value);
-                      setTargetGroup(ALL);
-                    }}
-                    className="w-full px-4 py-2.5 rounded-lg border-2 border-blue-400 bg-white font-bold text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                  >
-                    <option value="">— Select target section —</option>
-                    {sectionList.filter((s) => s !== sectionToDelete).map((s) => (
-                      <option key={s} value={s}>
-                        {s}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
+                  <div className="mb-4">
+                    <label className="block font-black text-sm text-slate-700 mb-2">Move to section:</label>
+                    <select
+                      value={targetSection}
+                      onChange={(e) => {
+                        setTargetSection(e.target.value);
+                        setTargetGroup(ALL);
+                      }}
+                      className="w-full px-4 py-2.5 rounded-lg border-2 border-blue-400 bg-white font-bold text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                    >
+                      <option value="">— Select target section —</option>
+                      {sectionList
+                        .filter((s) => s !== sectionToDelete)
+                        .map((s) => (
+                          <option key={s} value={s}>
+                            {s}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
 
-              {sectionItemCount > 0 && targetSection && sectionMap[targetSection]?.length > 0 && (
-                <div className="mb-4">
-                  <label className="block font-black text-sm text-slate-700 mb-2">Move to group (optional):</label>
-                  <select
-                    value={targetGroup}
-                    onChange={(e) => setTargetGroup(e.target.value)}
-                    className="w-full px-4 py-2.5 rounded-lg border-2 border-blue-400 bg-white font-bold text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                  >
-                    <option value={ALL}>No specific group (root of section)</option>
-                    {sectionMap[targetSection].map((g) => (
-                      <option key={g} value={g}>
-                        {g}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                  {targetSection && sectionMap[targetSection]?.length > 0 && (
+                    <div className="mb-4">
+                      <label className="block font-black text-sm text-slate-700 mb-2">Move to group (optional):</label>
+                      <select
+                        value={targetGroup}
+                        onChange={(e) => setTargetGroup(e.target.value)}
+                        className="w-full px-4 py-2.5 rounded-lg border-2 border-blue-400 bg-white font-bold text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                      >
+                        <option value={ALL}>No specific group (root of section)</option>
+                        {sectionMap[targetSection].map((g) => (
+                          <option key={g} value={g}>
+                            {g}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </>
               )}
 
               <div className="mt-6 flex gap-3 justify-end">
@@ -1741,7 +1884,7 @@ export default function AdminPage() {
                   Cancel
                 </button>
 
-                {sectionItemCount > 0 && (
+                {sectionItemCount > 0 ? (
                   <button
                     className={`px-4 py-2 rounded-lg border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 active:bg-red-200 font-black text-xs transition-colors ${
                       deleteBusy || !targetSection ? "opacity-60 cursor-not-allowed" : ""
@@ -1751,9 +1894,7 @@ export default function AdminPage() {
                   >
                     {deleteBusy ? "⏳ Moving & Deleting..." : "🗑️ Move & Delete Section"}
                   </button>
-                )}
-
-                {sectionItemCount === 0 && (
+                ) : (
                   <button
                     className="px-4 py-2 rounded-lg bg-slate-900 text-white hover:bg-slate-800 active:bg-slate-950 font-black text-xs transition-colors"
                     onClick={() => {
@@ -1789,50 +1930,50 @@ export default function AdminPage() {
               </p>
 
               {groupItemCount > 0 && (
-                <p className="text-sm text-slate-600 mb-4">
-                  Move these items to another group in the same section or to another section.
-                </p>
-              )}
+                <>
+                  <p className="text-sm text-slate-600 mb-4">
+                    Move these items to another group in the same section or to another section.
+                  </p>
 
-              {groupItemCount > 0 && (
-                <div className="mb-4">
-                  <label className="block font-black text-sm text-slate-700 mb-2">Move to section:</label>
-                  <select
-                    value={targetSection}
-                    onChange={(e) => {
-                      setTargetSection(e.target.value);
-                      setTargetGroup(ALL);
-                    }}
-                    className="w-full px-4 py-2.5 rounded-lg border-2 border-blue-400 bg-white font-bold text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                  >
-                    <option value="">— Select target section —</option>
-                    {sectionList.map((s) => (
-                      <option key={s} value={s}>
-                        {s}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
-
-              {groupItemCount > 0 && targetSection && sectionMap[targetSection]?.length > 0 && (
-                <div className="mb-4">
-                  <label className="block font-black text-sm text-slate-700 mb-2">Move to group (optional):</label>
-                  <select
-                    value={targetGroup}
-                    onChange={(e) => setTargetGroup(e.target.value)}
-                    className="w-full px-4 py-2.5 rounded-lg border-2 border-blue-400 bg-white font-bold text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                  >
-                    <option value={ALL}>No specific group (root of section)</option>
-                    {sectionMap[targetSection]
-                      .filter((g) => targetSection !== sectionToDelete || g !== groupToDelete)
-                      .map((g) => (
-                        <option key={g} value={g}>
-                          {g}
+                  <div className="mb-4">
+                    <label className="block font-black text-sm text-slate-700 mb-2">Move to section:</label>
+                    <select
+                      value={targetSection}
+                      onChange={(e) => {
+                        setTargetSection(e.target.value);
+                        setTargetGroup(ALL);
+                      }}
+                      className="w-full px-4 py-2.5 rounded-lg border-2 border-blue-400 bg-white font-bold text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                    >
+                      <option value="">— Select target section —</option>
+                      {sectionList.map((s) => (
+                        <option key={s} value={s}>
+                          {s}
                         </option>
                       ))}
-                  </select>
-                </div>
+                    </select>
+                  </div>
+
+                  {targetSection && sectionMap[targetSection]?.length > 0 && (
+                    <div className="mb-4">
+                      <label className="block font-black text-sm text-slate-700 mb-2">Move to group (optional):</label>
+                      <select
+                        value={targetGroup}
+                        onChange={(e) => setTargetGroup(e.target.value)}
+                        className="w-full px-4 py-2.5 rounded-lg border-2 border-blue-400 bg-white font-bold text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                      >
+                        <option value={ALL}>No specific group (root of section)</option>
+                        {sectionMap[targetSection]
+                          .filter((g) => targetSection !== sectionToDelete || g !== groupToDelete)
+                          .map((g) => (
+                            <option key={g} value={g}>
+                              {g}
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+                  )}
+                </>
               )}
 
               <div className="mt-6 flex gap-3 justify-end">
@@ -1849,7 +1990,7 @@ export default function AdminPage() {
                   Cancel
                 </button>
 
-                {groupItemCount > 0 && (
+                {groupItemCount > 0 ? (
                   <button
                     className={`px-4 py-2 rounded-lg border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 active:bg-red-200 font-black text-xs transition-colors ${
                       deleteBusy || !targetSection ? "opacity-60 cursor-not-allowed" : ""
@@ -1859,9 +2000,7 @@ export default function AdminPage() {
                   >
                     {deleteBusy ? "⏳ Moving & Deleting..." : "🗑️ Move & Delete Group"}
                   </button>
-                )}
-
-                {groupItemCount === 0 && (
+                ) : (
                   <button
                     className="px-4 py-2 rounded-lg bg-slate-900 text-white hover:bg-slate-800 active:bg-slate-950 font-black text-xs transition-colors"
                     onClick={() => {
@@ -1906,7 +2045,7 @@ export default function AdminPage() {
           />
         )}
 
-        {/* YouTube Progress View - Detailed Step by Step */}
+        {/* YouTube Progress View */}
         {showYouTubeProgress && (
           <div className="bg-white rounded-2xl p-6 shadow-lg mb-6">
             <div className="flex justify-between items-center mb-4">
@@ -1916,7 +2055,6 @@ export default function AdminPage() {
               </div>
             </div>
 
-            {/* Progress Bar */}
             <div className="w-full bg-slate-200 rounded-full h-3 mb-6">
               <div
                 className="bg-green-600 h-3 rounded-full transition-all duration-300"
@@ -1924,14 +2062,12 @@ export default function AdminPage() {
               />
             </div>
 
-            {/* Current Status */}
             {youtubeProgress.status && (
               <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
                 <p className="text-sm font-bold text-blue-900">{youtubeProgress.status}</p>
               </div>
             )}
 
-            {/* Video Details */}
             <div className="space-y-3 max-h-[600px] overflow-y-auto">
               {youtubeProgress.details.map((video, idx) => (
                 <div
@@ -1991,16 +2127,15 @@ export default function AdminPage() {
                     <div className="ml-4">
                       {video.status === "done" && <div className="text-2xl">✅</div>}
                       {video.status === "error" && <div className="text-2xl">❌</div>}
-                      {(video.status === "downloading" ||
-                        video.status === "uploading" ||
-                        video.status === "saving") && <div className="text-2xl animate-spin">⏳</div>}
+                      {(video.status === "downloading" || video.status === "uploading" || video.status === "saving") && (
+                        <div className="text-2xl animate-spin">⏳</div>
+                      )}
                     </div>
                   </div>
                 </div>
               ))}
             </div>
 
-            {/* Done Button */}
             {youtubeProgress.current === youtubeProgress.total && (
               <div className="mt-6 flex gap-3">
                 <button
@@ -2051,7 +2186,6 @@ function YouTubeImportModal({
   const [fetching, setFetching] = useState(false);
 
   const addChannel = () => setChannels([...channels, { url: "", group: "" }]);
-
   const removeChannel = (index: number) => setChannels(channels.filter((_, i) => i !== index));
 
   const updateChannel = (index: number, field: "url" | "group", value: string) => {
@@ -2062,7 +2196,6 @@ function YouTubeImportModal({
 
   const fetchVideos = async () => {
     const validChannels = channels.filter((ch) => ch.url.trim() && ch.group.trim());
-
     if (validChannels.length === 0) {
       alert("Please enter at least one channel URL with a group selected");
       return;
@@ -2077,10 +2210,7 @@ function YouTubeImportModal({
 
       const response = await fetch("/api/admin/youtube/fetch-videos", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-admin-token": token,
-        },
+        headers: { "Content-Type": "application/json", "x-admin-token": token },
         body: JSON.stringify({ channels: validChannels }),
       });
 
@@ -2106,11 +2236,7 @@ function YouTubeImportModal({
       alert("No videos to download");
       return;
     }
-
-    // Pass videos to parent and close modal
     onStartProgress(fetchedVideos);
-
-    // Start the download process
     downloadVideosWithProgress(fetchedVideos, token, pushLog);
   };
 
@@ -2125,9 +2251,7 @@ function YouTubeImportModal({
         </div>
 
         <div className="space-y-4 mb-6">
-          <p className="text-sm text-slate-600">
-            Enter YouTube channel URLs and select a group for each. Last 5 videos from each channel will be fetched.
-          </p>
+          <p className="text-sm text-slate-600">Enter YouTube channel URLs and select a group for each. Last 5 videos from each channel will be fetched.</p>
 
           {channels.map((channel, index) => (
             <div key={index} className="flex gap-2 items-start">
@@ -2240,7 +2364,6 @@ async function downloadVideosWithProgress(videos: any[], token: string, pushLog:
     try {
       pushLog(`\n📹 Video ${i + 1}/${videos.length}: ${video.title}`);
 
-      // Update progress: downloading
       window.dispatchEvent(
         new CustomEvent("youtube-progress", {
           detail: { index: i, status: "downloading", current: i },
@@ -2249,51 +2372,27 @@ async function downloadVideosWithProgress(videos: any[], token: string, pushLog:
 
       pushLog(`   ⬇️ Downloading from YouTube...`);
 
-      // Update progress: uploading
-      window.dispatchEvent(
-        new CustomEvent("youtube-progress", {
-          detail: { index: i, status: "uploading" },
-        })
-      );
-
+      window.dispatchEvent(new CustomEvent("youtube-progress", { detail: { index: i, status: "uploading" } }));
       pushLog(`   ⬆️ Uploading to S3...`);
 
-      // Call API to download and upload this single video
       const response = await fetch("/api/admin/youtube/download-upload", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-admin-token": token,
-        },
+        headers: { "Content-Type": "application/json", "x-admin-token": token },
         body: JSON.stringify({ videos: [video] }),
       });
 
-      if (!response.ok) {
-        throw new Error("Upload failed");
-      }
+      if (!response.ok) throw new Error("Upload failed");
 
       const data = await response.json();
       const result = data.results[0];
 
       if (result.success) {
-        // Update progress: saving
-        window.dispatchEvent(
-          new CustomEvent("youtube-progress", {
-            detail: { index: i, status: "saving" },
-          })
-        );
-
+        window.dispatchEvent(new CustomEvent("youtube-progress", { detail: { index: i, status: "saving" } }));
         pushLog(`   💾 Saving to DynamoDB...`);
 
-        // Update progress: done
         window.dispatchEvent(
           new CustomEvent("youtube-progress", {
-            detail: {
-              index: i,
-              status: "done",
-              s3Url: result.s3Url,
-              size: "45 MB", // TODO: Get actual size
-            },
+            detail: { index: i, status: "done", s3Url: result.s3Url, size: result.size || undefined },
           })
         );
 
@@ -2305,14 +2404,11 @@ async function downloadVideosWithProgress(videos: any[], token: string, pushLog:
       pushLog(`   ❌ Failed: ${error.message}`);
 
       window.dispatchEvent(
-        new CustomEvent("youtube-progress", {
-          detail: { index: i, status: "error", error: error.message },
-        })
+        new CustomEvent("youtube-progress", { detail: { index: i, status: "error", error: error.message } })
       );
     }
   }
 
-  // All done
   window.dispatchEvent(new CustomEvent("youtube-progress", { detail: { allDone: true } }));
   pushLog(`\n🎉 All videos processed!`);
 }
