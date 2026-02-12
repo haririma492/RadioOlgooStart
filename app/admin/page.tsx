@@ -20,7 +20,9 @@ type MediaItem = {
   createdAt?: string;
 };
 
-type ItemsGetResponse = { ok: true; items: MediaItem[]; count?: number } | { error: string };
+type ItemsGetResponse =
+  | { ok: true; items: MediaItem[]; count?: number }
+  | { error: string };
 
 const ALL = "__ALL__"; // sentinel for "show everything"
 
@@ -35,7 +37,12 @@ function isVideo(url: string): boolean {
 
 function isImage(url: string): boolean {
   const u = (url || "").toLowerCase();
-  return u.includes(".jpg") || u.includes(".jpeg") || u.includes(".png") || u.includes(".webp");
+  return (
+    u.includes(".jpg") ||
+    u.includes(".jpeg") ||
+    u.includes(".png") ||
+    u.includes(".webp")
+  );
 }
 
 // ── Default sections & groups (used only as fallback when no data exists) ─────
@@ -126,13 +133,14 @@ export default function AdminPage() {
     status: string;
     details: Array<{
       title: string;
-      status: 'fetching' | 'downloading' | 'uploading' | 'saving' | 'done' | 'error';
+      status: "fetching" | "downloading" | "uploading" | "saving" | "done" | "error";
       uploadDate?: string;
       size?: string;
       s3Url?: string;
       error?: string;
     }>;
-  }>({ current: 0, total: 0, currentVideo: '', status: '', details: [] });
+  }>({ current: 0, total: 0, currentVideo: "", status: "", details: [] });
+
   const [sectionToDelete, setSectionToDelete] = useState<string>("");
   const [groupToDelete, setGroupToDelete] = useState<string>("");
   const [targetSection, setTargetSection] = useState<string>("");
@@ -144,10 +152,7 @@ export default function AdminPage() {
   const [knownGroups, setKnownGroups] = useState<Record<string, Set<string>>>({});
 
   // ── Derived: dynamic section → groups map ────────────────────────────
-  const sectionMap = useMemo(
-    () => buildSectionMap(allItems, knownGroups),
-    [allItems, knownGroups]
-  );
+  const sectionMap = useMemo(() => buildSectionMap(allItems, knownGroups), [allItems, knownGroups]);
   const sectionList = useMemo(() => Object.keys(sectionMap).sort(), [sectionMap]);
 
   const groupOptions = useMemo(() => {
@@ -169,25 +174,25 @@ export default function AdminPage() {
     return Array.from(all).sort();
   }, [sectionMap]);
 
-  const sectionItemCount = useMemo(() => 
-    section !== ALL ? allItems.filter(i => i.section === section).length : 0,
+  const sectionItemCount = useMemo(
+    () => (section !== ALL ? allItems.filter((i) => i.section === section).length : 0),
     [allItems, section]
   );
 
-  const groupItemCount = useMemo(() => 
-    group !== ALL ? allItems.filter(i => i.section === section && i.group === group).length : 0,
+  const groupItemCount = useMemo(
+    () => (group !== ALL ? allItems.filter((i) => i.section === section && i.group === group).length : 0),
     [allItems, section, group]
   );
 
   // Profile pictures for person dropdown (when section is "Youtube Chanel Videos")
   const profilePictures = useMemo(() => {
-    return allItems.filter(item => item.section === "Youtube_Channel_Profile_Picture" && item.person);
+    return allItems.filter((item) => item.section === "Youtube_Channel_Profile_Picture" && item.person);
   }, [allItems]);
 
   // Unique persons and titles for filter dropdowns
   const uniquePersons = useMemo(() => {
     const persons = new Set<string>();
-    allItems.forEach(item => {
+    allItems.forEach((item) => {
       if (item.person && item.person.trim()) {
         persons.add(item.person.trim());
       }
@@ -197,7 +202,7 @@ export default function AdminPage() {
 
   const uniqueTitles = useMemo(() => {
     const titles = new Set<string>();
-    allItems.forEach(item => {
+    allItems.forEach((item) => {
       if (item.title && item.title.trim()) {
         titles.add(item.title.trim());
       }
@@ -259,7 +264,7 @@ export default function AdminPage() {
     if (!t) {
       setAuthorized(false);
       setAuthError("Token is required.");
-      pushLog("\u274C Missing token");
+      pushLog("❌ Missing token");
       return;
     }
     const out = await apiJson("/api/admin/validate", {
@@ -273,12 +278,12 @@ export default function AdminPage() {
       setAuthorized(false);
       const msg = (body && (body.detail || body.error || body.message)) || `Invalid token (HTTP ${out.status})`;
       setAuthError(String(msg));
-      pushLog(`\u274C ${msg}`);
+      pushLog(`❌ ${msg}`);
       return;
     }
     setAuthorized(true);
     setAuthError("");
-    pushLog("\u2705 Token accepted");
+    pushLog("✅ Token accepted");
     await refreshAll();
   }
 
@@ -300,7 +305,7 @@ export default function AdminPage() {
       setAllItems(loaded);
       pushLog(`Loaded: ${loaded.length} total items`);
     } catch (e: any) {
-      pushLog(`\u274C ${e?.message ?? String(e)}`);
+      pushLog(`❌ ${e?.message ?? String(e)}`);
     } finally {
       setBusy(false);
     }
@@ -389,84 +394,104 @@ export default function AdminPage() {
   }
 
   async function uploadMedia() {
-    if (!authorized || !uploadTitle.trim() || !resolveUploadSection() || !uploadFiles.length) {
-      pushLog("\u274C Upload requirements not met");
-      return;
-    }
     const sec = resolveUploadSection();
     const grp = resolveUploadGroup();
-    // Validate person is required for "Youtube Chanel Videos"
-    if (sec === "Youtube Chanel Videos" && !uploadPerson.trim()) {
-      pushLog("\u274C Person is required for Youtube Chanel Videos section");
+
+    // NEW RULES:
+    // - Must be authorized
+    // - Must select SECTION + GROUP
+    // - Must pick at least 1 file
+    // - Title is auto from filename (per-file)
+    // - Person is optional (always)
+    if (!authorized || !sec || !grp || uploadFiles.length === 0) {
+      pushLog("❌ Upload requirements not met (need Section, Group, and file(s))");
       return;
     }
+
+    // Helper: convert "My Video File.mp4" -> "My Video File"
+    const titleFromFilename = (name: string) =>
+      (name || "").replace(/\.[^/.]+$/, "").trim() || name;
+
     setBusy(true);
     try {
-      pushLog(`Uploading ${uploadFiles.length} file(s) to ${sec}${grp ? ` → ${grp}` : ""}...`);
+      pushLog(`Uploading ${uploadFiles.length} file(s) to ${sec} → ${grp}...`);
+
       for (const f of uploadFiles) {
         const pres = await presignOne(f);
         const contentType = guessContentType(f);
+
         const putRes = await fetch(pres.uploadUrl, {
           method: "PUT",
           headers: { "content-type": contentType },
           body: f,
         });
         if (!putRes.ok) throw new Error(`S3 upload failed (HTTP ${putRes.status}) ${f.name}`);
+
         await registerOne({
           url: pres.publicUrl,
           section: sec,
-          title: uploadTitle.trim(),
-          group: grp || undefined,
-          person: uploadPerson.trim() || undefined,
+          group: grp, // REQUIRED now
+          title: titleFromFilename(f.name), // AUTO title per file
+          person: uploadPerson.trim() || undefined, // OPTIONAL always
           date: uploadDate.trim() || undefined,
           description: uploadDescription.trim() || undefined,
         });
-        pushLog(`\u2705 Uploaded: ${f.name}`);
+
+        pushLog(`✅ Uploaded: ${f.name}`);
       }
+
       clearUpload();
       await refreshAll();
     } catch (e: any) {
-      pushLog(`\u274C Upload failed: ${e?.message ?? String(e)}`);
+      pushLog(`❌ Upload failed: ${e?.message ?? String(e)}`);
     } finally {
       setBusy(false);
     }
   }
 
   async function importFromUrl() {
-    if (!authorized || !uploadUrl.trim() || !uploadTitle.trim() || !resolveUploadSection()) {
-      pushLog("\u274C Import requirements not met");
+    // NEW RULES for URL import:
+    // - Must select SECTION + GROUP
+    // - Must provide URL + Title (no filename available)
+    // - Person optional always
+    if (
+      !authorized ||
+      !uploadUrl.trim() ||
+      !uploadTitle.trim() ||
+      !resolveUploadSection() ||
+      !resolveUploadGroup()
+    ) {
+      pushLog("❌ Import requirements not met");
       return;
     }
+
     const sec = resolveUploadSection();
     const grp = resolveUploadGroup();
-    // Validate person is required for "Youtube Chanel Videos"
-    if (sec === "Youtube Chanel Videos" && !uploadPerson.trim()) {
-      pushLog("\u274C Person is required for Youtube Chanel Videos section");
-      return;
-    }
+
     setBusy(true);
     try {
       pushLog(`Importing from URL: ${uploadUrl.trim().slice(0, 80)}...`);
       const payload: any = {
         url: uploadUrl.trim(),
         section: sec,
+        group: grp, // REQUIRED now
         title: uploadTitle.trim(),
       };
-      if (grp) payload.group = grp;
       if (uploadPerson.trim()) payload.person = uploadPerson.trim();
       if (uploadDate.trim()) payload.date = uploadDate.trim();
       if (uploadDescription.trim()) payload.description = uploadDescription.trim();
+
       const out = await apiJson("/api/admin/import-url", {
         method: "POST",
         headers: { "content-type": "application/json", "x-admin-token": token },
         body: JSON.stringify(payload),
       });
       if (!out.ok) throw new Error(out.data?.detail || out.data?.error || `Import failed (HTTP ${out.status})`);
-      pushLog(`\u2705 Imported: ${out.data?.title || uploadTitle.trim()} (${out.data?.PK})`);
+      pushLog(`✅ Imported: ${out.data?.title || uploadTitle.trim()} (${out.data?.PK})`);
       clearUpload();
       await refreshAll();
     } catch (e: any) {
-      pushLog(`\u274C Import failed: ${e?.message ?? String(e)}`);
+      pushLog(`❌ Import failed: ${e?.message ?? String(e)}`);
     } finally {
       setBusy(false);
     }
@@ -483,10 +508,10 @@ export default function AdminPage() {
         headers: { "x-admin-token": token },
       });
       if (!out.ok) throw new Error(out.data?.detail || out.data?.error || "Delete failed");
-      pushLog(`\uD83D\uDDD1\uFE0F Deleted: ${it.PK}`);
+      pushLog(`🗑️ Deleted: ${it.PK}`);
       await refreshAll();
     } catch (e: any) {
-      pushLog(`\u274C ${e?.message ?? String(e)}`);
+      pushLog(`❌ ${e?.message ?? String(e)}`);
     } finally {
       setBusy(false);
     }
@@ -532,21 +557,20 @@ export default function AdminPage() {
     const destSection = resolveEditSection();
     const destGroup = resolveEditGroup();
     if (!destSection) {
-      pushLog("\u274C Section is required");
+      pushLog("❌ Section is required");
       return;
     }
-    // Validate person is required for "Youtube Chanel Videos"
-    if (destSection === "Youtube Chanel Videos" && !editingFields.person?.trim()) {
-      pushLog("\u274C Person is required for Youtube Chanel Videos section");
-      return;
-    }
+
+    // NEW RULES:
+    // - Person is optional always (no special requirement)
+    // - Group is optional in edit (keep as-is; upload requires group)
     setBusy(true);
     try {
       const sectionChanged = destSection !== it.section;
       const groupChanged = destGroup !== (it.group || "");
-      
+
       let newUrl = it.url; // Keep existing URL by default
-      
+
       // If a new file is selected, upload it first
       if (editFile) {
         pushLog(`Uploading new image for ${it.PK}...`);
@@ -559,9 +583,9 @@ export default function AdminPage() {
         });
         if (!putRes.ok) throw new Error(`S3 upload failed (HTTP ${putRes.status}) ${editFile.name}`);
         newUrl = pres.publicUrl;
-        pushLog(`\u2705 New image uploaded`);
+        pushLog(`✅ New image uploaded`);
       }
-      
+
       const payload: any = {
         PK: it.PK,
         title: editingFields.title,
@@ -572,19 +596,22 @@ export default function AdminPage() {
         group: destGroup,
         url: newUrl, // Include URL (either existing or new)
       };
+
       const out = await apiJson("/api/admin/slides", {
         method: "PATCH",
         headers: { "content-type": "application/json", "x-admin-token": token },
         body: JSON.stringify(payload),
       });
       if (!out.ok) throw new Error(out.data?.detail || out.data?.error || "Update failed");
+
       if (sectionChanged) {
-        pushLog(`\u27A1\uFE0F Moved ${it.PK}: ${it.section} → ${destSection}`);
+        pushLog(`➡️ Moved ${it.PK}: ${it.section} → ${destSection}`);
       } else if (groupChanged) {
-        pushLog(`\u27A1\uFE0F Moved ${it.PK}: group ${it.group || "(none)"} → ${destGroup || "(none)"}`);
+        pushLog(`➡️ Moved ${it.PK}: group ${it.group || "(none)"} → ${destGroup || "(none)"}`);
       } else {
-        pushLog(`\u270F\uFE0F Updated: ${it.PK}`);
+        pushLog(`✏️ Updated: ${it.PK}`);
       }
+
       setEditingPK("");
       setEditingFields({});
       setEditNewSection("");
@@ -597,7 +624,7 @@ export default function AdminPage() {
         setTimeout(() => setGroup(destGroup || ALL), 50);
       }
     } catch (e: any) {
-      pushLog(`\u274C ${e?.message ?? String(e)}`);
+      pushLog(`❌ ${e?.message ?? String(e)}`);
     } finally {
       setBusy(false);
     }
@@ -606,13 +633,13 @@ export default function AdminPage() {
   // ── Delete Handlers ──────────────────────────────────────────────────
   async function handleDeleteSection() {
     if (!targetSection || targetSection === sectionToDelete) {
-      pushLog("\u274C Invalid target section");
+      pushLog("❌ Invalid target section");
       return;
     }
     setDeleteBusy(true);
     pushLog(`Starting move & delete of section "${sectionToDelete}" → "${targetSection}"`);
     try {
-      const itemsToMove = allItems.filter(i => i.section === sectionToDelete);
+      const itemsToMove = allItems.filter((i) => i.section === sectionToDelete);
       const count = itemsToMove.length;
       if (count === 0) {
         pushLog(`Section "${sectionToDelete}" is already empty → refreshing`);
@@ -639,7 +666,7 @@ export default function AdminPage() {
         pushLog(`Moved ${success} of ${count} items`);
       }
       await refreshAll();
-      await new Promise(r => setTimeout(r, 600));
+      await new Promise((r) => setTimeout(r, 600));
       setShowDeleteSectionModal(false);
       setSection(ALL);
       pushLog(`Section delete operation completed`);
@@ -653,16 +680,14 @@ export default function AdminPage() {
 
   async function handleDeleteGroup() {
     if (!targetSection) {
-      pushLog("\u274C No target section selected");
+      pushLog("❌ No target section selected");
       return;
     }
     setDeleteBusy(true);
     const targetGrp = targetGroup === ALL ? "" : targetGroup;
-    pushLog(`Deleting group "${groupToDelete}" in "${sectionToDelete}" → "${targetSection}" / "${targetGrp || '(none)'}"`);
+    pushLog(`Deleting group "${groupToDelete}" in "${sectionToDelete}" → "${targetSection}" / "${targetGrp || "(none)"}"`);
     try {
-      const itemsToMove = allItems.filter(
-        i => i.section === sectionToDelete && i.group === groupToDelete
-      );
+      const itemsToMove = allItems.filter((i) => i.section === sectionToDelete && i.group === groupToDelete);
       const count = itemsToMove.length;
       if (count === 0) {
         pushLog(`Group "${groupToDelete}" is already empty → refreshing`);
@@ -689,7 +714,7 @@ export default function AdminPage() {
         pushLog(`Moved ${success} of ${count} items`);
       }
       await refreshAll();
-      await new Promise(r => setTimeout(r, 600));
+      await new Promise((r) => setTimeout(r, 600));
       setShowDeleteGroupModal(false);
       setGroup(ALL);
       pushLog(`Group delete operation completed`);
@@ -730,18 +755,18 @@ export default function AdminPage() {
   useEffect(() => {
     const handleProgress = (e: any) => {
       const { index, status, s3Url, size, error, allDone, current } = e.detail;
-      
+
       if (allDone) {
         // Mark all as done
-        setYoutubeProgress(prev => ({
+        setYoutubeProgress((prev) => ({
           ...prev,
           current: prev.total,
-          status: '🎉 All videos processed!',
+          status: "🎉 All videos processed!",
         }));
         return;
       }
-      
-      setYoutubeProgress(prev => {
+
+      setYoutubeProgress((prev) => {
         const newDetails = [...prev.details];
         if (index !== undefined && newDetails[index]) {
           newDetails[index] = {
@@ -752,24 +777,30 @@ export default function AdminPage() {
             error,
           };
         }
-        
+
         return {
           ...prev,
           details: newDetails,
           current: current !== undefined ? current + 1 : prev.current,
           currentVideo: newDetails[index]?.title || prev.currentVideo,
-          status: status === 'downloading' ? `⬇️ Downloading video ${index + 1}...` :
-                  status === 'uploading' ? `⬆️ Uploading video ${index + 1}...` :
-                  status === 'saving' ? `💾 Saving video ${index + 1}...` :
-                  status === 'done' ? `✅ Video ${index + 1} complete!` :
-                  status === 'error' ? `❌ Video ${index + 1} failed` :
-                  prev.status,
+          status:
+            status === "downloading"
+              ? `⬇️ Downloading video ${index + 1}...`
+              : status === "uploading"
+              ? `⬆️ Uploading video ${index + 1}...`
+              : status === "saving"
+              ? `💾 Saving video ${index + 1}...`
+              : status === "done"
+              ? `✅ Video ${index + 1} complete!`
+              : status === "error"
+              ? `❌ Video ${index + 1} failed`
+              : prev.status,
         };
       });
     };
-    
-    window.addEventListener('youtube-progress', handleProgress as EventListener);
-    return () => window.removeEventListener('youtube-progress', handleProgress as EventListener);
+
+    window.addEventListener("youtube-progress", handleProgress as EventListener);
+    return () => window.removeEventListener("youtube-progress", handleProgress as EventListener);
   }, []);
 
   return (
@@ -778,16 +809,12 @@ export default function AdminPage() {
         {/* Header */}
         <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
           <div>
-            <h1 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">
-              Radio Olgoo Admin
-            </h1>
+            <h1 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">Radio Olgoo Admin</h1>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <span
               className={`px-2.5 py-1 rounded-full text-xs font-bold border ${
-                authorized
-                  ? "bg-green-50 text-green-700 border-green-200"
-                  : "bg-red-50 text-red-700 border-red-200"
+                authorized ? "bg-green-50 text-green-700 border-green-200" : "bg-red-50 text-red-700 border-red-200"
               }`}
             >
               {authorized ? "✓ Authorized" : "🔒 Locked"}
@@ -868,11 +895,7 @@ export default function AdminPage() {
 
         {/* Gated Content */}
         <div className="relative">
-          <div
-            className={`transition-all duration-200 ${
-              authorized ? "opacity-100" : "opacity-40 blur-sm pointer-events-none"
-            }`}
-          >
+          <div className={`transition-all duration-200 ${authorized ? "opacity-100" : "opacity-40 blur-sm pointer-events-none"}`}>
             {/* Compact Filter Bar */}
             <section className="sticky top-0 z-20 mb-3 bg-white/95 backdrop-blur-md rounded-lg border border-slate-200 shadow-sm p-2.5">
               <div className="flex flex-wrap items-center gap-2">
@@ -889,6 +912,7 @@ export default function AdminPage() {
                     </option>
                   ))}
                 </select>
+
                 <select
                   value={group}
                   onChange={(e) => setGroup(e.target.value)}
@@ -902,6 +926,7 @@ export default function AdminPage() {
                     </option>
                   ))}
                 </select>
+
                 <select
                   value={personFilter}
                   onChange={(e) => setPersonFilter(e.target.value)}
@@ -915,6 +940,7 @@ export default function AdminPage() {
                     </option>
                   ))}
                 </select>
+
                 <select
                   value={titleFilter}
                   onChange={(e) => setTitleFilter(e.target.value)}
@@ -928,6 +954,7 @@ export default function AdminPage() {
                     </option>
                   ))}
                 </select>
+
                 <div className="relative flex-1 min-w-[150px] max-w-[250px]">
                   <input
                     value={search}
@@ -946,6 +973,7 @@ export default function AdminPage() {
                     </button>
                   )}
                 </div>
+
                 {(section !== ALL || group !== ALL || search || personFilter || titleFilter) && (
                   <button
                     onClick={() => {
@@ -960,21 +988,21 @@ export default function AdminPage() {
                     Clear All
                   </button>
                 )}
+
                 <div className="ml-auto flex items-center">
                   <span className="px-2 py-1 rounded bg-slate-100 text-xs font-bold text-slate-700">
                     {filteredItems.length}/{allItems.length}
                   </span>
                 </div>
               </div>
-
             </section>
 
             {/* ── Items List ──────────────────────────────────────────── */}
             <section className="mb-4">
               <div className="flex justify-between items-center mb-3">
                 <h2 className="text-base font-black text-slate-900">
-                  {filteredItems.length} Item{filteredItems.length !== 1 ? 's' : ''} {section !== ALL ? `in ${section}` : ""}{" "}
-                  {group !== ALL ? `→ ${group}` : ""}
+                  {filteredItems.length} Item{filteredItems.length !== 1 ? "s" : ""}{" "}
+                  {section !== ALL ? `in ${section}` : ""} {group !== ALL ? `→ ${group}` : ""}
                 </h2>
               </div>
 
@@ -989,23 +1017,15 @@ export default function AdminPage() {
                     {/* Thumbnail Preview */}
                     <div className="relative aspect-video bg-slate-100 overflow-hidden">
                       {isVideo(it.url) ? (
-                        <video
-                          src={it.url}
-                          className="w-full h-full object-cover"
-                          preload="metadata"
-                          muted
-                        />
+                        <video src={it.url} className="w-full h-full object-cover" preload="metadata" muted />
                       ) : isImage(it.url) ? (
-                        <img
-                          src={it.url}
-                          alt={it.title}
-                          className="w-full h-full object-cover"
-                        />
+                        <img src={it.url} alt={it.title} className="w-full h-full object-cover" />
                       ) : (
                         <div className="w-full h-full flex items-center justify-center bg-slate-200">
                           <span className="text-slate-400 text-2xl">📄</span>
                         </div>
                       )}
+
                       {/* Action Buttons Overlay */}
                       <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                         {editingPK === it.PK ? (
@@ -1054,16 +1074,24 @@ export default function AdminPage() {
                     {editingPK !== it.PK ? (
                       <div className="p-3">
                         <div className="text-xs text-slate-500 font-bold mb-1 truncate">{it.PK}</div>
-                        <h3 className="text-sm font-black text-slate-900 mb-2 line-clamp-2 min-h-[2.5rem]">{it.title}</h3>
+                        <h3 className="text-sm font-black text-slate-900 mb-2 line-clamp-2 min-h-[2.5rem]">
+                          {it.title}
+                        </h3>
                         <div className="space-y-1 text-xs text-slate-600">
                           {it.section && (
-                            <div className="truncate"><span className="font-semibold">Section:</span> {it.section}</div>
+                            <div className="truncate">
+                              <span className="font-semibold">Section:</span> {it.section}
+                            </div>
                           )}
                           {it.group && (
-                            <div className="truncate"><span className="font-semibold">Group:</span> {it.group}</div>
+                            <div className="truncate">
+                              <span className="font-semibold">Group:</span> {it.group}
+                            </div>
                           )}
                           {it.person && (
-                            <div className="truncate"><span className="font-semibold">Person:</span> {it.person}</div>
+                            <div className="truncate">
+                              <span className="font-semibold">Person:</span> {it.person}
+                            </div>
                           )}
                         </div>
                         <a
@@ -1120,6 +1148,7 @@ export default function AdminPage() {
                                   />
                                 )}
                               </div>
+
                               <div className="flex-1 min-w-[200px]">
                                 <label className="block text-xs font-bold text-slate-700 mb-2">Group</label>
                                 <select
@@ -1131,8 +1160,8 @@ export default function AdminPage() {
                                   className="w-full px-4 py-2.5 rounded-lg border-2 border-blue-400 bg-white font-bold text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                                   disabled={editingFields.section === "__NEW__"}
                                 >
-                                  <option value="">(none)</option>
-                                  {(editingFields.section && sectionMap[editingFields.section] || []).map((g) => (
+                                  <option value="">-- Select --</option>
+                                  {((editingFields.section && sectionMap[editingFields.section]) || []).map((g) => (
                                     <option key={g} value={g}>
                                       {g}
                                     </option>
@@ -1162,19 +1191,17 @@ export default function AdminPage() {
                           </div>
 
                           <div>
-                            <label className="block text-xs font-bold text-slate-700 mb-2">
-                              Person {resolveEditSection() === "Youtube Chanel Videos" ? <span className="text-red-500">*</span> : "(optional)"}
-                            </label>
+                            <label className="block text-xs font-bold text-slate-700 mb-2">Person (optional)</label>
+
+                            {/* Keep dropdown for convenience when editing Youtube Chanel Videos, but it is NOT required */}
                             {resolveEditSection() === "Youtube Chanel Videos" ? (
                               <select
                                 value={editingFields.person || ""}
                                 onChange={(e) => setEditingFields({ ...editingFields, person: e.target.value })}
-                                className={`w-full px-4 py-2.5 rounded-lg border bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed ${
-                                  editingFields.person ? "border-slate-300" : "border-red-400"
-                                }`}
+                                className="w-full px-4 py-2.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                                 disabled={busy}
                               >
-                                <option value="">-- Select Person --</option>
+                                <option value="">-- (none) --</option>
                                 {profilePictures.map((profile) => (
                                   <option key={profile.PK} value={profile.person || ""}>
                                     {profile.person || "Unknown"}
@@ -1233,7 +1260,15 @@ export default function AdminPage() {
                               )}
                               {!editFile && it.url && (
                                 <div className="mt-2 text-xs text-slate-600 font-bold">
-                                  Current: <a href={it.url} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">View current image</a>
+                                  Current:{" "}
+                                  <a
+                                    href={it.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-blue-500 hover:underline"
+                                  >
+                                    View current image
+                                  </a>
                                 </div>
                               )}
                             </div>
@@ -1248,9 +1283,7 @@ export default function AdminPage() {
                   <div className="opacity-70 font-bold p-4 rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 text-center text-sm text-slate-600">
                     {allItems.length === 0
                       ? "No items uploaded yet."
-                      : `No items match the current filter (${filterLabel}${
-                          group !== ALL ? ` → ${filterGroupLabel}` : ""
-                        }).`}
+                      : `No items match the current filter (${filterLabel}${group !== ALL ? ` → ${filterGroupLabel}` : ""}).`}
                   </div>
                 )}
               </div>
@@ -1329,9 +1362,7 @@ export default function AdminPage() {
               <div className="flex gap-2 mb-6 border-b-2 border-slate-200 pb-3">
                 <button
                   className={`px-4 py-2 rounded-lg font-bold text-sm transition-all ${
-                    uploadMode === "file"
-                      ? "bg-slate-900 text-white"
-                      : "bg-transparent text-slate-600 hover:bg-slate-50"
+                    uploadMode === "file" ? "bg-slate-900 text-white" : "bg-transparent text-slate-600 hover:bg-slate-50"
                   } disabled:opacity-50 disabled:cursor-not-allowed`}
                   onClick={() => setUploadMode("file")}
                   disabled={busy}
@@ -1340,9 +1371,7 @@ export default function AdminPage() {
                 </button>
                 <button
                   className={`px-4 py-2 rounded-lg font-bold text-sm transition-all ${
-                    uploadMode === "url"
-                      ? "bg-slate-900 text-white"
-                      : "bg-transparent text-slate-600 hover:bg-slate-50"
+                    uploadMode === "url" ? "bg-slate-900 text-white" : "bg-transparent text-slate-600 hover:bg-slate-50"
                   } disabled:opacity-50 disabled:cursor-not-allowed`}
                   onClick={() => setUploadMode("url")}
                   disabled={busy}
@@ -1388,7 +1417,9 @@ export default function AdminPage() {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-2">Group (optional)</label>
+                    <label className="block text-xs font-bold text-slate-700 mb-2">
+                      Group <span className="text-red-500">*</span>
+                    </label>
                     <select
                       value={uploadGroup}
                       onChange={(e) => {
@@ -1398,14 +1429,15 @@ export default function AdminPage() {
                       className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white font-semibold text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                       disabled={busy || !authorized || !uploadSection || uploadSection === "__NEW__"}
                     >
-                      <option value="">(none)</option>
-                      {(uploadSection && sectionMap[uploadSection] || []).map((g) => (
+                      <option value="">-- Select --</option>
+                      {((uploadSection && sectionMap[uploadSection]) || []).map((g) => (
                         <option key={g} value={g}>
                           {g}
                         </option>
                       ))}
                       <option value="__NEW__">➕ Add New Group...</option>
                     </select>
+
                     {uploadGroup === "__NEW__" && (
                       <div className="mt-2 flex items-center gap-2">
                         <input
@@ -1420,11 +1452,11 @@ export default function AdminPage() {
                           className="px-3 py-2 rounded-lg bg-green-600 text-white hover:bg-green-700 active:bg-green-800 disabled:opacity-50 disabled:cursor-not-allowed font-bold text-xs transition-colors"
                           onClick={async () => {
                             if (!uploadNewGroup.trim()) {
-                              pushLog("\u274C Please enter a group name");
+                              pushLog("❌ Please enter a group name");
                               return;
                             }
                             if (!uploadSection || uploadSection === "__NEW__") {
-                              pushLog("\u274C Select a section first");
+                              pushLog("❌ Select a section first");
                               return;
                             }
                             setBusy(true);
@@ -1444,17 +1476,18 @@ export default function AdminPage() {
                               });
                               const data = await res.json();
                               if (res.ok && data.success) {
-                                pushLog(`\u2705 Group "${uploadNewGroup.trim()}" created in "${finalSection}"`);
+                                pushLog(`✅ Group "${uploadNewGroup.trim()}" created in "${finalSection}"`);
+                                const createdName = uploadNewGroup.trim();
                                 setUploadNewGroup("");
-                                setUploadGroup(uploadNewGroup.trim());
+                                setUploadGroup(createdName);
                                 await refreshAll();
-                                await new Promise(r => setTimeout(r, 800));
+                                await new Promise((r) => setTimeout(r, 800));
                                 await refreshAll();
                               } else {
-                                pushLog(`\u274C Failed: ${data.error || "Unknown error"}`);
+                                pushLog(`❌ Failed: ${data.error || "Unknown error"}`);
                               }
                             } catch (err: any) {
-                              pushLog(`\u274C Error creating group: ${err.message}`);
+                              pushLog(`❌ Error creating group: ${err.message}`);
                             } finally {
                               setBusy(false);
                             }
@@ -1469,32 +1502,48 @@ export default function AdminPage() {
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  {/* Title behavior differs by mode */}
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-2">
-                      Title <span className="text-red-500">*</span>
+                      Title{" "}
+                      {uploadMode === "url" ? (
+                        <span className="text-red-500">*</span>
+                      ) : (
+                        <span className="text-slate-500">(auto from filename)</span>
+                      )}
                     </label>
-                    <input
-                      value={uploadTitle}
-                      onChange={(e) => setUploadTitle(e.target.value)}
-                      placeholder="Enter title"
-                      className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                      disabled={busy || !authorized}
-                    />
+
+                    {uploadMode === "url" ? (
+                      <input
+                        value={uploadTitle}
+                        onChange={(e) => setUploadTitle(e.target.value)}
+                        placeholder="Enter title"
+                        className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                        disabled={busy || !authorized}
+                      />
+                    ) : (
+                      <input
+                        value=""
+                        readOnly
+                        placeholder="Auto-filled from each filename (MyVideo.mp4 → MyVideo)"
+                        className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 text-slate-600 cursor-not-allowed text-sm"
+                        disabled
+                      />
+                    )}
                   </div>
+
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-2">
-                      Person {resolveUploadSection() === "Youtube Chanel Videos" ? <span className="text-red-500">*</span> : "(optional)"}
-                    </label>
+                    <label className="block text-xs font-bold text-slate-700 mb-2">Person (optional)</label>
+
+                    {/* Keep dropdown for convenience when section is Youtube Chanel Videos, but NOT required */}
                     {resolveUploadSection() === "Youtube Chanel Videos" ? (
                       <select
                         value={uploadPerson}
                         onChange={(e) => setUploadPerson(e.target.value)}
-                        className={`w-full px-3 py-2 rounded-lg border bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed ${
-                          uploadPerson.trim() ? "border-slate-300" : "border-red-400"
-                        }`}
+                        className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                         disabled={busy || !authorized}
                       >
-                        <option value="">-- Select Person --</option>
+                        <option value="">-- (none) --</option>
                         {profilePictures.map((profile) => (
                           <option key={profile.PK} value={profile.person || ""}>
                             {profile.person || "Unknown"}
@@ -1511,6 +1560,7 @@ export default function AdminPage() {
                       />
                     )}
                   </div>
+
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-2">Date (optional)</label>
                     <input
@@ -1548,21 +1598,20 @@ export default function AdminPage() {
                         className="w-full px-3 py-2 rounded-lg border-2 border-dashed border-slate-300 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer file:mr-4 file:py-1.5 file:px-3 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
                       />
                       {uploadFiles.length > 0 && (
-                        <div className="mt-2 text-xs text-slate-600 font-bold">
-                          ✓ Selected: {uploadFiles.length} file(s)
-                        </div>
+                        <div className="mt-2 text-xs text-slate-600 font-bold">✓ Selected: {uploadFiles.length} file(s)</div>
                       )}
                     </div>
+
                     <div className="flex gap-3 pt-4">
                       <button
                         className="flex-1 px-4 py-3 rounded-lg bg-slate-900 text-white hover:bg-slate-800 active:bg-slate-950 disabled:opacity-50 disabled:cursor-not-allowed font-black text-sm transition-colors shadow-lg"
                         onClick={uploadMedia}
                         disabled={
-                          !authorized || 
-                          busy || 
-                          !uploadTitle.trim() || 
-                          !uploadFiles.length ||
-                          (resolveUploadSection() === "Youtube Chanel Videos" && !uploadPerson.trim())
+                          !authorized ||
+                          busy ||
+                          !resolveUploadSection() ||
+                          !resolveUploadGroup() ||
+                          !uploadFiles.length
                         }
                       >
                         {busy ? "⏳ Working..." : "⬆️ Upload"}
@@ -1590,16 +1639,18 @@ export default function AdminPage() {
                         Supported: X/Twitter, YouTube, Instagram, and 1000+ sites via yt-dlp
                       </div>
                     </div>
+
                     <div className="flex gap-3 pt-4">
                       <button
                         className="flex-1 px-4 py-3 rounded-lg bg-purple-600 text-white hover:bg-purple-700 active:bg-purple-800 disabled:opacity-50 disabled:cursor-not-allowed font-black text-sm transition-colors shadow-lg"
                         onClick={importFromUrl}
                         disabled={
-                          !authorized || 
-                          busy || 
-                          !uploadTitle.trim() || 
-                          !uploadUrl.trim() ||
-                          (resolveUploadSection() === "Youtube Chanel Videos" && !uploadPerson.trim())
+                          !authorized ||
+                          busy ||
+                          !resolveUploadSection() ||
+                          !resolveUploadGroup() ||
+                          !uploadTitle.trim() ||
+                          !uploadUrl.trim()
                         }
                       >
                         {busy ? "⏳ Downloading & importing..." : "🔗 Import from URL"}
@@ -1622,29 +1673,25 @@ export default function AdminPage() {
         {showDeleteSectionModal && (
           <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl">
-              <h3 className="text-xl font-black text-red-700 mb-4">
-                Delete Section: {sectionToDelete}
-              </h3>
+              <h3 className="text-xl font-black text-red-700 mb-4">Delete Section: {sectionToDelete}</h3>
 
               <p className="text-sm text-slate-700 mb-4">
                 {sectionItemCount > 0 ? (
-                  <>This section contains <strong className="font-black">{sectionItemCount}</strong> items.</>
+                  <>
+                    This section contains <strong className="font-black">{sectionItemCount}</strong> items.
+                  </>
                 ) : (
                   <>This section is empty and will disappear after refresh.</>
                 )}
               </p>
 
               {sectionItemCount > 0 && (
-                <p className="text-sm text-slate-600 mb-4">
-                  You must move these items to another section before deletion.
-                </p>
+                <p className="text-sm text-slate-600 mb-4">You must move these items to another section before deletion.</p>
               )}
 
               {sectionItemCount > 0 && (
                 <div className="mb-4">
-                  <label className="block font-black text-sm text-slate-700 mb-2">
-                    Move to section:
-                  </label>
+                  <label className="block font-black text-sm text-slate-700 mb-2">Move to section:</label>
                   <select
                     value={targetSection}
                     onChange={(e) => {
@@ -1654,22 +1701,18 @@ export default function AdminPage() {
                     className="w-full px-4 py-2.5 rounded-lg border-2 border-blue-400 bg-white font-bold text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                   >
                     <option value="">— Select target section —</option>
-                    {sectionList
-                      .filter((s) => s !== sectionToDelete)
-                      .map((s) => (
-                        <option key={s} value={s}>
-                          {s}
-                        </option>
-                      ))}
+                    {sectionList.filter((s) => s !== sectionToDelete).map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
                   </select>
                 </div>
               )}
 
               {sectionItemCount > 0 && targetSection && sectionMap[targetSection]?.length > 0 && (
                 <div className="mb-4">
-                  <label className="block font-black text-sm text-slate-700 mb-2">
-                    Move to group (optional):
-                  </label>
+                  <label className="block font-black text-sm text-slate-700 mb-2">Move to group (optional):</label>
                   <select
                     value={targetGroup}
                     onChange={(e) => setTargetGroup(e.target.value)}
@@ -1737,7 +1780,9 @@ export default function AdminPage() {
 
               <p className="text-sm text-slate-700 mb-4">
                 {groupItemCount > 0 ? (
-                  <>This group contains <strong className="font-black">{groupItemCount}</strong> items.</>
+                  <>
+                    This group contains <strong className="font-black">{groupItemCount}</strong> items.
+                  </>
                 ) : (
                   <>This group is empty and will disappear after refresh.</>
                 )}
@@ -1751,9 +1796,7 @@ export default function AdminPage() {
 
               {groupItemCount > 0 && (
                 <div className="mb-4">
-                  <label className="block font-black text-sm text-slate-700 mb-2">
-                    Move to section:
-                  </label>
+                  <label className="block font-black text-sm text-slate-700 mb-2">Move to section:</label>
                   <select
                     value={targetSection}
                     onChange={(e) => {
@@ -1774,9 +1817,7 @@ export default function AdminPage() {
 
               {groupItemCount > 0 && targetSection && sectionMap[targetSection]?.length > 0 && (
                 <div className="mb-4">
-                  <label className="block font-black text-sm text-slate-700 mb-2">
-                    Move to group (optional):
-                  </label>
+                  <label className="block font-black text-sm text-slate-700 mb-2">Move to group (optional):</label>
                   <select
                     value={targetGroup}
                     onChange={(e) => setTargetGroup(e.target.value)}
@@ -1849,13 +1890,13 @@ export default function AdminPage() {
               setYoutubeProgress({
                 current: 0,
                 total: videos.length,
-                currentVideo: '',
-                status: 'Starting...',
-                details: videos.map(v => ({
+                currentVideo: "",
+                status: "Starting...",
+                details: videos.map((v) => ({
                   title: v.title,
-                  status: 'fetching',
+                  status: "fetching",
                   uploadDate: v.uploadDate,
-                }))
+                })),
               });
             }}
             pushLog={pushLog}
@@ -1869,9 +1910,7 @@ export default function AdminPage() {
         {showYouTubeProgress && (
           <div className="bg-white rounded-2xl p-6 shadow-lg mb-6">
             <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl font-black text-slate-900">
-                🚀 Downloading & Uploading Videos
-              </h2>
+              <h2 className="text-xl font-black text-slate-900">🚀 Downloading & Uploading Videos</h2>
               <div className="text-sm font-bold text-slate-600">
                 {youtubeProgress.current} / {youtubeProgress.total} Complete
               </div>
@@ -1898,13 +1937,13 @@ export default function AdminPage() {
                 <div
                   key={idx}
                   className={`p-4 rounded-lg border-2 ${
-                    video.status === 'done'
-                      ? 'bg-green-50 border-green-300'
-                      : video.status === 'error'
-                      ? 'bg-red-50 border-red-300'
-                      : video.status === 'downloading' || video.status === 'uploading' || video.status === 'saving'
-                      ? 'bg-blue-50 border-blue-300'
-                      : 'bg-slate-50 border-slate-200'
+                    video.status === "done"
+                      ? "bg-green-50 border-green-300"
+                      : video.status === "error"
+                      ? "bg-red-50 border-red-300"
+                      : video.status === "downloading" || video.status === "uploading" || video.status === "saving"
+                      ? "bg-blue-50 border-blue-300"
+                      : "bg-slate-50 border-slate-200"
                   }`}
                 >
                   <div className="flex items-start justify-between">
@@ -1912,39 +1951,29 @@ export default function AdminPage() {
                       <h3 className="font-bold text-slate-900 mb-2">
                         {idx + 1}. {video.title}
                       </h3>
-                      
-                      {video.uploadDate && (
-                        <p className="text-xs text-slate-600 mb-1">
-                          📅 Uploaded: {video.uploadDate}
-                        </p>
-                      )}
-                      
+
+                      {video.uploadDate && <p className="text-xs text-slate-600 mb-1">📅 Uploaded: {video.uploadDate}</p>}
+
                       <div className="flex items-center gap-2">
-                        {video.status === 'fetching' && (
-                          <span className="text-sm text-slate-600">⏳ Waiting...</span>
-                        )}
-                        {video.status === 'downloading' && (
+                        {video.status === "fetching" && <span className="text-sm text-slate-600">⏳ Waiting...</span>}
+                        {video.status === "downloading" && (
                           <span className="text-sm text-blue-600 font-bold">⬇️ Downloading from YouTube...</span>
                         )}
-                        {video.status === 'uploading' && (
+                        {video.status === "uploading" && (
                           <span className="text-sm text-blue-600 font-bold">⬆️ Uploading to S3...</span>
                         )}
-                        {video.status === 'saving' && (
+                        {video.status === "saving" && (
                           <span className="text-sm text-blue-600 font-bold">💾 Saving to DynamoDB...</span>
                         )}
-                        {video.status === 'done' && (
+                        {video.status === "done" && (
                           <>
                             <span className="text-sm text-green-600 font-bold">✅ Complete!</span>
-                            {video.size && (
-                              <span className="text-xs text-slate-600">({video.size})</span>
-                            )}
+                            {video.size && <span className="text-xs text-slate-600">({video.size})</span>}
                           </>
                         )}
-                        {video.status === 'error' && (
-                          <span className="text-sm text-red-600 font-bold">❌ Failed</span>
-                        )}
+                        {video.status === "error" && <span className="text-sm text-red-600 font-bold">❌ Failed</span>}
                       </div>
-                      
+
                       {video.s3Url && (
                         <a
                           href={video.s3Url}
@@ -1955,22 +1984,16 @@ export default function AdminPage() {
                           🔗 View in S3
                         </a>
                       )}
-                      
-                      {video.error && (
-                        <p className="text-xs text-red-600 mt-1">Error: {video.error}</p>
-                      )}
+
+                      {video.error && <p className="text-xs text-red-600 mt-1">Error: {video.error}</p>}
                     </div>
-                    
+
                     <div className="ml-4">
-                      {video.status === 'done' && (
-                        <div className="text-2xl">✅</div>
-                      )}
-                      {video.status === 'error' && (
-                        <div className="text-2xl">❌</div>
-                      )}
-                      {(video.status === 'downloading' || video.status === 'uploading' || video.status === 'saving') && (
-                        <div className="text-2xl animate-spin">⏳</div>
-                      )}
+                      {video.status === "done" && <div className="text-2xl">✅</div>}
+                      {video.status === "error" && <div className="text-2xl">❌</div>}
+                      {(video.status === "downloading" ||
+                        video.status === "uploading" ||
+                        video.status === "saving") && <div className="text-2xl animate-spin">⏳</div>}
                     </div>
                   </div>
                 </div>
@@ -2023,19 +2046,13 @@ function YouTubeImportModal({
   busy: boolean;
   setBusy: (busy: boolean) => void;
 }) {
-  const [channels, setChannels] = useState<Array<{ url: string; group: string }>>([
-    { url: "", group: "" },
-  ]);
+  const [channels, setChannels] = useState<Array<{ url: string; group: string }>>([{ url: "", group: "" }]);
   const [fetchedVideos, setFetchedVideos] = useState<any[]>([]);
   const [fetching, setFetching] = useState(false);
 
-  const addChannel = () => {
-    setChannels([...channels, { url: "", group: "" }]);
-  };
+  const addChannel = () => setChannels([...channels, { url: "", group: "" }]);
 
-  const removeChannel = (index: number) => {
-    setChannels(channels.filter((_, i) => i !== index));
-  };
+  const removeChannel = (index: number) => setChannels(channels.filter((_, i) => i !== index));
 
   const updateChannel = (index: number, field: "url" | "group", value: string) => {
     const updated = [...channels];
@@ -2045,7 +2062,7 @@ function YouTubeImportModal({
 
   const fetchVideos = async () => {
     const validChannels = channels.filter((ch) => ch.url.trim() && ch.group.trim());
-    
+
     if (validChannels.length === 0) {
       alert("Please enter at least one channel URL with a group selected");
       return;
@@ -2092,29 +2109,17 @@ function YouTubeImportModal({
 
     // Pass videos to parent and close modal
     onStartProgress(fetchedVideos);
-    
+
     // Start the download process
     downloadVideosWithProgress(fetchedVideos, token, pushLog);
   };
 
   return (
-    <div
-      className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
-      onClick={onClose}
-    >
-      <div
-        className="bg-white rounded-2xl p-6 max-w-4xl w-full max-h-[90vh] overflow-y-auto shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl p-6 max-w-4xl w-full max-h-[90vh] overflow-y-auto shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex justify-between items-center mb-6">
-          <h2 className="text-xl font-black text-slate-900">
-            📺 Import Latest Videos from YouTube Channel-s
-          </h2>
-          <button
-            onClick={onClose}
-            className="p-2 rounded-lg hover:bg-slate-100 transition-colors"
-            aria-label="Close"
-          >
+          <h2 className="text-xl font-black text-slate-900">📺 Import Latest Videos from YouTube Channel-s</h2>
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-slate-100 transition-colors" aria-label="Close">
             ✕
           </button>
         </div>
@@ -2185,20 +2190,13 @@ function YouTubeImportModal({
         {fetchedVideos.length > 0 && (
           <>
             <div className="mb-4">
-              <h3 className="text-lg font-bold text-slate-900 mb-3">
-                📋 Fetched Videos ({fetchedVideos.length})
-              </h3>
+              <h3 className="text-lg font-bold text-slate-900 mb-3">📋 Fetched Videos ({fetchedVideos.length})</h3>
               <div className="space-y-3 max-h-96 overflow-y-auto">
                 {fetchedVideos.map((video, index) => (
-                  <div
-                    key={index}
-                    className="p-4 border border-slate-200 rounded-lg bg-slate-50"
-                  >
+                  <div key={index} className="p-4 border border-slate-200 rounded-lg bg-slate-50">
                     <div className="flex justify-between items-start mb-2">
                       <div className="flex-1">
-                        <h4 className="font-bold text-sm text-slate-900 mb-1">
-                          {video.title}
-                        </h4>
+                        <h4 className="font-bold text-sm text-slate-900 mb-1">{video.title}</h4>
                         <div className="text-xs text-slate-600 space-y-1">
                           <div>📺 Channel: {video.channelTitle}</div>
                           <div>📅 Uploaded: {video.uploadDate}</div>
@@ -2235,38 +2233,31 @@ function YouTubeImportModal({
 }
 
 // Function to download videos with real-time progress updates
-async function downloadVideosWithProgress(
-  videos: any[],
-  token: string,
-  pushLog: (line: string) => void
-) {
+async function downloadVideosWithProgress(videos: any[], token: string, pushLog: (line: string) => void) {
   for (let i = 0; i < videos.length; i++) {
     const video = videos[i];
-    
+
     try {
       pushLog(`\n📹 Video ${i + 1}/${videos.length}: ${video.title}`);
-      
+
       // Update progress: downloading
-      window.dispatchEvent(new CustomEvent('youtube-progress', {
-        detail: {
-          index: i,
-          status: 'downloading',
-          current: i,
-        }
-      }));
-      
+      window.dispatchEvent(
+        new CustomEvent("youtube-progress", {
+          detail: { index: i, status: "downloading", current: i },
+        })
+      );
+
       pushLog(`   ⬇️ Downloading from YouTube...`);
-      
+
       // Update progress: uploading
-      window.dispatchEvent(new CustomEvent('youtube-progress', {
-        detail: {
-          index: i,
-          status: 'uploading',
-        }
-      }));
-      
+      window.dispatchEvent(
+        new CustomEvent("youtube-progress", {
+          detail: { index: i, status: "uploading" },
+        })
+      );
+
       pushLog(`   ⬆️ Uploading to S3...`);
-      
+
       // Call API to download and upload this single video
       const response = await fetch("/api/admin/youtube/download-upload", {
         method: "POST",
@@ -2283,51 +2274,45 @@ async function downloadVideosWithProgress(
 
       const data = await response.json();
       const result = data.results[0];
-      
+
       if (result.success) {
         // Update progress: saving
-        window.dispatchEvent(new CustomEvent('youtube-progress', {
-          detail: {
-            index: i,
-            status: 'saving',
-          }
-        }));
-        
+        window.dispatchEvent(
+          new CustomEvent("youtube-progress", {
+            detail: { index: i, status: "saving" },
+          })
+        );
+
         pushLog(`   💾 Saving to DynamoDB...`);
-        
+
         // Update progress: done
-        window.dispatchEvent(new CustomEvent('youtube-progress', {
-          detail: {
-            index: i,
-            status: 'done',
-            s3Url: result.s3Url,
-            size: '45 MB', // TODO: Get actual size
-          }
-        }));
-        
+        window.dispatchEvent(
+          new CustomEvent("youtube-progress", {
+            detail: {
+              index: i,
+              status: "done",
+              s3Url: result.s3Url,
+              size: "45 MB", // TODO: Get actual size
+            },
+          })
+        );
+
         pushLog(`   ✅ Complete! S3 URL: ${result.s3Url}`);
       } else {
         throw new Error(result.error || "Unknown error");
       }
     } catch (error: any) {
       pushLog(`   ❌ Failed: ${error.message}`);
-      
-      window.dispatchEvent(new CustomEvent('youtube-progress', {
-        detail: {
-          index: i,
-          status: 'error',
-          error: error.message,
-        }
-      }));
+
+      window.dispatchEvent(
+        new CustomEvent("youtube-progress", {
+          detail: { index: i, status: "error", error: error.message },
+        })
+      );
     }
   }
-  
+
   // All done
-  window.dispatchEvent(new CustomEvent('youtube-progress', {
-    detail: {
-      allDone: true,
-    }
-  }));
-  
+  window.dispatchEvent(new CustomEvent("youtube-progress", { detail: { allDone: true } }));
   pushLog(`\n🎉 All videos processed!`);
 }
