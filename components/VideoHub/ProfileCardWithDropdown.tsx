@@ -1,6 +1,7 @@
 "use client";
 
-import React from "react";
+import React, { useRef, useLayoutEffect, useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import ProfileCardDropdown from "./ProfileCardDropdown";
 
 type VideoItem = {
@@ -25,6 +26,8 @@ type ProfileCardWithDropdownProps = {
   /** When set, this card shows an inline video player instead of the profile image */
   playingVideo?: VideoItem | null;
   onClearPlayingVideo?: () => void;
+  /** "king" = Your Favourite card, ~1.6x larger than default */
+  size?: "default" | "king";
 };
 
 export default function ProfileCardWithDropdown({
@@ -36,17 +39,50 @@ export default function ProfileCardWithDropdown({
   onViewAllClick,
   playingVideo = null,
   onClearPlayingVideo,
+  size = "default",
 }: ProfileCardWithDropdownProps) {
   const isPlayingOnCard = Boolean(playingVideo);
+  const isKing = size === "king";
+  const cardRef = useRef<HTMLDivElement>(null);
+  const [dropdownStyle, setDropdownStyle] = useState<{ top: number; left: number } | null>(null);
+
+  const updateDropdownPosition = () => {
+    const el = cardRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    setDropdownStyle({
+      left: rect.left,
+      top: rect.bottom + 8,
+    });
+  };
+
+  useLayoutEffect(() => {
+    if (!isExpanded || typeof document === "undefined") {
+      setDropdownStyle(null);
+      return;
+    }
+    updateDropdownPosition();
+  }, [isExpanded]);
+
+  useEffect(() => {
+    if (!isExpanded) return;
+    const handleScrollOrResize = () => updateDropdownPosition();
+    window.addEventListener("scroll", handleScrollOrResize, true);
+    window.addEventListener("resize", handleScrollOrResize);
+    return () => {
+      window.removeEventListener("scroll", handleScrollOrResize, true);
+      window.removeEventListener("resize", handleScrollOrResize);
+    };
+  }, [isExpanded]);
 
   return (
-    <div className="relative">
+    <div ref={cardRef} className={`relative ${isKing ? "max-w-[450px] lg:max-w-[520px] xl:max-w-[600px] w-full h-full max-h-[calc(100%-50px)] min-h-0 flex flex-col" : ""}`}>
       <button
         type="button"
         onClick={onToggle}
-        className="w-full cursor-pointer hover:opacity-90 transition-opacity text-left"
+        className={`w-full cursor-pointer hover:opacity-90 transition-opacity text-left ${isKing ? "flex-1 min-h-0 max-h-full flex flex-col" : ""}`}
       >
-        <div className="relative w-full aspect-square rounded-lg overflow-hidden border border-white/20 bg-black">
+        <div className={`relative overflow-hidden border border-white/20 bg-black ${isKing ? "rounded-2xl flex-1 min-h-0 min-w-0 w-full aspect-square max-h-full max-w-full" : "rounded-lg w-full aspect-square"}`}>
           {isPlayingOnCard && playingVideo ? (
             <div
               className="absolute inset-0"
@@ -90,23 +126,27 @@ export default function ProfileCardWithDropdown({
             </div>
           )}
         </div>
-        <div className="text-white text-sm mt-2 text-center truncate">
+        <div className={`text-white text-sm mt-2 text-center truncate ${isKing ? "flex-shrink-0" : ""}`}>
           {profile.person}
         </div>
       </button>
 
-      {isExpanded && (
-        <div
-          className="absolute left-0 z-20 mt-2 w-full min-w-[480px] max-w-[min(100vw,480px)] animate-dropdown-in"
-          style={{ top: "100%" }}
-        >
-          <ProfileCardDropdown
-            videos={videos}
-            onVideoClick={onVideoClick}
-            onViewAllClick={onViewAllClick}
-          />
-        </div>
-      )}
+      {isExpanded && dropdownStyle &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div
+            data-profile-dropdown-portal
+            className="fixed z-[9999] w-full min-w-[480px] max-w-[min(100vw,480px)] animate-dropdown-in"
+            style={{ left: dropdownStyle.left, top: dropdownStyle.top }}
+          >
+            <ProfileCardDropdown
+              videos={videos}
+              onVideoClick={onVideoClick}
+              onViewAllClick={onViewAllClick}
+            />
+          </div>,
+          document.body
+        )}
     </div>
   );
 }

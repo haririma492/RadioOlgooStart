@@ -1,10 +1,16 @@
 import './globals.css'
-import { Urbanist } from 'next/font/google'
+import { Urbanist, Vazirmatn } from 'next/font/google'
 
 const urbanist = Urbanist({
   subsets: ['latin'],
   display: 'swap',
   variable: '--font-urbanist',
+})
+
+const vazirmatn = Vazirmatn({
+  subsets: ['arabic', 'latin'],
+  display: 'swap',
+  variable: '--font-vazirmatn',
 })
 
 export const metadata = {
@@ -18,7 +24,7 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en" className={urbanist.variable}>
+    <html lang="en" className={`${urbanist.variable} ${vazirmatn.variable}`}>
       <body className={urbanist.className}>{children}</body>
     </html>
   )
