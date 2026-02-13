@@ -29,3 +29,26 @@ html, body {
 .animate-dropdown-in {
   animation: dropdown-in 0.25s ease-out forwards;
 }
+
+.font-farsi {
+  font-family: var(--font-vazirmatn), sans-serif;
+}
+
+@keyframes date-strip {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-33.333%);
+  }
+}
+
+.animate-date-strip {
+  animation: date-strip 25s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-date-strip {
+    animation: none;
+  }
+}
