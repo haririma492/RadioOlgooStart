@@ -1,4 +1,4 @@
-import { gregorianToJalali } from "shamsi";
+import { gregorianToJalali, type MonthType, type DayType } from "shamsi";
 
 const WEEKDAY_FARSI = [
   "یکشنبه", // Sunday = 0
@@ -27,10 +27,12 @@ function toFarsiDigits(n: number): string {
 
 /** Shamsi (Solar Hijri): e.g. "جمعه، ۱۰ بهمن ۱۴۰۴" */
 export function formatShamsi(date: Date): string {
+  const month1Based = (date.getMonth() + 1) as MonthType;
+  const day = date.getDate() as DayType;
   const [jy, jm, jd] = gregorianToJalali(
     date.getFullYear(),
-    date.getMonth() + 1,
-    date.getDate()
+    month1Based,
+    day
   );
   const weekday = WEEKDAY_FARSI[date.getDay()];
   const month = SHAMSI_MONTHS_FARSI[jm - 1];
@@ -48,10 +50,12 @@ export function formatGeorgianFarsi(date: Date): string {
 
 /** Shahanshahi (Shamsi year + 1180): e.g. "جمعه، ۱۰ بهمن ۲۵۸۴" */
 export function formatShahanshahi(date: Date): string {
+  const month1Based = (date.getMonth() + 1) as MonthType;
+  const day = date.getDate() as DayType;
   const [jy, jm, jd] = gregorianToJalali(
     date.getFullYear(),
-    date.getMonth() + 1,
-    date.getDate()
+    month1Based,
+    day
   );
   const weekday = WEEKDAY_FARSI[date.getDay()];
   const month = SHAMSI_MONTHS_FARSI[jm - 1];
