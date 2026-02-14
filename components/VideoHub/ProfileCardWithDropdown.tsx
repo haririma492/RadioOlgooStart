@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef, useLayoutEffect, useState, useEffect } from "react";
+import React, { useRef, useState, useEffect, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
 import ProfileCardDropdown from "./ProfileCardDropdown";
 
@@ -46,32 +46,58 @@ export default function ProfileCardWithDropdown({
   const cardRef = useRef<HTMLDivElement>(null);
   const [dropdownStyle, setDropdownStyle] = useState<{ top: number; left: number } | null>(null);
 
-  const updateDropdownPosition = () => {
-    const el = cardRef.current;
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
+  const updatePosition = () => {
+    if (!cardRef.current) return;
+    const rect = cardRef.current.getBoundingClientRect();
+    const scrollX = window.scrollX;
+    const scrollY = window.scrollY;
+
+    // Position the bottom of the dropdown at the middle of the card
+    // rect.top is viewport relative, so we add scrollY to get page-relative pos
+    const targetTop = rect.top + scrollY + (rect.height / 2);
+
+    // Dropdown is 480px wide
+    const dropdownWidth = 480;
+    let targetLeft = rect.left + scrollX;
+    const viewportWidth = window.innerWidth;
+
+    // Boundary check for right side
+    if (targetLeft + dropdownWidth > viewportWidth + scrollX - 16) {
+      targetLeft = viewportWidth + scrollX - dropdownWidth - 16;
+    }
+    // Boundary check for left side
+    targetLeft = Math.max(scrollX + 16, targetLeft);
+
     setDropdownStyle({
-      left: rect.left,
-      top: rect.bottom + 8,
+      top: targetTop,
+      left: targetLeft
     });
   };
 
   useLayoutEffect(() => {
-    if (!isExpanded || typeof document === "undefined") {
+    if (isExpanded) {
+      updatePosition();
+    } else {
       setDropdownStyle(null);
-      return;
     }
-    updateDropdownPosition();
   }, [isExpanded]);
 
   useEffect(() => {
     if (!isExpanded) return;
-    const handleScrollOrResize = () => updateDropdownPosition();
-    window.addEventListener("scroll", handleScrollOrResize, true);
-    window.addEventListener("resize", handleScrollOrResize);
+
+    window.addEventListener("resize", updatePosition);
+
+    // Handle horizontal scroll of parents (which would move the card horizontally)
+    const scrollableParent = cardRef.current?.closest(".overflow-x-auto");
+    if (scrollableParent) {
+      scrollableParent.addEventListener("scroll", updatePosition, { passive: true });
+    }
+
     return () => {
-      window.removeEventListener("scroll", handleScrollOrResize, true);
-      window.removeEventListener("resize", handleScrollOrResize);
+      window.removeEventListener("resize", updatePosition);
+      if (scrollableParent) {
+        scrollableParent.removeEventListener("scroll", updatePosition);
+      }
     };
   }, [isExpanded]);
 
@@ -131,13 +157,19 @@ export default function ProfileCardWithDropdown({
         </div>
       </button>
 
-      {isExpanded && dropdownStyle &&
-        typeof document !== "undefined" &&
+      {/* Dropdown - portaled to body to avoid clipping, positioned absolutely relative to card middle */}
+      {isExpanded && dropdownStyle && typeof document !== "undefined" &&
         createPortal(
           <div
             data-profile-dropdown-portal
-            className="fixed z-[9999] w-full min-w-[480px] max-w-[min(100vw,480px)] animate-dropdown-in"
-            style={{ left: dropdownStyle.left, top: dropdownStyle.top }}
+            className="absolute z-[9999] animate-dropdown-in pointer-events-auto"
+            style={{
+              top: dropdownStyle.top,
+              left: dropdownStyle.left,
+              width: "480px",
+              transform: "translateY(-100%)",
+            }}
+            onClick={(e) => e.stopPropagation()}
           >
             <ProfileCardDropdown
               videos={videos}
@@ -146,7 +178,8 @@ export default function ProfileCardWithDropdown({
             />
           </div>,
           document.body
-        )}
+        )
+      }
     </div>
   );
 }

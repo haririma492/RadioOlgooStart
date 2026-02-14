@@ -54,6 +54,7 @@ function DateSegment({
       onMouseEnter={handleEnter}
       onMouseMove={handleMove}
       onMouseLeave={handleLeave}
+      style={{fontSize: '20px'}}
     >
       {text}
     </span>
