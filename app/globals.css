@@ -29,3 +29,39 @@ html, body {
 .animate-dropdown-in {
   animation: dropdown-in 0.25s ease-out forwards;
 }
+
+@keyframes glow {
+  0%, 100% {
+    box-shadow: 0 0 8px rgba(255, 255, 255, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 20px rgba(255, 255, 255, 0.9);
+  }
+}
+
+.animate-glow {
+  animation: glow 1.5s ease-in-out infinite;
+}
+
+.font-farsi {
+  font-family: var(--font-vazirmatn), sans-serif;
+}
+
+@keyframes date-strip {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-33.333%);
+  }
+}
+
+.animate-date-strip {
+  animation: date-strip 25s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-date-strip {
+    animation: none;
+  }
+}
