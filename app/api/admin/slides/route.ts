@@ -12,6 +12,7 @@ import {
   GetCommand,
   DeleteCommand,
 } from "@aws-sdk/lib-dynamodb";
+import { S3Client, DeleteObjectCommand } from "@aws-sdk/client-s3";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,6 +22,10 @@ const ddb = DynamoDBDocumentClient.from(
   new DynamoDBClient({ region }),
   { marshallOptions: { removeUndefinedValues: true } }
 );
+
+const s3 = new S3Client({ region });
+
+const BUCKET_NAME = "olgoo-radio-assets-548182874392";
 
 function json(data: any, status = 200) {
   return new NextResponse(JSON.stringify(data), {
@@ -93,7 +98,7 @@ export async function POST(req: NextRequest) {
     }
 
     const TableName = getEnv("DDB_TABLE_NAME");
-    
+
     // Generate PK
     const timestamp = Date.now();
     const rand = Math.random().toString(36).substring(2, 15);
@@ -108,11 +113,11 @@ export async function POST(req: NextRequest) {
       title,
       group: group || "",
       person: person || "",
-      date: date || new Date().toISOString().split("T")[0], // Default to today if not provided
+      date: date || new Date().toISOString().split("T")[0],
       description: description || "",
       active: true,
-      createdAt: now,  // ✅ Set creation timestamp
-      updatedAt: now,  // ✅ Set update timestamp
+      createdAt: now,
+      updatedAt: now,
     };
 
     await ddb.send(new PutCommand({ TableName, Item }));
@@ -141,7 +146,7 @@ export async function PATCH(req: NextRequest) {
 
     const TableName = getEnv("DDB_TABLE_NAME");
 
-    // ✅ CRITICAL: Get existing item to preserve createdAt
+    // Get existing item to preserve createdAt
     const existingResult = await ddb.send(
       new GetCommand({
         TableName,
@@ -154,13 +159,13 @@ export async function PATCH(req: NextRequest) {
       return json({ error: "Item not found" }, 404);
     }
 
-    // ✅ Build update with proper date handling
+    // Build update
     const updatedItem: any = {
       ...otherFields,
       PK,
-      date: date || existingItem.date || new Date().toISOString().split("T")[0], // Use provided date, or existing, or today
-      createdAt: existingItem.createdAt || new Date().toISOString(), // ✅ PRESERVE original creation time
-      updatedAt: new Date().toISOString(), // ✅ SET to current time
+      date: date || existingItem.date || new Date().toISOString().split("T")[0],
+      createdAt: existingItem.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     };
 
     await ddb.send(new PutCommand({ TableName, Item: updatedItem }));
@@ -172,7 +177,7 @@ export async function PATCH(req: NextRequest) {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// DELETE /api/admin/slides?PK=xxx - Delete item
+// DELETE /api/admin/slides?PK=xxx - Delete item + S3 object
 // ─────────────────────────────────────────────────────────────────────
 export async function DELETE(req: NextRequest) {
   if (!checkAuth(req)) {
@@ -188,10 +193,64 @@ export async function DELETE(req: NextRequest) {
     }
 
     const TableName = getEnv("DDB_TABLE_NAME");
+
+    // 1. Fetch the item to get the S3 URL/key
+    const getResult = await ddb.send(
+      new GetCommand({
+        TableName,
+        Key: { PK },
+      })
+    );
+
+    const item = getResult.Item as any;
+
+    if (!item) {
+      return json({ error: "Item not found" }, 404);
+    }
+
+    // 2. Extract S3 key from url (if exists)
+    let s3Key: string | null = null;
+    if (item.url) {
+      try {
+        const urlObj = new URL(item.url);
+        // Remove leading slash
+        s3Key = urlObj.pathname.replace(/^\/+/, "");
+      } catch (err) {
+        console.warn(`Failed to parse URL for deletion: ${item.url}`, err);
+      }
+    }
+
+    // 3. Delete from DynamoDB
     await ddb.send(new DeleteCommand({ TableName, Key: { PK } }));
 
-    return json({ ok: true, PK });
+    // 4. Delete from S3 if we have a valid key
+    let deletedFromS3 = false;
+    if (s3Key) {
+      try {
+        await s3.send(
+          new DeleteObjectCommand({
+            Bucket: BUCKET_NAME,
+            Key: s3Key,
+          })
+        );
+        deletedFromS3 = true;
+        console.log(`Deleted S3 object: ${s3Key}`);
+      } catch (s3Err: any) {
+        console.error(`Failed to delete S3 object ${s3Key}:`, s3Err);
+        // We don't fail the whole request — just log it
+      }
+    }
+
+    return json({
+      ok: true,
+      PK,
+      deletedFromS3,
+      message: deletedFromS3
+        ? "Item and S3 file deleted"
+        : "Item deleted (no S3 file found or deletion skipped)",
+    });
   } catch (e: any) {
+    console.error("Delete error:", e);
     return json({ error: "Server error", detail: e?.message || String(e) }, 500);
   }
 }

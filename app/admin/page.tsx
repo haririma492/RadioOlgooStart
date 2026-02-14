@@ -1,8 +1,3 @@
-// app/admin/page.tsx
-//
-// FULLY DYNAMIC: Sections and groups are derived from data in DynamoDB.
-// No hardcoded section list. "Add New..." lets you create new ones on the fly.
-//
 "use client";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
@@ -55,28 +50,31 @@ function buildSectionMap(
   items: MediaItem[],
   knownGroups: Record<string, Set<string>>
 ): Record<string, string[]> {
-  const map: Record<string, Set<string>> = { ...knownGroups };
+  const map: Record<string, Set<string>> = {};
 
-  // Add real data (overrides anything)
+  // 1. Start with known groups (including empty sections)
+  for (const [sec, groups] of Object.entries(knownGroups)) {
+    map[sec] = new Set(groups);
+  }
+
+  // 2. Add real data from items
   for (const it of items) {
     const sec = (it.section || "").trim();
     if (!sec) continue;
 
     if (!map[sec]) map[sec] = new Set();
-
     const grp = (it.group || "").trim();
     if (grp) map[sec].add(grp);
   }
 
-  // If truly empty, fall back to defaults (so UI isn't blank)
+  // 3. Fallback to defaults only if nothing at all
   if (Object.keys(map).length === 0) {
-    const fallback: Record<string, Set<string>> = {};
     for (const [sec, groups] of Object.entries(DEFAULT_SECTION_GROUPS)) {
-      fallback[sec] = new Set(groups);
+      map[sec] = new Set(groups);
     }
-    for (const sec of Object.keys(fallback)) map[sec] = fallback[sec];
   }
 
+  // Convert Sets to sorted arrays
   const result: Record<string, string[]> = {};
   for (const sec of Object.keys(map).sort()) {
     result[sec] = Array.from(map[sec]).sort();
@@ -86,23 +84,47 @@ function buildSectionMap(
 }
 
 export default function AdminPage() {
+  // ── Maintain Sections & Groups Modal States ─────────────────────────
+  const logRef = useRef<HTMLPreElement>(null);
+  const [showMaintainModal, setShowMaintainModal] = useState(false);
+  const [maintainTab, setMaintainTab] = useState<"section" | "group" | "move-group" | "rename" | "delete-group">("section");
+  const [newSectionName, setNewSectionName] = useState("");
+  const [selectedSectionForGroup, setSelectedSectionForGroup] = useState("");
+  const [newGroupName, setNewGroupName] = useState("");
+  const [groupToMove, setGroupToMove] = useState("");
+  const [targetSectionForMove, setTargetSectionForMove] = useState("");
+  const [renameTarget, setRenameTarget] = useState<"section" | "group">("section");
+  const [renameOldName, setRenameOldName] = useState("");
+  const [renameNewName, setRenameNewName] = useState("");
+  const [deleteGroupSection, setDeleteGroupSection] = useState("");
+  const [groupToDelete, setGroupToDelete] = useState("");
+  const [moveToGroupAfterDelete, setMoveToGroupAfterDelete] = useState("");
+  const [maintainBusy, setMaintainBusy] = useState(false);
+
+  // ── Register from S3 states ─────────────────────────────────────
+  const [showRegisterModal, setShowRegisterModal] = useState(false);
+  const [registerPrefix, setRegisterPrefix] = useState("media/");
+  const [missingFiles, setMissingFiles] = useState<any[]>([]);
+  const [selectedMissing, setSelectedMissing] = useState<Set<string>>(new Set());
+  const [registerSection, setRegisterSection] = useState("");
+  const [registerGroup, setRegisterGroup] = useState("");
+  const [registerNewSection, setRegisterNewSection] = useState("");
+  const [registerNewGroup, setRegisterNewGroup] = useState("");
+  const [registerBusy, setRegisterBusy] = useState(false);
+
+  // ── Original states ─────────────────────────────────────────────
   const [token, setToken] = useState<string>("");
   const [authorized, setAuthorized] = useState<boolean>(false);
   const [authError, setAuthError] = useState<string>("");
-
   const [busy, setBusy] = useState<boolean>(false);
   const [log, setLog] = useState<string[]>([]);
-
   const [allItems, setAllItems] = useState<MediaItem[]>([]);
-
   const [section, setSection] = useState<string>(ALL);
   const [group, setGroup] = useState<string>(ALL);
   const [search, setSearch] = useState<string>("");
   const [personFilter, setPersonFilter] = useState<string>("");
   const [titleFilter, setTitleFilter] = useState<string>("");
-
   const [uploadMode, setUploadMode] = useState<"file" | "url">("file");
-
   const [uploadFiles, setUploadFiles] = useState<File[]>([]);
   const [uploadUrl, setUploadUrl] = useState<string>("");
   const [uploadTitle, setUploadTitle] = useState<string>(""); // used ONLY for URL import
@@ -113,15 +135,14 @@ export default function AdminPage() {
   const [uploadGroup, setUploadGroup] = useState<string>("");
   const [uploadNewSection, setUploadNewSection] = useState<string>("");
   const [uploadNewGroup, setUploadNewGroup] = useState<string>("");
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [editingPK, setEditingPK] = useState<string>("");
   const [editingFields, setEditingFields] = useState<Partial<MediaItem>>({});
   const [editNewSection, setEditNewSection] = useState<string>("");
   const [editNewGroup, setEditNewGroup] = useState<string>("");
   const [editFile, setEditFile] = useState<File | null>(null);
   const editFileInputRef = useRef<HTMLInputElement | null>(null);
-
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [showDeleteSectionModal, setShowDeleteSectionModal] = useState(false);
   const [showDeleteGroupModal, setShowDeleteGroupModal] = useState(false);
@@ -142,17 +163,14 @@ export default function AdminPage() {
       error?: string;
     }>;
   }>({ current: 0, total: 0, currentVideo: "", status: "", details: [] });
-
   const [sectionToDelete, setSectionToDelete] = useState<string>("");
-  const [groupToDelete, setGroupToDelete] = useState<string>("");
+  const [groupToDeleteState, setGroupToDeleteState] = useState<string>("");
   const [targetSection, setTargetSection] = useState<string>("");
   const [targetGroup, setTargetGroup] = useState<string>(ALL);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [logCollapsed, setLogCollapsed] = useState(false);
-
   // Track known groups (newly created ones) so they appear even without items
   const [knownGroups, setKnownGroups] = useState<Record<string, Set<string>>>({});
-
   // SIGNED URL CACHE: PK -> signed URL
   const [signedUrlByPk, setSignedUrlByPk] = useState<Record<string, string>>({});
   const [signBusyByPk, setSignBusyByPk] = useState<Record<string, boolean>>({});
@@ -160,7 +178,6 @@ export default function AdminPage() {
   // ── Derived: dynamic section → groups map ────────────────────────────
   const sectionMap = useMemo(() => buildSectionMap(allItems, knownGroups), [allItems, knownGroups]);
   const sectionList = useMemo(() => Object.keys(sectionMap).sort(), [sectionMap]);
-
   const groupOptions = useMemo(() => {
     if (section === ALL) {
       const all = new Set<string>();
@@ -169,28 +186,23 @@ export default function AdminPage() {
     }
     return sectionMap[section] || [];
   }, [sectionMap, section]);
-
   const allGroupOptions = useMemo(() => {
     const all = new Set<string>();
     for (const groups of Object.values(sectionMap)) for (const g of groups) all.add(g);
     return Array.from(all).sort();
   }, [sectionMap]);
-
   const sectionItemCount = useMemo(
     () => (section !== ALL ? allItems.filter((i) => i.section === section).length : 0),
     [allItems, section]
   );
-
   const groupItemCount = useMemo(
     () => (group !== ALL ? allItems.filter((i) => i.section === section && i.group === group).length : 0),
     [allItems, section, group]
   );
-
   // Profile pictures for person dropdown (when section is "Youtube Chanel Videos")
   const profilePictures = useMemo(() => {
     return allItems.filter((item) => item.section === "Youtube_Channel_Profile_Picture" && item.person);
   }, [allItems]);
-
   // Unique persons and titles for filter dropdowns
   const uniquePersons = useMemo(() => {
     const persons = new Set<string>();
@@ -199,7 +211,6 @@ export default function AdminPage() {
     });
     return Array.from(persons).sort();
   }, [allItems]);
-
   const uniqueTitles = useMemo(() => {
     const titles = new Set<string>();
     allItems.forEach((item) => {
@@ -219,7 +230,7 @@ export default function AdminPage() {
   }, [section]);
 
   function pushLog(line: string) {
-    setLog((prev) => [`${nowTime()}  ${line}`, ...prev].slice(0, 400));
+    setLog((prev) => [`${nowTime()} ${line}`, ...prev].slice(0, 400));
   }
 
   async function apiJson(url: string, init?: RequestInit) {
@@ -232,6 +243,312 @@ export default function AdminPage() {
     return { ok: res.ok, status: res.status, text, data };
   }
 
+async function createNewSection() {
+  const name = newSectionName.trim();
+  if (!name) {
+    pushLog("❌ Section name is required");
+    return;
+  }
+
+  setMaintainBusy(true);
+  try {
+    // Optimistic UI update
+    setKnownGroups((prev) => {
+      const copy = { ...prev };
+      if (!copy[name]) copy[name] = new Set();
+      return copy;
+    });
+
+    const res = await apiJson("/api/admin/create-group", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-admin-token": token },
+      body: JSON.stringify({ section: name, group: "" }),
+    });
+
+    if (res.ok && res.data?.success) {
+      pushLog(`✅ Created new section: ${name}`);
+      setNewSectionName("");
+      // Force refresh after 1 second to ensure backend sync
+      setTimeout(() => refreshAll(), 1000);
+    } else {
+      pushLog(`Failed to create section: ${res.data?.error || res.text || "Unknown error"}`);
+      // Rollback optimistic update if failed
+      setKnownGroups((prev) => {
+        const copy = { ...prev };
+        delete copy[name];
+        return copy;
+      });
+    }
+  } catch (e: any) {
+    pushLog(`Error creating section: ${e.message}`);
+  } finally {
+    setMaintainBusy(false);
+  }
+}
+
+async function createNewGroup() {
+  const sec = selectedSectionForGroup.trim();
+  const grp = newGroupName.trim();
+  if (!sec || !grp) {
+    pushLog("❌ Both section and group name are required");
+    return;
+  }
+
+  setMaintainBusy(true);
+  try {
+    // Optimistic UI update
+    setKnownGroups((prev) => {
+      const copy = { ...prev };
+      if (!copy[sec]) copy[sec] = new Set();
+      copy[sec].add(grp);
+      return copy;
+    });
+
+    const res = await apiJson("/api/admin/create-group", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-admin-token": token },
+      body: JSON.stringify({ section: sec, group: grp }),
+    });
+
+    if (res.ok && res.data?.success) {
+      pushLog(`✅ Created new group "${grp}" in section "${sec}"`);
+      setNewGroupName("");
+      setTimeout(() => refreshAll(), 1000);
+    } else {
+      pushLog(`Failed to create group: ${res.data?.error || res.text || "Unknown error"}`);
+      // Rollback optimistic
+      setKnownGroups((prev) => {
+        const copy = { ...prev };
+        if (copy[sec]) copy[sec].delete(grp);
+        return copy;
+      });
+    }
+  } catch (e: any) {
+    pushLog(`Error creating group: ${e.message}`);
+  } finally {
+    setMaintainBusy(false);
+  }
+}
+
+  async function moveGroup() {
+    const grp = groupToMove.trim();
+    const newSec = targetSectionForMove.trim();
+    if (!grp || !newSec) {
+      pushLog("❌ Group name and target section are required");
+      return;
+    }
+    setMaintainBusy(true);
+    try {
+      const itemsInGroup = allItems.filter((i) => i.group === grp);
+      let success = 0;
+      for (const item of itemsInGroup) {
+        const payload = {
+          PK: item.PK,
+          section: newSec,
+          group: grp, // keep group name
+        };
+        const out = await apiJson("/api/admin/slides", {
+          method: "PATCH",
+          headers: { "content-type": "application/json", "x-admin-token": token },
+          body: JSON.stringify(payload),
+        });
+        if (out.ok) success++;
+      }
+      pushLog(`Moved group "${grp}" to section "${newSec}" (${success}/${itemsInGroup.length} items)`);
+      await refreshAll();
+    } catch (e: any) {
+      pushLog(`Error moving group: ${e.message}`);
+    } finally {
+      setMaintainBusy(false);
+    }
+  }
+
+  async function renameItem() {
+    const isSection = renameTarget === "section";
+    const oldName = renameOldName.trim();
+    const newName = renameNewName.trim();
+    if (!oldName || !newName) {
+      pushLog("❌ Old and new names are required");
+      return;
+    }
+    setMaintainBusy(true);
+    try {
+      const filterKey = isSection ? "section" : "group";
+      const itemsToUpdate = allItems.filter((i) => i[filterKey] === oldName);
+      let success = 0;
+      for (const item of itemsToUpdate) {
+        const payload = {
+          PK: item.PK,
+          [filterKey]: newName,
+        };
+        const out = await apiJson("/api/admin/slides", {
+          method: "PATCH",
+          headers: { "content-type": "application/json", "x-admin-token": token },
+          body: JSON.stringify(payload),
+        });
+        if (out.ok) success++;
+      }
+      pushLog(`Renamed ${isSection ? "section" : "group"} "${oldName}" → "${newName}" (${success}/${itemsToUpdate.length} items)`);
+      await refreshAll();
+    } catch (e: any) {
+      pushLog(`Error renaming: ${e.message}`);
+    } finally {
+      setMaintainBusy(false);
+    }
+  }
+
+  async function deleteGroupAndMove() {
+    const sec = deleteGroupSection.trim();
+    const grp = groupToDelete.trim();
+    const targetGrp = moveToGroupAfterDelete.trim() || "";
+    if (!sec || !grp) {
+      pushLog("❌ Section and group to delete are required");
+      return;
+    }
+    setMaintainBusy(true);
+    try {
+      const itemsToMove = allItems.filter((i) => i.section === sec && i.group === grp);
+      let success = 0;
+      for (const item of itemsToMove) {
+        const payload = {
+          PK: item.PK,
+          group: targetGrp,
+        };
+        const out = await apiJson("/api/admin/slides", {
+          method: "PATCH",
+          headers: { "content-type": "application/json", "x-admin-token": token },
+          body: JSON.stringify(payload),
+        });
+        if (out.ok) success++;
+      }
+      pushLog(`Moved ${success}/${itemsToMove.length} items from group "${grp}" → "${targetGrp || '(none)'}" in section "${sec}"`);
+      await refreshAll();
+    } catch (e: any) {
+      pushLog(`Error deleting/moving group: ${e.message}`);
+    } finally {
+      setMaintainBusy(false);
+    }
+  }
+
+  // ── Register from S3 Functions ──────────────────────────────────────
+  async function scanMissingFiles() {
+    setRegisterBusy(true);
+    try {
+      const res = await apiJson(
+        `/api/admin/register-from-s3?prefix=${encodeURIComponent(registerPrefix)}`,
+        { method: "GET", headers: { "x-admin-token": token } }
+      );
+      if (res.ok && res.data?.ok) {
+        setMissingFiles(res.data.missing || []);
+        setSelectedMissing(new Set());
+        pushLog(`Found ${res.data.missingCount || 0} unregistered files in ${registerPrefix}`);
+      } else {
+        pushLog(`Scan failed: ${res.data?.error || res.text || "Unknown error"}`);
+      }
+    } catch (e: any) {
+      pushLog(`Scan error: ${e.message}`);
+    } finally {
+      setRegisterBusy(false);
+    }
+  }
+
+  async function registerSelectedMissing() {
+    if (selectedMissing.size === 0) return;
+
+    const sec = registerSection === "__NEW__" ? registerNewSection.trim() : registerSection;
+    const grp = registerGroup === "__NEW__" ? registerNewGroup.trim() : registerGroup;
+
+    if (!sec) {
+      pushLog("❌ Section is required");
+      return;
+    }
+
+    setRegisterBusy(true);
+    try {
+      const keys = Array.from(selectedMissing);
+      const res = await apiJson("/api/admin/register-from-s3", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-admin-token": token },
+        body: JSON.stringify({
+          prefix: registerPrefix,
+          section: sec,
+          group: grp || "",
+          selectedKeys: keys,
+        }),
+      });
+
+      if (res.ok && res.data?.ok) {
+        pushLog(`✅ Registered ${res.data.created} new items!`);
+        setShowRegisterModal(false);
+        await refreshAll();
+      } else {
+        pushLog(`Register failed: ${res.data?.error || res.text || "Unknown error"}`);
+      }
+    } catch (e: any) {
+      pushLog(`Register error: ${e.message}`);
+    } finally {
+      setRegisterBusy(false);
+    }
+  }
+
+  async function bulkRegisterByType(type: "image" | "video" | "audio") {
+    const typeMap = {
+      image: ["jpg", "jpeg", "png", "webp", "gif"],
+      video: ["mp4", "mov", "webm"],
+      audio: ["mp3", "wav", "m4a"],
+    };
+
+    const extensions = typeMap[type];
+    const filesOfType = missingFiles.filter((f) => {
+      const ext = f.filename.split(".").pop()?.toLowerCase() || "";
+      return extensions.includes(ext);
+    });
+
+    if (filesOfType.length === 0) {
+      pushLog(`No ${type} files found to register`);
+      return;
+    }
+
+    const typeName = type === "image" ? "images" : type === "video" ? "videos" : "audio files";
+    if (!confirm(`Register all ${filesOfType.length} ${typeName}?`)) return;
+
+    const sec = registerSection === "__NEW__" ? registerNewSection.trim() : registerSection;
+    const grp = registerGroup === "__NEW__" ? registerNewGroup.trim() : registerGroup;
+
+    if (!sec) {
+      pushLog("❌ Please select a section first");
+      return;
+    }
+
+    setRegisterBusy(true);
+    try {
+      const keys = filesOfType.map((f) => f.key);
+      const res = await apiJson("/api/admin/register-from-s3", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-admin-token": token },
+        body: JSON.stringify({
+          prefix: registerPrefix,
+          section: sec,
+          group: grp || "",
+          selectedKeys: keys,
+        }),
+      });
+
+      if (res.ok && res.data?.ok) {
+        pushLog(`✅ Bulk registered ${res.data.created} ${typeName}!`);
+        setShowRegisterModal(false);
+        await refreshAll();
+      } else {
+        pushLog(`Bulk register failed: ${res.data?.error || res.text || "Unknown error"}`);
+      }
+    } catch (e: any) {
+      pushLog(`Error during bulk register: ${e.message}`);
+    } finally {
+      setRegisterBusy(false);
+    }
+  }
+
+  // ── Original helper functions ───────────────────────────────────────
   function clearUpload() {
     setUploadFiles([]);
     setUploadUrl("");
@@ -255,13 +572,9 @@ export default function AdminPage() {
     return "application/octet-stream";
   }
 
-  // ────────────────────────────────────────────────────────────────────
-  // Signed URL helpers
-  // ────────────────────────────────────────────────────────────────────
   function s3KeyFromPublicUrl(publicUrl: string): string | null {
     try {
       const u = new URL(publicUrl);
-      // expected: https://<bucket>.s3.<region>.amazonaws.com/<key>
       const key = u.pathname?.replace(/^\/+/, "");
       if (!key) return null;
       return key;
@@ -271,15 +584,10 @@ export default function AdminPage() {
   }
 
   async function ensureSignedUrl(it: MediaItem) {
-    // If already signed, do nothing.
     if (signedUrlByPk[it.PK]) return;
-
-    // Only useful for S3 http(s) URLs (private buckets)
     const key = s3KeyFromPublicUrl(it.url);
     if (!key) return;
-
     if (signBusyByPk[it.PK]) return;
-
     setSignBusyByPk((prev) => ({ ...prev, [it.PK]: true }));
     try {
       const out = await apiJson(`/api/admin/presign-get?key=${encodeURIComponent(key)}`, {
@@ -287,7 +595,6 @@ export default function AdminPage() {
         cache: "no-store",
       });
       if (!out.ok || !out.data?.ok || !out.data?.url) {
-        // Don’t spam log; only log once per item if needed.
         pushLog(`⚠️ presign-get failed for ${it.PK} (HTTP ${out.status})`);
         return;
       }
@@ -304,7 +611,6 @@ export default function AdminPage() {
     return signedUrlByPk[it.PK] || it.url;
   }
 
-  // ── Auth ──────────────────────────────────────────────────────────────
   async function verifyToken() {
     const t = token.trim();
     setAuthError("");
@@ -334,7 +640,6 @@ export default function AdminPage() {
     await refreshAll();
   }
 
-  // ── Data loading ─────────────────────────────────────────────────────
   async function refreshAll() {
     const t = token.trim();
     if (!t) return;
@@ -350,7 +655,7 @@ export default function AdminPage() {
       if ((data as any).error) throw new Error((data as any).error);
       const loaded = (data as any).items || [];
       setAllItems(loaded);
-      setSignedUrlByPk({}); // reset cache on refresh
+      setSignedUrlByPk({});
       setSignBusyByPk({});
       pushLog(`Loaded: ${loaded.length} total items`);
     } catch (e: any) {
@@ -360,14 +665,12 @@ export default function AdminPage() {
     }
   }
 
-  // ── Client-side filtering ────────────────────────────────────────────
   const filteredItems: MediaItem[] = useMemo(() => {
     let result = allItems;
     if (section !== ALL) result = result.filter((it) => it.section === section);
     if (group !== ALL) result = result.filter((it) => (it.group || "") === group);
     if (personFilter) result = result.filter((it) => (it.person || "").trim() === personFilter);
     if (titleFilter) result = result.filter((it) => (it.title || "").trim() === titleFilter);
-
     const q = search.trim().toLowerCase();
     if (q) {
       result = result.filter((it) => {
@@ -381,7 +684,6 @@ export default function AdminPage() {
     return result;
   }, [allItems, search, section, group, personFilter, titleFilter]);
 
-  // ── Upload helpers ───────────────────────────────────────────────────
   function onPickUploadFiles(e: React.ChangeEvent<HTMLInputElement>) {
     const list = Array.from(e.target.files || []);
     setUploadFiles(list);
@@ -438,13 +740,6 @@ export default function AdminPage() {
   async function uploadMedia() {
     const sec = resolveUploadSection();
     const grp = resolveUploadGroup();
-
-    // RULES (per your decision):
-    // - Must be authorized
-    // - Must select SECTION + GROUP
-    // - Must pick at least 1 file
-    // - Title auto from filename (per file)
-    // - Person optional (always) except Youtube Chanel Videos section
     if (!authorized || !sec || !grp || uploadFiles.length === 0) {
       pushLog("❌ Upload requirements not met (need Section, Group, and file(s))");
       return;
@@ -453,24 +748,19 @@ export default function AdminPage() {
       pushLog("❌ Person is required for Youtube Chanel Videos section");
       return;
     }
-
     const titleFromFilename = (name: string) => (name || "").replace(/\.[^/.]+$/, "").trim() || name;
-
     setBusy(true);
     try {
       pushLog(`Uploading ${uploadFiles.length} file(s) to ${sec} → ${grp}...`);
-
       for (const f of uploadFiles) {
         const pres = await presignOne(f);
         const contentType = guessContentType(f);
-
         const putRes = await fetch(pres.uploadUrl, {
           method: "PUT",
           headers: { "content-type": contentType },
           body: f,
         });
         if (!putRes.ok) throw new Error(`S3 upload failed (HTTP ${putRes.status}) ${f.name}`);
-
         await registerOne({
           url: pres.publicUrl,
           section: sec,
@@ -480,10 +770,8 @@ export default function AdminPage() {
           date: uploadDate.trim() || undefined,
           description: uploadDescription.trim() || undefined,
         });
-
         pushLog(`✅ Uploaded: ${f.name}`);
       }
-
       clearUpload();
       await refreshAll();
     } catch (e: any) {
@@ -494,20 +782,16 @@ export default function AdminPage() {
   }
 
   async function importFromUrl() {
-    // URL import still needs title, and your group/section rules still apply.
     if (!authorized || !uploadUrl.trim() || !uploadTitle.trim() || !resolveUploadSection() || !resolveUploadGroup()) {
       pushLog("❌ Import requirements not met");
       return;
     }
-
     const sec = resolveUploadSection();
     const grp = resolveUploadGroup();
-
     if (sec === "Youtube Chanel Videos" && !uploadPerson.trim()) {
       pushLog("❌ Person is required for Youtube Chanel Videos section");
       return;
     }
-
     setBusy(true);
     try {
       pushLog(`Importing from URL: ${uploadUrl.trim().slice(0, 80)}...`);
@@ -520,7 +804,6 @@ export default function AdminPage() {
       if (uploadPerson.trim()) payload.person = uploadPerson.trim();
       if (uploadDate.trim()) payload.date = uploadDate.trim();
       if (uploadDescription.trim()) payload.description = uploadDescription.trim();
-
       const out = await apiJson("/api/admin/import-url", {
         method: "POST",
         headers: { "content-type": "application/json", "x-admin-token": token },
@@ -540,7 +823,6 @@ export default function AdminPage() {
   async function deleteItem(it: MediaItem) {
     if (!authorized) return;
     if (!confirm(`Delete "${it.title}" (${it.PK})?`)) return;
-
     setBusy(true);
     try {
       const out = await apiJson(`/api/admin/slides?PK=${encodeURIComponent(it.PK)}`, {
@@ -604,15 +886,11 @@ export default function AdminPage() {
       pushLog("❌ Person is required for Youtube Chanel Videos section");
       return;
     }
-
     setBusy(true);
     try {
       const sectionChanged = destSection !== it.section;
       const groupChanged = destGroup !== (it.group || "");
-
       let newUrl = it.url;
-
-      // If a new file is selected, upload it first (used for profile pictures replacement)
       if (editFile) {
         pushLog(`Uploading new file for ${it.PK}...`);
         const pres = await presignOne(editFile, destSection);
@@ -626,7 +904,6 @@ export default function AdminPage() {
         newUrl = pres.publicUrl;
         pushLog(`✅ New file uploaded`);
       }
-
       const payload: any = {
         PK: it.PK,
         title: editingFields.title,
@@ -637,22 +914,17 @@ export default function AdminPage() {
         group: destGroup,
         url: newUrl,
       };
-
       const out = await apiJson("/api/admin/slides", {
         method: "PATCH",
         headers: { "content-type": "application/json", "x-admin-token": token },
         body: JSON.stringify(payload),
       });
-
       if (!out.ok) throw new Error(out.data?.detail || out.data?.error || "Update failed");
-
       if (sectionChanged) pushLog(`➡️ Moved ${it.PK}: ${it.section} → ${destSection}`);
       else if (groupChanged) pushLog(`➡️ Moved ${it.PK}: group ${it.group || "(none)"} → ${destGroup || "(none)"}`);
       else pushLog(`✏️ Updated: ${it.PK}`);
-
       cancelEditing();
       await refreshAll();
-
       if (sectionChanged || groupChanged) {
         setSection(destSection);
         setTimeout(() => setGroup(destGroup || ALL), 50);
@@ -664,7 +936,6 @@ export default function AdminPage() {
     }
   }
 
-  // ── Delete Handlers ──────────────────────────────────────────────────
   async function handleDeleteSection() {
     if (!targetSection || targetSection === sectionToDelete) {
       pushLog("❌ Invalid target section");
@@ -717,14 +988,13 @@ export default function AdminPage() {
     setDeleteBusy(true);
     const targetGrp = targetGroup === ALL ? "" : targetGroup;
     pushLog(
-      `Deleting group "${groupToDelete}" in "${sectionToDelete}" → "${targetSection}" / "${targetGrp || "(none)"}"`
+      `Deleting group "${groupToDeleteState}" in "${sectionToDelete}" → "${targetSection}" / "${targetGrp || "(none)"}"`
     );
     try {
-      const itemsToMove = allItems.filter((i) => i.section === sectionToDelete && i.group === groupToDelete);
+      const itemsToMove = allItems.filter((i) => i.section === sectionToDelete && i.group === groupToDeleteState);
       const count = itemsToMove.length;
-
       if (count === 0) {
-        pushLog(`Group "${groupToDelete}" is already empty → refreshing`);
+        pushLog(`Group "${groupToDeleteState}" is already empty → refreshing`);
       } else {
         pushLog(`Moving ${count} items`);
         let success = 0;
@@ -740,7 +1010,6 @@ export default function AdminPage() {
         }
         pushLog(`Moved ${success} of ${count} items`);
       }
-
       await refreshAll();
       await new Promise((r) => setTimeout(r, 600));
       setShowDeleteGroupModal(false);
@@ -757,31 +1026,26 @@ export default function AdminPage() {
   const filterLabel = section === ALL ? "All Sections" : section;
   const filterGroupLabel = group === ALL ? "All Groups" : group;
 
-  // Auto-scroll log to bottom
-  const logRef = useRef<HTMLPreElement>(null);
-  useEffect(() => {
-    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
-  }, [log]);
-
-  // Handle Escape key to close modals
+  // ── Escape key handler ──────────────────────────────────────────────
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        if (showUploadModal) setShowUploadModal(false);
-        if (showDeleteSectionModal) setShowDeleteSectionModal(false);
-        if (showDeleteGroupModal) setShowDeleteGroupModal(false);
-        if (showYouTubeModal) setShowYouTubeModal(false);
+        setShowUploadModal(false);
+        setShowDeleteSectionModal(false);
+        setShowDeleteGroupModal(false);
+        setShowYouTubeModal(false);
+        setShowRegisterModal(false);
+        setShowMaintainModal(false);
       }
     };
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
-  }, [showUploadModal, showDeleteSectionModal, showDeleteGroupModal, showYouTubeModal]);
+  }, []);
 
-  // Listen for YouTube progress updates
+  // ── YouTube progress listener ──────────────────────────────────────
   useEffect(() => {
     const handleProgress = (e: any) => {
       const { index, status, s3Url, size, error, allDone, current } = e.detail;
-
       if (allDone) {
         setYoutubeProgress((prev) => ({
           ...prev,
@@ -790,13 +1054,11 @@ export default function AdminPage() {
         }));
         return;
       }
-
       setYoutubeProgress((prev) => {
         const newDetails = [...prev.details];
         if (index !== undefined && newDetails[index]) {
           newDetails[index] = { ...newDetails[index], status, s3Url, size, error };
         }
-
         return {
           ...prev,
           details: newDetails,
@@ -817,11 +1079,11 @@ export default function AdminPage() {
         };
       });
     };
-
     window.addEventListener("youtube-progress", handleProgress as EventListener);
     return () => window.removeEventListener("youtube-progress", handleProgress as EventListener);
   }, []);
 
+  // ── JSX ─────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-slate-100 to-slate-200 text-slate-900 font-sans">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
@@ -862,6 +1124,20 @@ export default function AdminPage() {
                   disabled={busy}
                 >
                   📺 Add Latest Videos from YouTube Channel-s
+                </button>
+                <button
+                  onClick={() => setShowRegisterModal(true)}
+                  disabled={busy}
+                  className="px-4 py-2 rounded-lg bg-amber-600 text-white hover:bg-amber-700 font-bold text-sm transition-colors shadow-lg"
+                >
+                  🔍 Scan & Register from S3
+                </button>
+                <button
+                  onClick={() => setShowMaintainModal(true)}
+                  disabled={busy}
+                  className="px-4 py-2 rounded-lg bg-purple-600 text-white hover:bg-purple-700 font-bold text-sm transition-colors shadow-lg"
+                >
+                  ⚙️ Maintain Sections-Groups
                 </button>
               </>
             )}
@@ -935,7 +1211,6 @@ export default function AdminPage() {
                     </option>
                   ))}
                 </select>
-
                 <select
                   value={group}
                   onChange={(e) => setGroup(e.target.value)}
@@ -949,7 +1224,6 @@ export default function AdminPage() {
                     </option>
                   ))}
                 </select>
-
                 <select
                   value={personFilter}
                   onChange={(e) => setPersonFilter(e.target.value)}
@@ -963,7 +1237,6 @@ export default function AdminPage() {
                     </option>
                   ))}
                 </select>
-
                 <select
                   value={titleFilter}
                   onChange={(e) => setTitleFilter(e.target.value)}
@@ -977,7 +1250,6 @@ export default function AdminPage() {
                     </option>
                   ))}
                 </select>
-
                 <div className="relative flex-1 min-w-[150px] max-w-[250px]">
                   <input
                     value={search}
@@ -996,7 +1268,6 @@ export default function AdminPage() {
                     </button>
                   )}
                 </div>
-
                 {(section !== ALL || group !== ALL || search || personFilter || titleFilter) && (
                   <button
                     onClick={() => {
@@ -1011,7 +1282,6 @@ export default function AdminPage() {
                     Clear All
                   </button>
                 )}
-
                 <div className="ml-auto flex items-center">
                   <span className="px-2 py-1 rounded bg-slate-100 text-xs font-bold text-slate-700">
                     {filteredItems.length}/{allItems.length}
@@ -1020,7 +1290,7 @@ export default function AdminPage() {
               </div>
             </section>
 
-            {/* ── Items List ──────────────────────────────────────────── */}
+            {/* Items List */}
             <section className="mb-4">
               <div className="flex justify-between items-center mb-3">
                 <h2 className="text-base font-black text-slate-900">
@@ -1028,13 +1298,11 @@ export default function AdminPage() {
                   {section !== ALL ? `in ${section}` : ""} {group !== ALL ? `→ ${group}` : ""}
                 </h2>
               </div>
-
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {filteredItems.map((it) => {
                   const src = renderableUrl(it);
                   const usingSigned = !!signedUrlByPk[it.PK];
                   const signBusy = !!signBusyByPk[it.PK];
-
                   return (
                     <div
                       key={it.PK}
@@ -1042,7 +1310,6 @@ export default function AdminPage() {
                         editingPK === it.PK ? "md:col-span-2 lg:col-span-3" : ""
                       }`}
                       onMouseEnter={() => {
-                        // best-effort: fetch signed url for private S3 objects so preview works on Vercel
                         if (isVideo(it.url) || isImage(it.url)) void ensureSignedUrl(it);
                       }}
                     >
@@ -1057,8 +1324,6 @@ export default function AdminPage() {
                             <span className="text-slate-400 text-2xl">📄</span>
                           </div>
                         )}
-
-                        {/* Signed URL status badge */}
                         {(isVideo(it.url) || isImage(it.url)) && (
                           <div className="absolute left-2 top-2">
                             {signBusy ? (
@@ -1076,8 +1341,6 @@ export default function AdminPage() {
                             )}
                           </div>
                         )}
-
-                        {/* Action Buttons Overlay */}
                         <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                           {editingPK === it.PK ? (
                             <>
@@ -1120,8 +1383,6 @@ export default function AdminPage() {
                           )}
                         </div>
                       </div>
-
-                      {/* Card Content */}
                       {editingPK !== it.PK ? (
                         <div className="p-3">
                           <div className="text-xs text-slate-500 font-bold mb-1 truncate">{it.PK}</div>
@@ -1145,7 +1406,6 @@ export default function AdminPage() {
                               </div>
                             )}
                           </div>
-
                           <div className="mt-2 flex items-center gap-3">
                             <a
                               href={src}
@@ -1156,7 +1416,6 @@ export default function AdminPage() {
                             >
                               🔗 Open
                             </a>
-
                             {(isVideo(it.url) || isImage(it.url)) && (
                               <button
                                 className="text-xs font-bold text-slate-700 hover:text-slate-900"
@@ -1216,7 +1475,6 @@ export default function AdminPage() {
                                     />
                                   )}
                                 </div>
-
                                 <div className="flex-1 min-w-[200px]">
                                   <label className="block text-xs font-bold text-slate-700 mb-2">Group</label>
                                   <select
@@ -1250,7 +1508,6 @@ export default function AdminPage() {
                                 </div>
                               </div>
                             </div>
-
                             <div>
                               <label className="block text-xs font-bold text-slate-700 mb-2">Title</label>
                               <input
@@ -1259,7 +1516,6 @@ export default function AdminPage() {
                                 className="w-full px-4 py-2.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm"
                               />
                             </div>
-
                             <div>
                               <label className="block text-xs font-bold text-slate-700 mb-2">
                                 Person{" "}
@@ -1269,7 +1525,6 @@ export default function AdminPage() {
                                   "(optional)"
                                 )}
                               </label>
-
                               {resolveEditSection() === "Youtube Chanel Videos" ? (
                                 <select
                                   value={editingFields.person || ""}
@@ -1295,7 +1550,6 @@ export default function AdminPage() {
                                 />
                               )}
                             </div>
-
                             <div>
                               <label className="block text-xs font-bold text-slate-700 mb-2">Date</label>
                               <input
@@ -1305,7 +1559,6 @@ export default function AdminPage() {
                                 className="w-full px-4 py-2.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm"
                               />
                             </div>
-
                             <div>
                               <label className="block text-xs font-bold text-slate-700 mb-2">Description</label>
                               <textarea
@@ -1316,8 +1569,6 @@ export default function AdminPage() {
                                 className="w-full px-4 py-2.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm min-h-[80px] resize-y"
                               />
                             </div>
-
-                            {/* Image Upload for Profile Pictures */}
                             {resolveEditSection() === "Youtube_Channel_Profile_Picture" && (
                               <div>
                                 <label className="block text-xs font-bold text-slate-700 mb-2">
@@ -1440,7 +1691,6 @@ export default function AdminPage() {
                   ✕
                 </button>
               </div>
-
               {/* Tabs */}
               <div className="flex gap-2 mb-6 border-b-2 border-slate-200 pb-3">
                 <button
@@ -1466,7 +1716,6 @@ export default function AdminPage() {
                   🔗 Import from URL
                 </button>
               </div>
-
               <div className="space-y-4">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
@@ -1502,12 +1751,10 @@ export default function AdminPage() {
                       />
                     )}
                   </div>
-
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-2">
                       Group <span className="text-red-500">*</span>
                     </label>
-
                     <select
                       value={uploadGroup}
                       onChange={(e) => {
@@ -1525,7 +1772,6 @@ export default function AdminPage() {
                       ))}
                       <option value="__NEW__">➕ Add New Group...</option>
                     </select>
-
                     {uploadGroup === "__NEW__" && (
                       <div className="mt-2 flex items-center gap-2">
                         <input
@@ -1559,7 +1805,6 @@ export default function AdminPage() {
                               const data = await res.json();
                               if (res.ok && data.success) {
                                 pushLog(`✅ Group "${uploadNewGroup.trim()}" created in "${finalSection}"`);
-                                // make it appear immediately in UI even before refresh is reflected
                                 setKnownGroups((prev) => {
                                   const copy: Record<string, Set<string>> = { ...prev };
                                   if (!copy[finalSection]) copy[finalSection] = new Set();
@@ -1586,7 +1831,6 @@ export default function AdminPage() {
                     )}
                   </div>
                 </div>
-
                 {/* URL mode needs Title; FILE mode auto-title from filename */}
                 {uploadMode === "url" ? (
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -1602,7 +1846,6 @@ export default function AdminPage() {
                         disabled={busy || !authorized}
                       />
                     </div>
-
                     <div>
                       <label className="block text-xs font-bold text-slate-700 mb-2">
                         Person{" "}
@@ -1638,7 +1881,6 @@ export default function AdminPage() {
                         />
                       )}
                     </div>
-
                     <div>
                       <label className="block text-xs font-bold text-slate-700 mb-2">Date (optional)</label>
                       <input
@@ -1660,7 +1902,6 @@ export default function AdminPage() {
                         Auto from filename (.mp4 → title)
                       </div>
                     </div>
-
                     <div>
                       <label className="block text-xs font-bold text-slate-700 mb-2">
                         Person{" "}
@@ -1696,7 +1937,6 @@ export default function AdminPage() {
                         />
                       )}
                     </div>
-
                     <div className="sm:col-span-2">
                       <label className="block text-xs font-bold text-slate-700 mb-2">Date (optional)</label>
                       <input
@@ -1709,7 +1949,6 @@ export default function AdminPage() {
                     </div>
                   </div>
                 )}
-
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-2">Description (optional)</label>
                   <textarea
@@ -1720,7 +1959,6 @@ export default function AdminPage() {
                     disabled={busy || !authorized}
                   />
                 </div>
-
                 {uploadMode === "file" ? (
                   <>
                     <div>
@@ -1738,7 +1976,6 @@ export default function AdminPage() {
                         <div className="mt-2 text-xs text-slate-600 font-bold">✓ Selected: {uploadFiles.length} file(s)</div>
                       )}
                     </div>
-
                     <div className="flex gap-3 pt-4">
                       <button
                         className="flex-1 px-4 py-3 rounded-lg bg-slate-900 text-white hover:bg-slate-800 active:bg-slate-950 disabled:opacity-50 disabled:cursor-not-allowed font-black text-sm transition-colors shadow-lg"
@@ -1777,7 +2014,6 @@ export default function AdminPage() {
                         Supported: X/Twitter, YouTube, Instagram, and 1000+ sites via yt-dlp
                       </div>
                     </div>
-
                     <div className="flex gap-3 pt-4">
                       <button
                         className="flex-1 px-4 py-3 rounded-lg bg-purple-600 text-white hover:bg-purple-700 active:bg-purple-800 disabled:opacity-50 disabled:cursor-not-allowed font-black text-sm transition-colors shadow-lg"
@@ -1813,7 +2049,6 @@ export default function AdminPage() {
           <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl">
               <h3 className="text-xl font-black text-red-700 mb-4">Delete Section: {sectionToDelete}</h3>
-
               <p className="text-sm text-slate-700 mb-4">
                 {sectionItemCount > 0 ? (
                   <>
@@ -1823,13 +2058,11 @@ export default function AdminPage() {
                   <>This section is empty and will disappear after refresh.</>
                 )}
               </p>
-
               {sectionItemCount > 0 && (
                 <>
                   <p className="text-sm text-slate-600 mb-4">
                     You must move these items to another section before deletion.
                   </p>
-
                   <div className="mb-4">
                     <label className="block font-black text-sm text-slate-700 mb-2">Move to section:</label>
                     <select
@@ -1850,7 +2083,6 @@ export default function AdminPage() {
                         ))}
                     </select>
                   </div>
-
                   {targetSection && sectionMap[targetSection]?.length > 0 && (
                     <div className="mb-4">
                       <label className="block font-black text-sm text-slate-700 mb-2">Move to group (optional):</label>
@@ -1870,7 +2102,6 @@ export default function AdminPage() {
                   )}
                 </>
               )}
-
               <div className="mt-6 flex gap-3 justify-end">
                 <button
                   className="px-4 py-2 rounded-lg border border-slate-300 bg-slate-50 text-slate-700 hover:bg-slate-100 active:bg-slate-200 font-black text-xs transition-colors"
@@ -1883,7 +2114,6 @@ export default function AdminPage() {
                 >
                   Cancel
                 </button>
-
                 {sectionItemCount > 0 ? (
                   <button
                     className={`px-4 py-2 rounded-lg border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 active:bg-red-200 font-black text-xs transition-colors ${
@@ -1916,9 +2146,8 @@ export default function AdminPage() {
           <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl">
               <h3 className="text-xl font-black text-red-700 mb-4">
-                Delete Group: {groupToDelete} (in {sectionToDelete})
+                Delete Group: {groupToDeleteState} (in {sectionToDelete})
               </h3>
-
               <p className="text-sm text-slate-700 mb-4">
                 {groupItemCount > 0 ? (
                   <>
@@ -1928,13 +2157,11 @@ export default function AdminPage() {
                   <>This group is empty and will disappear after refresh.</>
                 )}
               </p>
-
               {groupItemCount > 0 && (
                 <>
                   <p className="text-sm text-slate-600 mb-4">
                     Move these items to another group in the same section or to another section.
                   </p>
-
                   <div className="mb-4">
                     <label className="block font-black text-sm text-slate-700 mb-2">Move to section:</label>
                     <select
@@ -1953,7 +2180,6 @@ export default function AdminPage() {
                       ))}
                     </select>
                   </div>
-
                   {targetSection && sectionMap[targetSection]?.length > 0 && (
                     <div className="mb-4">
                       <label className="block font-black text-sm text-slate-700 mb-2">Move to group (optional):</label>
@@ -1964,7 +2190,7 @@ export default function AdminPage() {
                       >
                         <option value={ALL}>No specific group (root of section)</option>
                         {sectionMap[targetSection]
-                          .filter((g) => targetSection !== sectionToDelete || g !== groupToDelete)
+                          .filter((g) => targetSection !== sectionToDelete || g !== groupToDeleteState)
                           .map((g) => (
                             <option key={g} value={g}>
                               {g}
@@ -1975,21 +2201,19 @@ export default function AdminPage() {
                   )}
                 </>
               )}
-
               <div className="mt-6 flex gap-3 justify-end">
                 <button
                   className="px-4 py-2 rounded-lg border border-slate-300 bg-slate-50 text-slate-700 hover:bg-slate-100 active:bg-slate-200 font-black text-xs transition-colors"
                   onClick={() => {
                     setShowDeleteGroupModal(false);
                     setSectionToDelete("");
-                    setGroupToDelete("");
+                    setGroupToDeleteState("");
                     setTargetSection("");
                     setTargetGroup(ALL);
                   }}
                 >
                   Cancel
                 </button>
-
                 {groupItemCount > 0 ? (
                   <button
                     className={`px-4 py-2 rounded-lg border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 active:bg-red-200 font-black text-xs transition-colors ${
@@ -2054,20 +2278,17 @@ export default function AdminPage() {
                 {youtubeProgress.current} / {youtubeProgress.total} Complete
               </div>
             </div>
-
             <div className="w-full bg-slate-200 rounded-full h-3 mb-6">
               <div
                 className="bg-green-600 h-3 rounded-full transition-all duration-300"
                 style={{ width: `${(youtubeProgress.current / youtubeProgress.total) * 100}%` }}
               />
             </div>
-
             {youtubeProgress.status && (
               <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
                 <p className="text-sm font-bold text-blue-900">{youtubeProgress.status}</p>
               </div>
             )}
-
             <div className="space-y-3 max-h-[600px] overflow-y-auto">
               {youtubeProgress.details.map((video, idx) => (
                 <div
@@ -2087,9 +2308,7 @@ export default function AdminPage() {
                       <h3 className="font-bold text-slate-900 mb-2">
                         {idx + 1}. {video.title}
                       </h3>
-
                       {video.uploadDate && <p className="text-xs text-slate-600 mb-1">📅 Uploaded: {video.uploadDate}</p>}
-
                       <div className="flex items-center gap-2">
                         {video.status === "fetching" && <span className="text-sm text-slate-600">⏳ Waiting...</span>}
                         {video.status === "downloading" && (
@@ -2109,7 +2328,6 @@ export default function AdminPage() {
                         )}
                         {video.status === "error" && <span className="text-sm text-red-600 font-bold">❌ Failed</span>}
                       </div>
-
                       {video.s3Url && (
                         <a
                           href={video.s3Url}
@@ -2120,10 +2338,8 @@ export default function AdminPage() {
                           🔗 View in S3
                         </a>
                       )}
-
                       {video.error && <p className="text-xs text-red-600 mt-1">Error: {video.error}</p>}
                     </div>
-
                     <div className="ml-4">
                       {video.status === "done" && <div className="text-2xl">✅</div>}
                       {video.status === "error" && <div className="text-2xl">❌</div>}
@@ -2135,7 +2351,6 @@ export default function AdminPage() {
                 </div>
               ))}
             </div>
-
             {youtubeProgress.current === youtubeProgress.total && (
               <div className="mt-6 flex gap-3">
                 <button
@@ -2158,12 +2373,313 @@ export default function AdminPage() {
             )}
           </div>
         )}
+
+        {/* ── Maintain Sections-Groups Modal ─────────────────────────────── */}
+        {showMaintainModal && (
+          <div
+            className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+            onClick={() => setShowMaintainModal(false)}
+          >
+            <div
+              className="bg-white rounded-2xl p-6 max-w-4xl w-full max-h-[90vh] overflow-y-auto shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-xl font-black text-slate-900">⚙️ Maintain Sections & Groups</h2>
+                <button
+                  onClick={() => setShowMaintainModal(false)}
+                  className="p-2 rounded-lg hover:bg-slate-100 transition-colors"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Tabs */}
+              <div className="flex border-b mb-6 overflow-x-auto">
+                <button
+                  className={`flex-1 py-3 font-medium text-center min-w-[120px] ${
+                    maintainTab === "section" ? "border-b-4 border-purple-600 text-purple-700" : "text-slate-600 hover:text-slate-800"
+                  }`}
+                  onClick={() => setMaintainTab("section")}
+                >
+                  New Section
+                </button>
+                <button
+                  className={`flex-1 py-3 font-medium text-center min-w-[120px] ${
+                    maintainTab === "group" ? "border-b-4 border-purple-600 text-purple-700" : "text-slate-600 hover:text-slate-800"
+                  }`}
+                  onClick={() => setMaintainTab("group")}
+                >
+                  New Group
+                </button>
+                <button
+                  className={`flex-1 py-3 font-medium text-center min-w-[120px] ${
+                    maintainTab === "move-group" ? "border-b-4 border-purple-600 text-purple-700" : "text-slate-600 hover:text-slate-800"
+                  }`}
+                  onClick={() => setMaintainTab("move-group")}
+                >
+                  Move Group
+                </button>
+                <button
+                  className={`flex-1 py-3 font-medium text-center min-w-[120px] ${
+                    maintainTab === "rename" ? "border-b-4 border-purple-600 text-purple-700" : "text-slate-600 hover:text-slate-800"
+                  }`}
+                  onClick={() => setMaintainTab("rename")}
+                >
+                  Rename
+                </button>
+                <button
+                  className={`flex-1 py-3 font-medium text-center min-w-[140px] ${
+                    maintainTab === "delete-group" ? "border-b-4 border-purple-600 text-purple-700" : "text-slate-600 hover:text-slate-800"
+                  }`}
+                  onClick={() => setMaintainTab("delete-group")}
+                >
+                  Delete Group
+                </button>
+              </div>
+
+              {maintainBusy && (
+                <div className="text-center py-6 text-purple-600 font-medium">
+                  Processing...
+                </div>
+              )}
+
+              {/* New Section Tab */}
+              {maintainTab === "section" && (
+                <div className="space-y-6">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">
+                      New Section Name <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={newSectionName}
+                      onChange={(e) => setNewSectionName(e.target.value)}
+                      placeholder="e.g. New Category"
+                      className="w-full px-4 py-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                      disabled={maintainBusy}
+                    />
+                  </div>
+                  <button
+                    onClick={createNewSection}
+                    disabled={maintainBusy || !newSectionName.trim()}
+                    className="w-full py-3 px-6 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-xl disabled:opacity-50 transition-colors"
+                  >
+                    Create New Section
+                  </button>
+                </div>
+              )}
+
+              {/* New Group Tab */}
+              {maintainTab === "group" && (
+                <div className="space-y-6">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">
+                      Select Section <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      value={selectedSectionForGroup}
+                      onChange={(e) => setSelectedSectionForGroup(e.target.value)}
+                      className="w-full px-4 py-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                      disabled={maintainBusy}
+                    >
+                      <option value="">-- Choose section --</option>
+                      {sectionList.map((s) => (
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">
+                      New Group Name <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={newGroupName}
+                      onChange={(e) => setNewGroupName(e.target.value)}
+                      placeholder="e.g. New Subcategory"
+                      className="w-full px-4 py-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                      disabled={maintainBusy}
+                    />
+                  </div>
+                  <button
+                    onClick={createNewGroup}
+                    disabled={maintainBusy || !selectedSectionForGroup || !newGroupName.trim()}
+                    className="w-full py-3 px-6 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-xl disabled:opacity-50 transition-colors"
+                  >
+                    Create New Group
+                  </button>
+                </div>
+              )}
+
+              {/* Move Group Tab */}
+              {maintainTab === "move-group" && (
+                <div className="space-y-6">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">
+                      Group to Move <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={groupToMove}
+                      onChange={(e) => setGroupToMove(e.target.value)}
+                      placeholder="Enter group name"
+                      className="w-full px-4 py-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                      disabled={maintainBusy}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">
+                      Target Section <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      value={targetSectionForMove}
+                      onChange={(e) => setTargetSectionForMove(e.target.value)}
+                      className="w-full px-4 py-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                      disabled={maintainBusy}
+                    >
+                      <option value="">-- Choose target --</option>
+                      {sectionList.map((s) => (
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <button
+                    onClick={moveGroup}
+                    disabled={maintainBusy || !groupToMove.trim() || !targetSectionForMove}
+                    className="w-full py-3 px-6 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-xl disabled:opacity-50 transition-colors"
+                  >
+                    Move Group to New Section
+                  </button>
+                </div>
+              )}
+
+              {/* Rename Tab */}
+              {maintainTab === "rename" && (
+                <div className="space-y-6">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">
+                      Rename Type
+                    </label>
+                    <select
+                      value={renameTarget}
+                      onChange={(e) => {
+                        setRenameTarget(e.target.value as "section" | "group");
+                        setRenameOldName("");
+                        setRenameNewName("");
+                      }}
+                      className="w-full px-4 py-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                      disabled={maintainBusy}
+                    >
+                      <option value="section">Section</option>
+                      <option value="group">Group</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">
+                      Current Name <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={renameOldName}
+                      onChange={(e) => setRenameOldName(e.target.value)}
+                      placeholder={`Current ${renameTarget} name`}
+                      className="w-full px-4 py-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                      disabled={maintainBusy}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">
+                      New Name <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={renameNewName}
+                      onChange={(e) => setRenameNewName(e.target.value)}
+                      placeholder="New name"
+                      className="w-full px-4 py-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                      disabled={maintainBusy}
+                    />
+                  </div>
+                  <button
+                    onClick={renameItem}
+                    disabled={maintainBusy || !renameOldName.trim() || !renameNewName.trim()}
+                    className="w-full py-3 px-6 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-xl disabled:opacity-50 transition-colors"
+                  >
+                    Rename {renameTarget === "section" ? "Section" : "Group"}
+                  </button>
+                </div>
+              )}
+
+              {/* Delete Group Tab */}
+              {maintainTab === "delete-group" && (
+                <div className="space-y-6">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">
+                      Section containing the group <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      value={deleteGroupSection}
+                      onChange={(e) => setDeleteGroupSection(e.target.value)}
+                      className="w-full px-4 py-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                      disabled={maintainBusy}
+                    >
+                      <option value="">-- Choose section --</option>
+                      {sectionList.map((s) => (
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">
+                      Group to Delete <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={groupToDelete}
+                      onChange={(e) => setGroupToDelete(e.target.value)}
+                      placeholder="Group name to delete"
+                      className="w-full px-4 py-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                      disabled={maintainBusy}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">
+                      Move Items To Group (optional - leave blank for none)
+                    </label>
+                    <input
+                      type="text"
+                      value={moveToGroupAfterDelete}
+                      onChange={(e) => setMoveToGroupAfterDelete(e.target.value)}
+                      placeholder="Target group name"
+                      className="w-full px-4 py-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                      disabled={maintainBusy}
+                    />
+                  </div>
+                  <button
+                    onClick={deleteGroupAndMove}
+                    disabled={maintainBusy || !deleteGroupSection || !groupToDelete.trim()}
+                    className="w-full py-3 px-6 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl disabled:opacity-50 transition-colors"
+                  >
+                    Delete Group & Move Items
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-// YouTube Import Modal Component
+// ── YouTubeImportModal Component ─────────────────────────────────────
 function YouTubeImportModal({
   token,
   onClose,
@@ -2187,7 +2703,6 @@ function YouTubeImportModal({
 
   const addChannel = () => setChannels([...channels, { url: "", group: "" }]);
   const removeChannel = (index: number) => setChannels(channels.filter((_, i) => i !== index));
-
   const updateChannel = (index: number, field: "url" | "group", value: string) => {
     const updated = [...channels];
     updated[index][field] = value;
@@ -2200,25 +2715,20 @@ function YouTubeImportModal({
       alert("Please enter at least one channel URL with a group selected");
       return;
     }
-
     setFetching(true);
     setBusy(true);
     setFetchedVideos([]);
-
     try {
       pushLog(`Fetching videos from ${validChannels.length} channel(s)...`);
-
       const response = await fetch("/api/admin/youtube/fetch-videos", {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-admin-token": token },
         body: JSON.stringify({ channels: validChannels }),
       });
-
       if (!response.ok) {
         const error = await response.json();
         throw new Error(error.error || "Failed to fetch videos");
       }
-
       const data = await response.json();
       setFetchedVideos(data.videos || []);
       pushLog(`✅ Fetched ${data.videos.length} total videos`);
@@ -2251,8 +2761,9 @@ function YouTubeImportModal({
         </div>
 
         <div className="space-y-4 mb-6">
-          <p className="text-sm text-slate-600">Enter YouTube channel URLs and select a group for each. Last 5 videos from each channel will be fetched.</p>
-
+          <p className="text-sm text-slate-600">
+            Enter YouTube channel URLs and select a group for each. Last 5 videos from each channel will be fetched.
+          </p>
           {channels.map((channel, index) => (
             <div key={index} className="flex gap-2 items-start">
               <div className="flex-1">
@@ -2356,24 +2867,20 @@ function YouTubeImportModal({
   );
 }
 
-// Function to download videos with real-time progress updates
+// ── YouTube Download Progress Function ───────────────────────────────
 async function downloadVideosWithProgress(videos: any[], token: string, pushLog: (line: string) => void) {
   for (let i = 0; i < videos.length; i++) {
     const video = videos[i];
-
     try {
       pushLog(`\n📹 Video ${i + 1}/${videos.length}: ${video.title}`);
-
       window.dispatchEvent(
         new CustomEvent("youtube-progress", {
           detail: { index: i, status: "downloading", current: i },
         })
       );
-
-      pushLog(`   ⬇️ Downloading from YouTube...`);
-
+      pushLog(` ⬇️ Downloading from YouTube...`);
       window.dispatchEvent(new CustomEvent("youtube-progress", { detail: { index: i, status: "uploading" } }));
-      pushLog(`   ⬆️ Uploading to S3...`);
+      pushLog(` ⬆️ Uploading to S3...`);
 
       const response = await fetch("/api/admin/youtube/download-upload", {
         method: "POST",
@@ -2388,21 +2895,18 @@ async function downloadVideosWithProgress(videos: any[], token: string, pushLog:
 
       if (result.success) {
         window.dispatchEvent(new CustomEvent("youtube-progress", { detail: { index: i, status: "saving" } }));
-        pushLog(`   💾 Saving to DynamoDB...`);
-
+        pushLog(` 💾 Saving to DynamoDB...`);
         window.dispatchEvent(
           new CustomEvent("youtube-progress", {
             detail: { index: i, status: "done", s3Url: result.s3Url, size: result.size || undefined },
           })
         );
-
-        pushLog(`   ✅ Complete! S3 URL: ${result.s3Url}`);
+        pushLog(` ✅ Complete! S3 URL: ${result.s3Url}`);
       } else {
         throw new Error(result.error || "Unknown error");
       }
     } catch (error: any) {
-      pushLog(`   ❌ Failed: ${error.message}`);
-
+      pushLog(` ❌ Failed: ${error.message}`);
       window.dispatchEvent(
         new CustomEvent("youtube-progress", { detail: { index: i, status: "error", error: error.message } })
       );
