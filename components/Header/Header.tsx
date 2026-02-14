@@ -45,7 +45,7 @@ export default function Header() {
             href="#"
             className="text-white text-sm md:text-base font-normal hover:opacity-80 transition-opacity"
           >
-            Audio Hub
+            Revolutionary Music
           </a>
           <a
             href="#"
