@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import Header from "@/components/Header/Header";
 import VideoHub from "@/components/VideoHub/VideoHub";
 import AudioHub from "@/components/AudioHub/AudioHub";
@@ -9,6 +9,7 @@ import SocialLinksForm from "@/components/Forms/SocialLinksForm";
 import BreakingNewsBanner from "@/components/BreakingNews/BreakingNewsBanner";
 import Footer from "@/components/Footer/Footer";
 import FloatingVideoPlayer from "@/components/FloatingVideoPlayer/FloatingVideoPlayer";
+import { PlaybackProvider, usePlayback } from "@/context/PlaybackContext";
 
 type PlayingVideo = {
   url: string;
@@ -17,14 +18,23 @@ type PlayingVideo = {
   timestamp?: string;
 };
 
-export default function HomePage() {
+function HomePageContent() {
   const [playingVideo, setPlayingVideo] = useState<PlayingVideo | null>(null);
+  const { activePlayback, setActivePlayback } = usePlayback();
+
+  useEffect(() => {
+    if (activePlayback && activePlayback.source !== "floating") {
+      setPlayingVideo(null);
+    }
+  }, [activePlayback]);
 
   const handleVideoPlay = (video: PlayingVideo) => {
+    setActivePlayback("floating", video.url);
     setPlayingVideo(video);
   };
 
   const handleClosePlayer = () => {
+    setActivePlayback(null);
     setPlayingVideo(null);
   };
 
@@ -83,5 +93,13 @@ export default function HomePage() {
         timestamp={playingVideo?.timestamp}
       />
     </div>
+  );
+}
+
+export default function HomePage() {
+  return (
+    <PlaybackProvider>
+      <HomePageContent />
+    </PlaybackProvider>
   );
 }
