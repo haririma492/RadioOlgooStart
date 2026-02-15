@@ -27,7 +27,7 @@ export default function RevolutionaryMusicRow({
       if (firstCard) {
         const cardWidth = firstCard.offsetWidth;
         const gap = window.innerWidth >= 768 ? 24 : 16;
-        const scrollAmount = (cardWidth + gap) * 5;
+        const scrollAmount = cardWidth + gap;
         container.scrollTo({
           left: container.scrollLeft + scrollAmount,
           behavior: "smooth",
@@ -43,7 +43,7 @@ export default function RevolutionaryMusicRow({
       if (firstCard) {
         const cardWidth = firstCard.offsetWidth;
         const gap = window.innerWidth >= 768 ? 24 : 16;
-        const scrollAmount = (cardWidth + gap) * 5;
+        const scrollAmount = cardWidth + gap;
         container.scrollTo({
           left: container.scrollLeft - scrollAmount,
           behavior: "smooth",
@@ -85,7 +85,7 @@ export default function RevolutionaryMusicRow({
   }, [items]);
 
   return (
-    <div className="flex items-center gap-4 md:gap-6 lg:gap-8 overflow-visible">
+    <div className="flex items-center  overflow-visible">
       <div
         className="flex-shrink-0 flex items-center justify-center w-[56px] md:w-[64px]"
         style={{ minHeight: "140px" }}
@@ -104,12 +104,8 @@ export default function RevolutionaryMusicRow({
       <div className="flex-1 min-w-0 rounded-xl border border-white/10 bg-white/[0.02] p-4 md:p-5 lg:p-6 pb-8 md:pb-10 relative">
         <div
           ref={scrollContainerRef}
-          className="flex overflow-x-auto scroll-smooth gap-4 md:gap-6 -mx-1 px-1 scrollbar-hide"
-          style={{
-            scrollBehavior: "smooth",
-            scrollbarWidth: "none",
-            msOverflowStyle: "none",
-          }}
+          className="flex overflow-x-auto overflow-y-hidden scroll-smooth gap-4 md:gap-6 -mx-1 px-1 pb-1"
+          style={{ scrollBehavior: "smooth" }}
         >
           {items.length === 0 ? (
             <div className="text-white/60 text-center py-4 w-full">

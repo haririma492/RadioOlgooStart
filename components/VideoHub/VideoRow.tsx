@@ -38,8 +38,7 @@ export default function VideoRow({ videos = [], category, onVideoClick }: VideoR
       if (firstCard) {
         const cardWidth = firstCard.offsetWidth;
         const gap = window.innerWidth >= 1024 ? 20 : window.innerWidth >= 768 ? 20 : 16; // gap-5 = 20px on md+, gap-4 = 16px on mobile
-        // Scroll by exactly 5 cards (to show next set)
-        const scrollAmount = (cardWidth + gap) * 5;
+        const scrollAmount = cardWidth + gap;
 
         container.scrollTo({
           left: container.scrollLeft + scrollAmount,
@@ -57,8 +56,7 @@ export default function VideoRow({ videos = [], category, onVideoClick }: VideoR
       if (firstCard) {
         const cardWidth = firstCard.offsetWidth;
         const gap = window.innerWidth >= 1024 ? 20 : window.innerWidth >= 768 ? 20 : 16;
-        // Scroll back by exactly 5 cards
-        const scrollAmount = (cardWidth + gap) * 5;
+        const scrollAmount = cardWidth + gap;
 
         container.scrollTo({
           left: container.scrollLeft - scrollAmount,

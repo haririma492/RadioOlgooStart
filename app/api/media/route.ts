@@ -60,6 +60,7 @@ export async function GET(req: Request) {
                 TableName,
                 FilterExpression: "begins_with(PK, :prefix)",
                 ExpressionAttributeValues: { ":prefix": "MEDIA#" },
+                ConsistentRead: true,
             })
         );
 

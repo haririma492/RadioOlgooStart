@@ -3,7 +3,9 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import ProfileCardWithDropdown from "./ProfileCardWithDropdown";
 import PersonProfileModal from "./PersonProfileModal";
+import ProfileRowWithNav from "./ProfileRowWithNav";
 import DateDisplay from "@/components/DateDisplay/DateDisplay";
+import { usePlayback } from "@/context/PlaybackContext";
 
 type VideoItem = {
   id: string;
@@ -40,6 +42,7 @@ type Profile = {
 };
 
 export default function VideoHub({ onVideoClick }: VideoHubProps) {
+  const { activePlayback, setActivePlayback } = usePlayback();
   const [mediaItems, setMediaItems] = useState<MediaItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -93,6 +96,31 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
     fetchMedia();
   }, []);
 
+  // Sync from global playback: clear card/modal when another source is active
+  useEffect(() => {
+    if (!activePlayback) return;
+    const cardId = playingVideoOnCard
+      ? `${playingVideoOnCard.personName}-${playingVideoOnCard.video.id}`
+      : null;
+    if (
+      activePlayback.source !== "video-hub-card" ||
+      (cardId !== null && activePlayback.id !== cardId)
+    ) {
+      setPlayingVideoOnCard(null);
+    }
+  }, [activePlayback, playingVideoOnCard]);
+
+  useEffect(() => {
+    if (!activePlayback) return;
+    const modalId = modalPlayingVideo?.id ?? null;
+    if (
+      activePlayback.source !== "video-hub-modal" ||
+      (modalId !== null && activePlayback.id !== modalId)
+    ) {
+      setModalPlayingVideo(null);
+    }
+  }, [activePlayback, modalPlayingVideo]);
+
   // Click outside to close dropdown
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -123,7 +151,7 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
     
     // First, find all profile pictures (exclude "Reza Pahlavi" - he goes in "Your Favourite")
     const profilePictures = mediaItems.filter(
-      item => item.section === "Youtube_Channel_Profile_Picture" && item.person && item.person.trim() !== "Reza Pahlavi"
+      item => item.section === "Youtube_Channel_Profile_Picture"  && item.person.trim() !== "Reza Pahlavi"
     );
     
     // Filter videos by category if specified
@@ -280,15 +308,18 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
   };
 
   const handleVideoPlayOnCard = (personName: string, video: VideoItem) => {
+    setActivePlayback("video-hub-card", `${personName}-${video.id}`);
     setPlayingVideoOnCard({ personName, video });
     setExpandedPerson(null);
   };
 
   const handleClearPlayingVideoOnCard = () => {
+    setActivePlayback(null);
     setPlayingVideoOnCard(null);
   };
 
   const handleCloseModal = () => {
+    setActivePlayback(null);
     setShowModal(false);
     setSelectedPerson(null);
     setModalPlayingVideo(null);
@@ -296,6 +327,7 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
 
   const handleVideoClickInModal = (video: VideoItem, playInModal: boolean) => {
     if (playInModal) {
+      setActivePlayback("video-hub-modal", video.id);
       setModalPlayingVideo(video);
     } else {
       if (onVideoClick) onVideoClick(video);
@@ -388,92 +420,66 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
         <div className="flex-1 w-full flex flex-col order-2 md:order-1 min-w-0">
           <h2 className="text-white text-[24.64px] font-semibold leading-[1.5] mb-6">Recent Video Hub</h2>
           <div className="flex flex-col gap-8">
-            {/* Row 1: Political label (vertically centered) + Political block */}
-            <div className="flex items-center gap-4 md:gap-6 lg:gap-8 overflow-visible">
-              <div className="flex-shrink-0 flex items-center justify-center w-[56px] md:w-[64px]" style={{ minHeight: "140px" }}>
-                <span
-                  className="text-white text-xl md:text-2xl font-normal opacity-80 whitespace-nowrap"
-                  style={{ transform: "rotate(-90deg)", transformOrigin: "center", letterSpacing: "0.05em" }}
-                >
-                  Political
-                </span>
-              </div>
-              <div className="flex-1 min-w-0 rounded-xl border border-white/10 bg-white/[0.02] p-4 md:p-5 lg:p-6 pb-8 md:pb-10">
-                <div className="flex overflow-x-auto scroll-smooth gap-4 md:gap-6 -mx-1 px-1" style={{ scrollBehavior: "smooth" }}>
-                  {politicalProfiles.length === 0 && !loading ? (
-                    <div className="text-white/60 text-center py-4 w-full">No profiles available for Political</div>
-                  ) : (
-                    politicalProfiles.map((profile) => {
-                      const personVideos = getVideosByPerson(profile.person, "Political");
-                      return (
-                        <div key={`Political-${profile.person}`} className="flex-shrink-0 w-[140px] md:w-[152px]">
-                          <ProfileCardWithDropdown
-                            profile={{
-                              person: profile.person,
-                              pictureUrl: profile.pictureUrl,
-                            }}
-                            videos={personVideos}
-                            onVideoClick={(video) => handleVideoPlayOnCard(profile.person, video)}
-                            isExpanded={expandedPerson === profile.person}
-                            onToggle={() => handleCardClick(profile.person)}
-                            onViewAllClick={
-                              personVideos.length > 4
-                                ? () => openModalForPerson(profile.person)
-                                : undefined
-                            }
-                            playingVideo={playingVideoOnCard?.personName === profile.person ? playingVideoOnCard.video : null}
-                            onClearPlayingVideo={handleClearPlayingVideoOnCard}
-                          />
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
-            </div>
-            {/* Row 2: News label (vertically centered) + News block */}
-            <div className="flex items-center gap-4 md:gap-6 lg:gap-8 overflow-visible">
-              <div className="flex-shrink-0 flex items-center justify-center w-[56px] md:w-[64px]" style={{ minHeight: "140px" }}>
-                <span
-                  className="text-white text-xl md:text-2xl font-normal opacity-80 whitespace-nowrap"
-                  style={{ transform: "rotate(-90deg)", transformOrigin: "center", letterSpacing: "0.05em" }}
-                >
-                  News
-                </span>
-              </div>
-              <div className="flex-1 min-w-0 rounded-xl border border-white/10 bg-white/[0.02] p-4 md:p-5 lg:p-6 pb-8 md:pb-10">
-                <div className="flex overflow-x-auto scroll-smooth gap-4 md:gap-6 -mx-1 px-1" style={{ scrollBehavior: "smooth" }}>
-                  {newsProfiles.length === 0 && !loading ? (
-                    <div className="text-white/60 text-center py-4 w-full">No profiles available for News</div>
-                  ) : (
-                    newsProfiles.map((profile) => {
-                      const personVideos = getVideosByPerson(profile.person, "News");
-                      return (
-                        <div key={`News-${profile.person}`} className="flex-shrink-0 w-[140px] md:w-[152px]">
-                          <ProfileCardWithDropdown
-                            profile={{
-                              person: profile.person,
-                              pictureUrl: profile.pictureUrl,
-                            }}
-                            videos={personVideos}
-                            onVideoClick={(video) => handleVideoPlayOnCard(profile.person, video)}
-                            isExpanded={expandedPerson === profile.person}
-                            onToggle={() => handleCardClick(profile.person)}
-                            onViewAllClick={
-                              personVideos.length > 4
-                                ? () => openModalForPerson(profile.person)
-                                : undefined
-                            }
-                            playingVideo={playingVideoOnCard?.personName === profile.person ? playingVideoOnCard.video : null}
-                            onClearPlayingVideo={handleClearPlayingVideoOnCard}
-                          />
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
-            </div>
+            <ProfileRowWithNav
+              label="Political"
+              isEmpty={politicalProfiles.length === 0 && !loading}
+              emptyMessage="No profiles available for Political"
+            >
+              {politicalProfiles.map((profile) => {
+                const personVideos = getVideosByPerson(profile.person, "Political");
+                return (
+                  <div key={`Political-${profile.person}`} className="flex-shrink-0 w-[140px] md:w-[152px]">
+                    <ProfileCardWithDropdown
+                      profile={{
+                        person: profile.person,
+                        pictureUrl: profile.pictureUrl,
+                      }}
+                      videos={personVideos}
+                      onVideoClick={(video) => handleVideoPlayOnCard(profile.person, video)}
+                      isExpanded={expandedPerson === profile.person}
+                      onToggle={() => handleCardClick(profile.person)}
+                      onViewAllClick={
+                        personVideos.length > 4
+                          ? () => openModalForPerson(profile.person)
+                          : undefined
+                      }
+                      playingVideo={playingVideoOnCard?.personName === profile.person ? playingVideoOnCard.video : null}
+                      onClearPlayingVideo={handleClearPlayingVideoOnCard}
+                    />
+                  </div>
+                );
+              })}
+            </ProfileRowWithNav>
+            <ProfileRowWithNav
+              label="News"
+              isEmpty={newsProfiles.length === 0 && !loading}
+              emptyMessage="No profiles available for News"
+            >
+              {newsProfiles.map((profile) => {
+                const personVideos = getVideosByPerson(profile.person, "News");
+                return (
+                  <div key={`News-${profile.person}`} className="flex-shrink-0 w-[140px] md:w-[152px]">
+                    <ProfileCardWithDropdown
+                      profile={{
+                        person: profile.person,
+                        pictureUrl: profile.pictureUrl,
+                      }}
+                      videos={personVideos}
+                      onVideoClick={(video) => handleVideoPlayOnCard(profile.person, video)}
+                      isExpanded={expandedPerson === profile.person}
+                      onToggle={() => handleCardClick(profile.person)}
+                      onViewAllClick={
+                        personVideos.length > 4
+                          ? () => openModalForPerson(profile.person)
+                          : undefined
+                      }
+                      playingVideo={playingVideoOnCard?.personName === profile.person ? playingVideoOnCard.video : null}
+                      onClearPlayingVideo={handleClearPlayingVideoOnCard}
+                    />
+                  </div>
+                );
+              })}
+            </ProfileRowWithNav>
           </div>
         </div>
       </div>

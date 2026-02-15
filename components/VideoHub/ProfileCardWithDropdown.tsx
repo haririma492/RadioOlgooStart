@@ -151,6 +151,32 @@ export default function ProfileCardWithDropdown({
               {profile.person.charAt(0).toUpperCase()}
             </div>
           )}
+
+          {/* UX cues: "View videos" pill (bottom-left) + play/list icon (bottom-right) — only when not playing */}
+          {!isPlayingOnCard && (
+            <>
+              {/* Pill: View videos + chevron */}
+              <span
+                className="absolute bottom-2 left-2 px-2.5 py-1 rounded-full bg-black/60 text-white/95 text-xs font-medium flex items-center gap-1 border border-white/20"
+                aria-hidden
+              >
+                View videos
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="6 9 12 15 18 9" />
+                </svg>
+              </span>
+              {/* Small list/play icon */}
+              <span
+                className="absolute bottom-2 right-2 w-8 h-8 rounded-full bg-black/60 flex items-center justify-center border border-white/20"
+                aria-hidden
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="2" y="4" width="20" height="16" rx="2" />
+                  <path d="M10 9l5 3-5 3V9z" />
+                </svg>
+              </span>
+            </>
+          )}
         </div>
         <div className={`text-white text-sm mt-2 text-center truncate ${isKing ? "flex-shrink-0" : ""}`}>
           {profile.person}

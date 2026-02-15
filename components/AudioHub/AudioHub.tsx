@@ -4,6 +4,7 @@ import React, { useState, useEffect } from "react";
 import RevolutionaryMusicRow from "./RevolutionaryMusicRow";
 import LiveChannels from "../LiveChannels/LiveChannels";
 import type { RevolutionaryMusicItem } from "./RevolutionaryMusicCard";
+import { usePlayback } from "@/context/PlaybackContext";
 
 type MediaItem = {
   PK: string;
@@ -19,10 +20,17 @@ type MediaItem = {
 };
 
 export default function AudioHub() {
+  const { activePlayback, setActivePlayback } = usePlayback();
   const [mediaItems, setMediaItems] = useState<MediaItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [playingItemId, setPlayingItemId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (activePlayback && activePlayback.source !== "revolutionary-music") {
+      setPlayingItemId(null);
+    }
+  }, [activePlayback]);
 
   useEffect(() => {
     async function fetchMedia() {
@@ -69,9 +77,11 @@ export default function AudioHub() {
 
   const handleCardClick = (item: RevolutionaryMusicItem) => {
     if (playingItemId === item.PK) {
+      setActivePlayback(null);
       setPlayingItemId(null);
       return;
     }
+    setActivePlayback("revolutionary-music", item.PK);
     setPlayingItemId(item.PK);
   };
 

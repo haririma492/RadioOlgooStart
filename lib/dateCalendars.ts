@@ -1,15 +1,5 @@
 import { gregorianToJalali, type MonthType, type DayType } from "shamsi";
 
-const WEEKDAY_FARSI = [
-  "یکشنبه", // Sunday = 0
-  "دوشنبه",
-  "سه‌شنبه",
-  "چهارشنبه",
-  "پنج‌شنبه",
-  "جمعه",
-  "شنبه",
-] as const;
-
 const SHAMSI_MONTHS_FARSI = [
   "فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور",
   "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند",
@@ -25,7 +15,7 @@ function toFarsiDigits(n: number): string {
   return String(n).replace(/\d/g, (d) => farsi[Number(d)]);
 }
 
-/** Shamsi (Solar Hijri): e.g. "جمعه، ۱۰ بهمن ۱۴۰۴" */
+/** Shamsi (Solar Hijri): e.g. "۱۰ بهمن ۱۴۰۴" */
 export function formatShamsi(date: Date): string {
   const month1Based = (date.getMonth() + 1) as MonthType;
   const day = date.getDate() as DayType;
@@ -34,21 +24,19 @@ export function formatShamsi(date: Date): string {
     month1Based,
     day
   );
-  const weekday = WEEKDAY_FARSI[date.getDay()];
   const month = SHAMSI_MONTHS_FARSI[jm - 1];
-  return `${weekday}، ${toFarsiDigits(jd)} ${month} ${toFarsiDigits(jy)}`;
+  return `${toFarsiDigits(jd)} ${month} ${toFarsiDigits(jy)}`;
 }
 
-/** Georgian with Farsi month names: e.g. "جمعه، ۳۰ ژانویه ۲۰۲۶" */
+/** Georgian with Farsi month names: e.g. "۳۰ ژانویه ۲۰۲۶" */
 export function formatGeorgianFarsi(date: Date): string {
-  const weekday = WEEKDAY_FARSI[date.getDay()];
   const day = date.getDate();
   const month = GREGORIAN_MONTHS_FARSI[date.getMonth()];
   const year = date.getFullYear();
-  return `${weekday}، ${toFarsiDigits(day)} ${month} ${toFarsiDigits(year)}`;
+  return `${toFarsiDigits(day)} ${month} ${toFarsiDigits(year)}`;
 }
 
-/** Shahanshahi (Shamsi year + 1180): e.g. "جمعه، ۱۰ بهمن ۲۵۸۴" */
+/** Shahanshahi (Shamsi year + 1180): e.g. "۱۰ بهمن ۲۵۸۴" */
 export function formatShahanshahi(date: Date): string {
   const month1Based = (date.getMonth() + 1) as MonthType;
   const day = date.getDate() as DayType;
@@ -57,10 +45,9 @@ export function formatShahanshahi(date: Date): string {
     month1Based,
     day
   );
-  const weekday = WEEKDAY_FARSI[date.getDay()];
   const month = SHAMSI_MONTHS_FARSI[jm - 1];
   const shahanshahiYear = jy + 1180;
-  return `${weekday}، ${toFarsiDigits(jd)} ${month} ${toFarsiDigits(shahanshahiYear)}`;
+  return `${toFarsiDigits(jd)} ${month} ${toFarsiDigits(shahanshahiYear)}`;
 }
 
 export interface ThreeCalendars {
