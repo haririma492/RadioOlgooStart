@@ -1127,10 +1127,14 @@ async function createNewGroup() {
                 </button>
                 <button
                   onClick={() => setShowRegisterModal(true)}
-                  disabled={busy}
-                  className="px-4 py-2 rounded-lg bg-amber-600 text-white hover:bg-amber-700 font-bold text-sm transition-colors shadow-lg"
+                  disabled={registerBusy}   
+                  className={`px-4 py-2 rounded-lg font-bold text-sm transition-colors shadow-lg flex items-center gap-2 ${
+                    registerBusy 
+                      ? "bg-amber-400 text-amber-800 cursor-not-allowed" 
+                      : "bg-amber-600 text-white hover:bg-amber-700"
+                  }`}
                 >
-                  🔍 Scan & Register from S3
+                  {registerBusy ? "⏳ Scanning..." : "🔍 Scan & Register from S3"}
                 </button>
                 <button
                   onClick={() => setShowMaintainModal(true)}
@@ -2374,301 +2378,221 @@ async function createNewGroup() {
           </div>
         )}
 
-        {/* ── Maintain Sections-Groups Modal ─────────────────────────────── */}
-        {showMaintainModal && (
+{/* ── Register from S3 Modal ─────────────────────────────────────── */}
+        {showRegisterModal && (
           <div
             className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
-            onClick={() => setShowMaintainModal(false)}
+            onClick={() => setShowRegisterModal(false)}
           >
             <div
               className="bg-white rounded-2xl p-6 max-w-4xl w-full max-h-[90vh] overflow-y-auto shadow-2xl"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex justify-between items-center mb-6">
-                <h2 className="text-xl font-black text-slate-900">⚙️ Maintain Sections & Groups</h2>
+                <h2 className="text-xl font-black text-slate-900">🔍 Scan & Register from S3</h2>
                 <button
-                  onClick={() => setShowMaintainModal(false)}
+                  onClick={() => setShowRegisterModal(false)}
                   className="p-2 rounded-lg hover:bg-slate-100 transition-colors"
+                  aria-label="Close"
                 >
                   ✕
                 </button>
               </div>
 
-              {/* Tabs */}
-              <div className="flex border-b mb-6 overflow-x-auto">
-                <button
-                  className={`flex-1 py-3 font-medium text-center min-w-[120px] ${
-                    maintainTab === "section" ? "border-b-4 border-purple-600 text-purple-700" : "text-slate-600 hover:text-slate-800"
-                  }`}
-                  onClick={() => setMaintainTab("section")}
-                >
-                  New Section
-                </button>
-                <button
-                  className={`flex-1 py-3 font-medium text-center min-w-[120px] ${
-                    maintainTab === "group" ? "border-b-4 border-purple-600 text-purple-700" : "text-slate-600 hover:text-slate-800"
-                  }`}
-                  onClick={() => setMaintainTab("group")}
-                >
-                  New Group
-                </button>
-                <button
-                  className={`flex-1 py-3 font-medium text-center min-w-[120px] ${
-                    maintainTab === "move-group" ? "border-b-4 border-purple-600 text-purple-700" : "text-slate-600 hover:text-slate-800"
-                  }`}
-                  onClick={() => setMaintainTab("move-group")}
-                >
-                  Move Group
-                </button>
-                <button
-                  className={`flex-1 py-3 font-medium text-center min-w-[120px] ${
-                    maintainTab === "rename" ? "border-b-4 border-purple-600 text-purple-700" : "text-slate-600 hover:text-slate-800"
-                  }`}
-                  onClick={() => setMaintainTab("rename")}
-                >
-                  Rename
-                </button>
-                <button
-                  className={`flex-1 py-3 font-medium text-center min-w-[140px] ${
-                    maintainTab === "delete-group" ? "border-b-4 border-purple-600 text-purple-700" : "text-slate-600 hover:text-slate-800"
-                  }`}
-                  onClick={() => setMaintainTab("delete-group")}
-                >
-                  Delete Group
-                </button>
+              {/* Prefix input + Scan button */}
+              <div className="flex gap-3 mb-6">
+                <div className="flex-1">
+                  <label className="block text-xs font-bold text-slate-700 mb-2">
+                    S3 Prefix to scan
+                  </label>
+                  <input
+                    value={registerPrefix}
+                    onChange={(e) => setRegisterPrefix(e.target.value)}
+                    placeholder="e.g. media/ or videos/2025/"
+                    className="w-full px-4 py-2.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent text-sm"
+                    disabled={registerBusy}
+                  />
+                </div>
+                <div className="flex items-end">
+                  <button
+                    onClick={scanMissingFiles}
+                    disabled={registerBusy}
+                    className="px-6 py-2.5 rounded-lg bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed font-bold text-sm transition-colors shadow-md"
+                  >
+                    {registerBusy ? "⏳ Scanning..." : "🔍 Scan"}
+                  </button>
+                </div>
               </div>
 
-              {maintainBusy && (
-                <div className="text-center py-6 text-purple-600 font-medium">
-                  Processing...
-                </div>
-              )}
-
-              {/* New Section Tab */}
-              {maintainTab === "section" && (
-                <div className="space-y-6">
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">
-                      New Section Name <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      value={newSectionName}
-                      onChange={(e) => setNewSectionName(e.target.value)}
-                      placeholder="e.g. New Category"
-                      className="w-full px-4 py-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                      disabled={maintainBusy}
-                    />
+              {/* Section + Group pickers */}
+              {missingFiles.length > 0 && (
+                <>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4 p-4 bg-amber-50 rounded-xl border border-amber-200">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-2">
+                        Section <span className="text-red-500">*</span>
+                      </label>
+                      <select
+                        value={registerSection}
+                        onChange={(e) => {
+                          setRegisterSection(e.target.value);
+                          setRegisterGroup("");
+                          setRegisterNewSection("");
+                        }}
+                        className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white font-semibold text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
+                        disabled={registerBusy}
+                      >
+                        <option value="">-- Select section --</option>
+                        {sectionList.map((s) => (
+                          <option key={s} value={s}>{s}</option>
+                        ))}
+                        <option value="__NEW__">➕ New section...</option>
+                      </select>
+                      {registerSection === "__NEW__" && (
+                        <input
+                          value={registerNewSection}
+                          onChange={(e) => setRegisterNewSection(e.target.value)}
+                          placeholder="New section name"
+                          className="w-full mt-2 px-3 py-2 rounded-lg border-2 border-green-400 bg-white focus:outline-none focus:ring-2 focus:ring-green-500 text-sm"
+                          autoFocus
+                          disabled={registerBusy}
+                        />
+                      )}
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-2">
+                        Group (optional)
+                      </label>
+                      <select
+                        value={registerGroup}
+                        onChange={(e) => {
+                          setRegisterGroup(e.target.value);
+                          setRegisterNewGroup("");
+                        }}
+                        className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white font-semibold text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                        disabled={registerBusy || !registerSection || registerSection === "__NEW__"}
+                      >
+                        <option value="">-- No group --</option>
+                        {(registerSection && sectionMap[registerSection] ? sectionMap[registerSection] : []).map((g) => (
+                          <option key={g} value={g}>{g}</option>
+                        ))}
+                        <option value="__NEW__">➕ New group...</option>
+                      </select>
+                      {registerGroup === "__NEW__" && (
+                        <input
+                          value={registerNewGroup}
+                          onChange={(e) => setRegisterNewGroup(e.target.value)}
+                          placeholder="New group name"
+                          className="w-full mt-2 px-3 py-2 rounded-lg border-2 border-green-400 bg-white focus:outline-none focus:ring-2 focus:ring-green-500 text-sm"
+                          autoFocus
+                          disabled={registerBusy}
+                        />
+                      )}
+                    </div>
                   </div>
-                  <button
-                    onClick={createNewSection}
-                    disabled={maintainBusy || !newSectionName.trim()}
-                    className="w-full py-3 px-6 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-xl disabled:opacity-50 transition-colors"
-                  >
-                    Create New Section
-                  </button>
-                </div>
-              )}
 
-              {/* New Group Tab */}
-              {maintainTab === "group" && (
-                <div className="space-y-6">
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">
-                      Select Section <span className="text-red-500">*</span>
-                    </label>
-                    <select
-                      value={selectedSectionForGroup}
-                      onChange={(e) => setSelectedSectionForGroup(e.target.value)}
-                      className="w-full px-4 py-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                      disabled={maintainBusy}
+                  {/* Bulk action buttons */}
+                  <div className="flex flex-wrap gap-2 mb-4">
+                    <span className="text-xs font-bold text-slate-600 self-center">Bulk register by type:</span>
+                    <button
+                      onClick={() => bulkRegisterByType("image")}
+                      disabled={registerBusy}
+                      className="px-3 py-1.5 rounded-lg bg-blue-100 text-blue-800 hover:bg-blue-200 disabled:opacity-50 font-bold text-xs transition-colors"
                     >
-                      <option value="">-- Choose section --</option>
-                      {sectionList.map((s) => (
-                        <option key={s} value={s}>
-                          {s}
-                        </option>
+                      🖼️ All Images
+                    </button>
+                    <button
+                      onClick={() => bulkRegisterByType("video")}
+                      disabled={registerBusy}
+                      className="px-3 py-1.5 rounded-lg bg-purple-100 text-purple-800 hover:bg-purple-200 disabled:opacity-50 font-bold text-xs transition-colors"
+                    >
+                      🎬 All Videos
+                    </button>
+                    <button
+                      onClick={() => bulkRegisterByType("audio")}
+                      disabled={registerBusy}
+                      className="px-3 py-1.5 rounded-lg bg-green-100 text-green-800 hover:bg-green-200 disabled:opacity-50 font-bold text-xs transition-colors"
+                    >
+                      🎵 All Audio
+                    </button>
+                  </div>
+
+                  {/* File list */}
+                  <div className="border border-slate-200 rounded-xl overflow-hidden mb-4">
+                    <div className="bg-slate-100 px-4 py-2 flex items-center justify-between">
+                      <span className="text-xs font-black text-slate-700">
+                        {missingFiles.length} unregistered file{missingFiles.length !== 1 ? "s" : ""} found
+                      </span>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => setSelectedMissing(new Set(missingFiles.map((f) => f.key)))}
+                          className="text-xs font-bold text-blue-600 hover:text-blue-800"
+                        >
+                          Select all
+                        </button>
+                        <span className="text-slate-400">|</span>
+                        <button
+                          onClick={() => setSelectedMissing(new Set())}
+                          className="text-xs font-bold text-slate-600 hover:text-slate-800"
+                        >
+                          Clear
+                        </button>
+                      </div>
+                    </div>
+                    <div className="max-h-64 overflow-y-auto divide-y divide-slate-100">
+                      {missingFiles.map((f) => (
+                        <label
+                          key={f.key}
+                          className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50 cursor-pointer"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedMissing.has(f.key)}
+                            onChange={(e) => {
+                              const next = new Set(selectedMissing);
+                              e.target.checked ? next.add(f.key) : next.delete(f.key);
+                              setSelectedMissing(next);
+                            }}
+                            className="w-4 h-4 rounded accent-amber-600"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm font-semibold text-slate-800 truncate">{f.filename}</div>
+                            <div className="text-xs text-slate-500 truncate">{f.key}</div>
+                          </div>
+                          {f.size && (
+                            <span className="text-xs text-slate-400 font-mono shrink-0">
+                              {(f.size / 1024).toFixed(0)} KB
+                            </span>
+                          )}
+                        </label>
                       ))}
-                    </select>
+                    </div>
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">
-                      New Group Name <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      value={newGroupName}
-                      onChange={(e) => setNewGroupName(e.target.value)}
-                      placeholder="e.g. New Subcategory"
-                      className="w-full px-4 py-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                      disabled={maintainBusy}
-                    />
+
+                  {/* Register selected button */}
+                  <div className="flex gap-3">
+                    <button
+                      onClick={registerSelectedMissing}
+                      disabled={registerBusy || selectedMissing.size === 0}
+                      className="flex-1 px-4 py-3 rounded-lg bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed font-black text-sm transition-colors shadow-lg"
+                    >
+                      {registerBusy
+                        ? "⏳ Registering..."
+                        : `✅ Register ${selectedMissing.size} Selected File${selectedMissing.size !== 1 ? "s" : ""}`}
+                    </button>
+                    <button
+                      onClick={() => setShowRegisterModal(false)}
+                      className="px-4 py-3 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 font-bold text-sm transition-colors"
+                    >
+                      Cancel
+                    </button>
                   </div>
-                  <button
-                    onClick={createNewGroup}
-                    disabled={maintainBusy || !selectedSectionForGroup || !newGroupName.trim()}
-                    className="w-full py-3 px-6 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-xl disabled:opacity-50 transition-colors"
-                  >
-                    Create New Group
-                  </button>
-                </div>
+                </>
               )}
 
-              {/* Move Group Tab */}
-              {maintainTab === "move-group" && (
-                <div className="space-y-6">
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">
-                      Group to Move <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      value={groupToMove}
-                      onChange={(e) => setGroupToMove(e.target.value)}
-                      placeholder="Enter group name"
-                      className="w-full px-4 py-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                      disabled={maintainBusy}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">
-                      Target Section <span className="text-red-500">*</span>
-                    </label>
-                    <select
-                      value={targetSectionForMove}
-                      onChange={(e) => setTargetSectionForMove(e.target.value)}
-                      className="w-full px-4 py-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                      disabled={maintainBusy}
-                    >
-                      <option value="">-- Choose target --</option>
-                      {sectionList.map((s) => (
-                        <option key={s} value={s}>
-                          {s}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <button
-                    onClick={moveGroup}
-                    disabled={maintainBusy || !groupToMove.trim() || !targetSectionForMove}
-                    className="w-full py-3 px-6 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-xl disabled:opacity-50 transition-colors"
-                  >
-                    Move Group to New Section
-                  </button>
-                </div>
-              )}
-
-              {/* Rename Tab */}
-              {maintainTab === "rename" && (
-                <div className="space-y-6">
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">
-                      Rename Type
-                    </label>
-                    <select
-                      value={renameTarget}
-                      onChange={(e) => {
-                        setRenameTarget(e.target.value as "section" | "group");
-                        setRenameOldName("");
-                        setRenameNewName("");
-                      }}
-                      className="w-full px-4 py-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                      disabled={maintainBusy}
-                    >
-                      <option value="section">Section</option>
-                      <option value="group">Group</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">
-                      Current Name <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      value={renameOldName}
-                      onChange={(e) => setRenameOldName(e.target.value)}
-                      placeholder={`Current ${renameTarget} name`}
-                      className="w-full px-4 py-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                      disabled={maintainBusy}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">
-                      New Name <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      value={renameNewName}
-                      onChange={(e) => setRenameNewName(e.target.value)}
-                      placeholder="New name"
-                      className="w-full px-4 py-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                      disabled={maintainBusy}
-                    />
-                  </div>
-                  <button
-                    onClick={renameItem}
-                    disabled={maintainBusy || !renameOldName.trim() || !renameNewName.trim()}
-                    className="w-full py-3 px-6 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-xl disabled:opacity-50 transition-colors"
-                  >
-                    Rename {renameTarget === "section" ? "Section" : "Group"}
-                  </button>
-                </div>
-              )}
-
-              {/* Delete Group Tab */}
-              {maintainTab === "delete-group" && (
-                <div className="space-y-6">
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">
-                      Section containing the group <span className="text-red-500">*</span>
-                    </label>
-                    <select
-                      value={deleteGroupSection}
-                      onChange={(e) => setDeleteGroupSection(e.target.value)}
-                      className="w-full px-4 py-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                      disabled={maintainBusy}
-                    >
-                      <option value="">-- Choose section --</option>
-                      {sectionList.map((s) => (
-                        <option key={s} value={s}>
-                          {s}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">
-                      Group to Delete <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      value={groupToDelete}
-                      onChange={(e) => setGroupToDelete(e.target.value)}
-                      placeholder="Group name to delete"
-                      className="w-full px-4 py-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                      disabled={maintainBusy}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">
-                      Move Items To Group (optional - leave blank for none)
-                    </label>
-                    <input
-                      type="text"
-                      value={moveToGroupAfterDelete}
-                      onChange={(e) => setMoveToGroupAfterDelete(e.target.value)}
-                      placeholder="Target group name"
-                      className="w-full px-4 py-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                      disabled={maintainBusy}
-                    />
-                  </div>
-                  <button
-                    onClick={deleteGroupAndMove}
-                    disabled={maintainBusy || !deleteGroupSection || !groupToDelete.trim()}
-                    className="w-full py-3 px-6 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl disabled:opacity-50 transition-colors"
-                  >
-                    Delete Group & Move Items
-                  </button>
+              {missingFiles.length === 0 && !registerBusy && (
+                <div className="text-center py-8 text-slate-500 text-sm font-semibold">
+                  Enter a prefix and click Scan to find unregistered S3 files.
                 </div>
               )}
             </div>
