@@ -1,5 +1,27 @@
 import { gregorianToJalali, type MonthType, type DayType } from "shamsi";
 
+/** Modern Farsi weekday names (Sunday = 0 … Saturday = 6) */
+const WEEKDAY_FARSI = [
+  "یکشنبه",   // Sunday
+  "دوشنبه",   // Monday
+  "سه‌شنبه",  // Tuesday
+  "چهارشنبه", // Wednesday
+  "پنجشنبه",  // Thursday
+  "آدینه",    // Friday
+  "شنبه",     // Saturday
+] as const;
+
+/** Middle Persian weekday names (client-provided): modern name (Middle Persian) */
+const WEEKDAY_MIDDLE_PERSIAN = [
+  "مهرشید",      // Sunday — یکشنبه (مهرشید)
+  "مهشید",       // Monday — دوشنبه (مهشید)
+  "بهرام‌شید",   // Tuesday — سه‌شنبه (بهرام‌شید)
+  "تیرشید",      // Wednesday — چهارشنبه (تیرشید)
+  "اورمزد‌شید",  // Thursday — پنجشنبه (اورمزد‌شید)
+  "ناهید‌شید",   // Friday — آدینه (ناهید‌شید)
+  "کیوان‌شید",   // Saturday — شنبه (کیوان‌شید)
+] as const;
+
 const SHAMSI_MONTHS_FARSI = [
   "فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور",
   "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند",
@@ -15,7 +37,10 @@ function toFarsiDigits(n: number): string {
   return String(n).replace(/\d/g, (d) => farsi[Number(d)]);
 }
 
-/** Shamsi (Solar Hijri): e.g. "۱۰ بهمن ۱۴۰۴" */
+/** Separator between day, month, year for instant readability */
+const DATE_PART_SEP = "  ·  ";
+
+/** Shamsi (Solar Hijri): e.g. "۲۹  ·  بهمن  ·  ۱۴۰۴" */
 export function formatShamsi(date: Date): string {
   const month1Based = (date.getMonth() + 1) as MonthType;
   const day = date.getDate() as DayType;
@@ -25,18 +50,18 @@ export function formatShamsi(date: Date): string {
     day
   );
   const month = SHAMSI_MONTHS_FARSI[jm - 1];
-  return `${toFarsiDigits(jd)} ${month} ${toFarsiDigits(jy)}`;
+  return `${toFarsiDigits(jd)}${DATE_PART_SEP}${month}${DATE_PART_SEP}${toFarsiDigits(jy)}`;
 }
 
-/** Georgian with Farsi month names: e.g. "۳۰ ژانویه ۲۰۲۶" */
+/** Georgian with Farsi month names: e.g. "۳۰  ·  ژانویه  ·  ۲۰۲۶" */
 export function formatGeorgianFarsi(date: Date): string {
   const day = date.getDate();
   const month = GREGORIAN_MONTHS_FARSI[date.getMonth()];
   const year = date.getFullYear();
-  return `${toFarsiDigits(day)} ${month} ${toFarsiDigits(year)}`;
+  return `${toFarsiDigits(day)}${DATE_PART_SEP}${month}${DATE_PART_SEP}${toFarsiDigits(year)}`;
 }
 
-/** Shahanshahi (Shamsi year + 1180): e.g. "۱۰ بهمن ۲۵۸۴" */
+/** Shahanshahi (Shamsi year + 1180): e.g. "۱۰  ·  بهمن  ·  ۲۵۸۴" */
 export function formatShahanshahi(date: Date): string {
   const month1Based = (date.getMonth() + 1) as MonthType;
   const day = date.getDate() as DayType;
@@ -47,13 +72,21 @@ export function formatShahanshahi(date: Date): string {
   );
   const month = SHAMSI_MONTHS_FARSI[jm - 1];
   const shahanshahiYear = jy + 1180;
-  return `${toFarsiDigits(jd)} ${month} ${toFarsiDigits(shahanshahiYear)}`;
+  return `${toFarsiDigits(jd)}${DATE_PART_SEP}${month}${DATE_PART_SEP}${toFarsiDigits(shahanshahiYear)}`;
 }
 
 export interface ThreeCalendars {
   shamsi: string;
   georgianFarsi: string;
   shahanshahi: string;
+}
+
+/** Weekday with Middle Persian in parentheses, e.g. "شنبه (کیوان‌شید)" */
+export function getWeekdayWithMiddlePersian(date: Date): string {
+  const dayIndex = date.getDay(); // 0 = Sunday … 6 = Saturday
+  const modern = WEEKDAY_FARSI[dayIndex];
+  const middlePersian = WEEKDAY_MIDDLE_PERSIAN[dayIndex];
+  return `${modern} (${middlePersian})`;
 }
 
 export function getThreeCalendars(date: Date): ThreeCalendars {

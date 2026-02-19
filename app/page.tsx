@@ -9,6 +9,7 @@ import SocialLinksForm from "@/components/Forms/SocialLinksForm";
 import BreakingNewsBanner from "@/components/BreakingNews/BreakingNewsBanner";
 import Footer from "@/components/Footer/Footer";
 import FloatingVideoPlayer from "@/components/FloatingVideoPlayer/FloatingVideoPlayer";
+import LiveSection from "@/components/LiveSection/LiveSection";
 import { PlaybackProvider, usePlayback } from "@/context/PlaybackContext";
 
 type PlayingVideo = {
@@ -198,92 +199,17 @@ function HomePageContent() {
       <div className="relative z-10"><Header /></div>
 
       <div className="relative z-0">
-        <main className="container mx-auto px-4 py-8">
-          <section className="mb-10">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-xl md:text-2xl font-semibold">LIVE</h2>
-              <div className="text-xs text-white/70">{liveLoading ? "Checking live status..." : " "}</div>
-            </div>
-
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
-              {combinedCards.map((card) => {
-                const isLive = card.state === "LIVE";
-                const isExternal = card.kind === "external";
-                const externalLive = isExternal && isLive;
-
-                const cardClass = (() => {
-                  if (externalLive) return "bg-black/45 border border-white/15 shadow-lg backdrop-blur-sm ring-1 ring-white/20";
-                  if (isExternal && !isLive) return "bg-black/20 border border-white/10 opacity-60 grayscale";
-                  return isLive ? "bg-black/35 border border-white/10 shadow-lg backdrop-blur-sm" : "bg-black/20 border border-white/10 opacity-70 grayscale";
-                })();
-
-                return (
-                  <div key={`${card.kind}:${card.id}`} className={`rounded-2xl overflow-hidden ${cardClass}`}>
-                    <div className="px-3 py-2 flex items-center justify-between">
-                      <div className="min-w-0">
-                        <div className="font-semibold truncate text-sm">
-                          {card.title}
-                          {isLive && <span className="ml-2 text-[11px] text-white/80">● LIVE</span>}
-                        </div>
-                      </div>
-
-                      <button
-                        onClick={() => openMiniWindow(card.openUrl, card.title)}
-                        className={["text-[11px] px-2 py-1 rounded-full border", externalLive ? "bg-white/15 hover:bg-white/20 border-white/20" : "bg-white/10 hover:bg-white/15 border-white/10"].join(" ")}
-                        title="Open mini window"
-                      >
-                        Open
-                      </button>
-                    </div>
-
-                    <div className="w-full bg-black" style={{ aspectRatio: "16 / 7.5" }}>
-                      {card.kind === "youtube" && isLive && card.embedUrl ? (
-                        <iframe
-                          className="w-full h-full"
-                          src={`${card.embedUrl}?autoplay=1&mute=1&playsinline=1&rel=0`}
-                          title={card.title}
-                          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                          allowFullScreen
-                        />
-                      ) : (
-                        <div className="w-full h-full flex items-center justify-center text-center px-4">
-                          {isExternal && externalLive ? (
-                            <div className="w-full">
-                              <div className="text-sm font-semibold mb-2">Broadcast is LIVE</div>
-                              <button
-                                onClick={() => openMiniWindow(card.openUrl, card.title)}
-                                className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl border border-white/25 bg-white/15 hover:bg-white/20 shadow-md"
-                                title="Open live"
-                              >
-                                <span className="text-base">▶</span>
-                                <span className="font-semibold">LIVE</span>
-                              </button>
-                              <div className="mt-2 text-xs text-white/75">Opens in a mini window (this source can’t be embedded here).</div>
-                            </div>
-                          ) : (
-                            <div>
-                              <div className="text-sm font-semibold mb-1">
-                                {card.state === "ERROR" ? "Unavailable" : "Offline"}
-                              </div>
-
-                              {/* 🔎 If YouTube ERROR, show 1 useful hint line */}
-                              {card.kind === "youtube" && card.state === "ERROR" ? (
-                                <div className="text-xs text-white/70">
-                                  {card.st?.debug?.errors?.[0] || card.st?.reason || "Check server logs for [youtube-status]."}
-                                </div>
-                              ) : (
-                                <div className="text-xs text-white/70">Moves left and plays automatically when live.</div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </section>
+        <main className=" py-8"
+        style={{
+          marginLeft: '10%',
+          marginRight: '10%',
+        }}
+        >
+          <LiveSection
+            cards={combinedCards}
+            loading={liveLoading}
+            onOpenMiniWindow={openMiniWindow}
+          />
 
           <VideoHub
             onVideoClick={(video) => {

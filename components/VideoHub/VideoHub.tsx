@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import ProfileCardWithDropdown from "./ProfileCardWithDropdown";
 import PersonProfileModal from "./PersonProfileModal";
+import SearchModal from "./SearchModal";
 import ProfileRowWithNav from "./ProfileRowWithNav";
 import DateDisplay from "@/components/DateDisplay/DateDisplay";
 import { usePlayback } from "@/context/PlaybackContext";
@@ -49,6 +50,7 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
   const [expandedPerson, setExpandedPerson] = useState<string | null>(null);
   const [selectedPerson, setSelectedPerson] = useState<string | null>(null);
   const [showModal, setShowModal] = useState(false);
+  const [showSearchModal, setShowSearchModal] = useState(false);
   const [modalPlayingVideo, setModalPlayingVideo] = useState<VideoItem | null>(null);
   const [playingVideoOnCard, setPlayingVideoOnCard] = useState<{ personName: string; video: VideoItem } | null>(null);
   const [today, setToday] = useState(() => new Date());
@@ -410,6 +412,7 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
                   ? () => openModalForPerson("Reza Pahlavi")
                   : undefined
               }
+              onSearchClick={() => setShowSearchModal(true)}
               playingVideo={playingVideoOnCard?.personName === "Reza Pahlavi" ? playingVideoOnCard.video : null}
               onClearPlayingVideo={handleClearPlayingVideoOnCard}
             />
@@ -443,6 +446,7 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
                           ? () => openModalForPerson(profile.person)
                           : undefined
                       }
+                      onSearchClick={() => setShowSearchModal(true)}
                       playingVideo={playingVideoOnCard?.personName === profile.person ? playingVideoOnCard.video : null}
                       onClearPlayingVideo={handleClearPlayingVideoOnCard}
                     />
@@ -473,6 +477,7 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
                           ? () => openModalForPerson(profile.person)
                           : undefined
                       }
+                      onSearchClick={() => setShowSearchModal(true)}
                       playingVideo={playingVideoOnCard?.personName === profile.person ? playingVideoOnCard.video : null}
                       onClearPlayingVideo={handleClearPlayingVideoOnCard}
                     />
@@ -483,6 +488,11 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
           </div>
         </div>
       </div>
+
+      <SearchModal
+        isOpen={showSearchModal}
+        onClose={() => setShowSearchModal(false)}
+      />
 
       {selectedPerson && (
         <PersonProfileModal
