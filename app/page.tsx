@@ -9,7 +9,6 @@ import SocialLinksForm from "@/components/Forms/SocialLinksForm";
 import BreakingNewsBanner from "@/components/BreakingNews/BreakingNewsBanner";
 import Footer from "@/components/Footer/Footer";
 import FloatingVideoPlayer from "@/components/FloatingVideoPlayer/FloatingVideoPlayer";
-import LiveSection from "@/components/LiveSection/LiveSection";
 import { PlaybackProvider, usePlayback } from "@/context/PlaybackContext";
 
 type PlayingVideo = {
@@ -36,12 +35,24 @@ type YTLiveResult = {
   error?: string;
 };
 
+type ExternalStatusResult = {
+  id: string;
+  state: "LIVE" | "OFFLINE" | "UNKNOWN";
+  error?: string;
+};
+
+function normalizeStr(s: any) {
+  return String(s ?? "").trim().toLowerCase();
+}
+
 function extractHandle(input: string): string | null {
   const s = (input || "").trim();
   if (!s) return null;
 
+  // handle string
   if (/^@?[A-Za-z0-9._-]+$/.test(s)) return s.replace(/^@/, "");
 
+  // URL: youtube.com/@Handle
   const m = s.match(/youtube\.com\/@([A-Za-z0-9._-]+)/i);
   if (m?.[1]) return m[1];
 
@@ -50,6 +61,26 @@ function extractHandle(input: string): string | null {
 
 function isYouTubeUrl(url: string) {
   return /youtube\.com|youtu\.be/i.test(url || "");
+}
+
+function extractVideoIdFromYouTubeUrl(url: string): string | null {
+  try {
+    const u = new URL(url);
+
+    // youtube.com/watch?v=XXXX
+    const v = u.searchParams.get("v");
+    if (v && /^[a-zA-Z0-9_-]{11}$/.test(v)) return v;
+
+    // youtu.be/XXXX
+    if (/youtu\.be$/i.test(u.hostname)) {
+      const id = u.pathname.replace("/", "");
+      if (/^[a-zA-Z0-9_-]{11}$/.test(id)) return id;
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 function YouTubeEmbed({ videoId }: { videoId: string }) {
@@ -69,14 +100,21 @@ function HomePageContent() {
   const [playingVideo, setPlayingVideo] = useState<PlayingVideo | null>(null);
   const { activePlayback, setActivePlayback } = usePlayback();
 
+  // LIVE rows
   const [liveRows, setLiveRows] = useState<LiveRow[]>([]);
   const [liveLoading, setLiveLoading] = useState(false);
   const [liveError, setLiveError] = useState<string>("");
 
+  // YouTube status (hold last good)
   const lastGoodRef = useRef<Record<string, { at: number; data: YTLiveResult }>>(
     {}
   );
   const [ytStatus, setYtStatus] = useState<Record<string, YTLiveResult>>({});
+
+  // External status (optional — used for hiding non-live externals)
+  const [externalStatus, setExternalStatus] = useState<Record<string, ExternalStatusResult>>(
+    {}
+  );
 
   useEffect(() => {
     if (activePlayback && activePlayback.source !== "floating") {
@@ -94,70 +132,70 @@ function HomePageContent() {
     setPlayingVideo(null);
   };
 
+  // ---- Load LIVE rows from DynamoDB via backend route
   async function loadLiveRows() {
     setLiveLoading(true);
     setLiveError("");
-
     try {
       const res = await fetch("/api/live-videos", { cache: "no-store" });
-      const json = await res.json().catch(() => ({} as any));
+      const json = await res.json().catch(() => ({}));
 
       if (!res.ok) {
         throw new Error(json?.error || `Live rows fetch failed (${res.status})`);
       }
 
-      const rawItems: any[] =
-        (json?.data?.items ??
-          json?.items ??
-          json?.data ??
-          json?.data?.Items ??
-          []) as any[];
+      // Accept shapes:
+      // { ok:true, data:{ items:[...] } }
+      // { items:[...] }
+      // { data:[...] }
+      // { data:{ Items:[...] } }
+      let items: any[] | undefined;
 
-      if (!Array.isArray(rawItems)) {
+      if (Array.isArray(json?.items)) items = json.items;
+      else if (Array.isArray(json?.data?.items)) items = json.data.items;
+      else if (Array.isArray(json?.data)) items = json.data;
+      else if (Array.isArray(json?.data?.Items)) items = json.data.Items;
+
+      if (!Array.isArray(items)) {
         throw new Error(
-          `Live rows response shape unexpected. Got keys: ${Object.keys(
-            json || {}
-          ).join(", ")}`
+          `Live rows response shape unexpected. Keys: ${Object.keys(json || {}).join(
+            ", "
+          )}`
         );
       }
 
-      const normalize = (s: any) => String(s ?? "").trim().toLowerCase();
-      const isLiveSection = (s: any) => normalize(s) === "live videos";
+      const isLiveSection = (s: any) => normalizeStr(s) === "live videos";
+
+      // Accept "Revolution TV/Channels" and variants
       const isRevolutionGroup = (g: any) => {
-        const x = normalize(g);
+        const x = normalizeStr(g);
         return x.includes("revolution") && x.includes("tv") && x.includes("channel");
       };
-      const getUrl = (item: any) => item?.url || item?.URL || item?.link || "";
 
-      const cleaned: LiveRow[] = rawItems
+      const getUrl = (it: any) => it?.url || it?.URL || it?.link || "";
+
+      const cleaned: LiveRow[] = items
         .map((x: any) => ({ ...x, url: getUrl(x) }))
-        .filter((x: any) => !!x.url)
+        .filter((x: any) => !!x?.url)
         .filter((x: any) => (x?.active ?? true) === true)
         .filter((x: any) => isLiveSection(x?.section))
-        .filter((x: any) => isRevolutionGroup(x?.group))
-        .map((x: any) => ({
-          PK: String(x.PK ?? ""),
-          url: String(x.url ?? ""),
-          title: x.title ? String(x.title) : undefined,
-          section: x.section ? String(x.section) : undefined,
-          group: x.group ? String(x.group) : undefined,
-          active: typeof x.active === "boolean" ? x.active : undefined,
-        }))
-        .filter((x) => !!x.PK && !!x.url);
+        .filter((x: any) => isRevolutionGroup(x?.group));
 
       setLiveRows(cleaned);
     } catch (e: any) {
       setLiveError(e?.message || "Failed to load LIVE rows");
-      setLiveRows([]);
     } finally {
       setLiveLoading(false);
     }
   }
 
+  // Load once on mount
   useEffect(() => {
     loadLiveRows();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ---- Poll YouTube live status
   async function pollYouTubeLive(handles: string[]) {
     if (handles.length === 0) return;
 
@@ -166,7 +204,7 @@ function HomePageContent() {
 
     try {
       const res = await fetch(url, { cache: "no-store" });
-      const json = await res.json();
+      const json = await res.json().catch(() => ({}));
       if (!res.ok || !json?.ok) throw new Error(json?.error || "YT live check failed");
 
       const results: Record<string, YTLiveResult> = json.results || {};
@@ -178,21 +216,32 @@ function HomePageContent() {
 
       setYtStatus(results);
     } catch {
+      // Hold last known for 90s
       const now = Date.now();
       const held: Record<string, YTLiveResult> = {};
       for (const h of handles) {
         const heldEntry = lastGoodRef.current[h];
-        if (heldEntry && now - heldEntry.at < 90_000) held[h] = heldEntry.data;
-        else held[h] = { handle: h, isLive: false, error: "request_failed" };
+        if (heldEntry && now - heldEntry.at < 90_000) {
+          held[h] = heldEntry.data;
+        } else {
+          held[h] = { handle: h, isLive: false, error: "request_failed" };
+        }
       }
       setYtStatus(held);
     }
   }
 
   const ytHandles = useMemo(() => {
+    // Only for channel/handle URLs (watch?v does not need detection)
     const handles = liveRows
-      .map((r) => (isYouTubeUrl(r.url) ? extractHandle(r.url) : null))
+      .map((r) => {
+        if (!isYouTubeUrl(r.url)) return null;
+        const direct = extractVideoIdFromYouTubeUrl(r.url);
+        if (direct) return null; // direct watch link => no need to poll
+        return extractHandle(r.url);
+      })
       .filter((h): h is string => !!h);
+
     return Array.from(new Set(handles));
   }, [liveRows]);
 
@@ -203,20 +252,62 @@ function HomePageContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ytHandles.join(",")]);
 
+  // ---- External status checker (optional): hide non-live externals
+  async function pollExternalStatus(rows: LiveRow[]) {
+    const externals = rows.filter((r) => r.url && !isYouTubeUrl(r.url));
+    if (externals.length === 0) return;
+
+    try {
+      // expects your backend route: POST /api/external/status
+      // body: { items: [{ id, url }] }
+      const payload = {
+        items: externals.map((r) => ({ id: r.PK, url: r.url })),
+      };
+
+      const res = await fetch("/api/external/status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify(payload),
+      });
+
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error || "external status failed");
+
+      const arr: ExternalStatusResult[] = json?.results || json?.data || [];
+      if (Array.isArray(arr)) {
+        const map: Record<string, ExternalStatusResult> = {};
+        for (const r of arr) map[r.id] = r;
+        setExternalStatus(map);
+      }
+    } catch {
+      // If external check fails, keep previous status (don’t blank UI)
+    }
+  }
+
+  useEffect(() => {
+    pollExternalStatus(liveRows);
+    const t = setInterval(() => pollExternalStatus(liveRows), 30_000);
+    return () => clearInterval(t);
+  }, [liveRows]);
+
+  // ---- Build LIVE cards and HIDE non-live (your requirement)
   const liveCards = useMemo(() => {
     const cards = liveRows.map((row) => {
       const isYT = isYouTubeUrl(row.url);
-      const handle = isYT ? extractHandle(row.url) : null;
+
+      // YouTube: support direct watch links OR detected live
+      const directVideoId = isYT ? extractVideoIdFromYouTubeUrl(row.url) : null;
+      const handle = isYT && !directVideoId ? extractHandle(row.url) : null;
       const status = handle ? ytStatus[handle] : undefined;
 
-      const isLive = isYT ? !!status?.isLive && !!status?.videoId : true;
-      const videoId = status?.videoId;
+      const videoId = directVideoId || status?.videoId;
 
-      const activeUrl = isYT
-        ? videoId
-          ? `https://www.youtube.com/watch?v=${videoId}`
-          : "(no live videoId detected)"
-        : row.url;
+      // External: use externalStatus if available; otherwise treat as UNKNOWN (hide)
+      const ext = !isYT ? externalStatus[row.PK] : undefined;
+      const externalIsLive = !isYT ? ext?.state === "LIVE" : false;
+
+      const isLive = isYT ? !!videoId : externalIsLive;
 
       return {
         PK: row.PK,
@@ -227,22 +318,21 @@ function HomePageContent() {
         isLive,
         videoId,
         statusError: status?.error,
-        statusTitle: status?.title,
-        activeUrl,
+        externalState: ext?.state,
+        externalError: ext?.error,
       };
     });
 
-    return cards.sort((a, b) => {
-      const aRank = a.isLive ? 0 : 2;
-      const bRank = b.isLive ? 0 : 2;
-      if (aRank !== bRank) return aRank - bRank;
-      return a.title.localeCompare(b.title);
-    });
-  }, [liveRows, ytStatus]);
+    // ✅ ONLY show live items
+    const onlyLive = cards.filter((c) => c.isLive);
 
+    return onlyLive.sort((a, b) => a.title.localeCompare(b.title));
+  }, [liveRows, ytStatus, externalStatus]);
+
+  // external mini window opener
   const openMiniWindow = (url: string) => {
     const w = 520;
-    const h = 380;
+    const h = 360; // smaller height
     const left = Math.max(0, window.screenX + window.outerWidth - w - 30);
     const top = Math.max(0, window.screenY + 80);
     window.open(
@@ -254,6 +344,7 @@ function HomePageContent() {
 
   return (
     <div className="relative min-h-screen text-white">
+      {/* Background Image */}
       <div
         className="fixed inset-0 -z-10"
         style={{
@@ -274,6 +365,7 @@ function HomePageContent() {
 
       <div className="relative z-0">
         <main className="container mx-auto px-4 py-8">
+          {/* LIVE SECTION */}
           <section className="mb-10">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-3xl font-bold tracking-wide">LIVE</h2>
@@ -294,113 +386,59 @@ function HomePageContent() {
             )}
 
             {!liveLoading && !liveError && liveCards.length === 0 && (
-              <div className="text-white/70">No Live Videos records found in DynamoDB.</div>
+              <div className="text-white/70">No sources are live right now.</div>
             )}
 
             <div className="flex gap-4 overflow-x-auto pb-2">
-              {liveCards.map((c) => {
-                const offline = c.isYouTube && !c.isLive;
+              {liveCards.map((c) => (
+                <div
+                  key={c.PK}
+                  className="shrink-0 rounded-2xl border bg-black/45 border-white/15"
+                  style={{ width: "340px" }}
+                >
+                  <div className="p-3 flex items-center justify-between">
+                    <div className="font-semibold truncate pr-2">{c.title}</div>
 
-                return (
-                  <div
-                    key={c.PK}
-                    className={`shrink-0 rounded-2xl border ${
-                      offline
-                        ? "bg-black/35 border-white/10 opacity-60"
-                        : "bg-black/45 border-white/15"
-                    }`}
-                    style={{ width: "360px" }}
-                  >
-                    {/* TOP BAR */}
-                    <div className="p-3 space-y-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="font-semibold truncate">{c.title}</div>
+                    <span className="text-xs px-2 py-1 rounded-full border border-red-400/40 bg-red-500/20 text-red-100">
+                      LIVE
+                    </span>
+                  </div>
 
-                        {c.isYouTube ? (
-                          <span
-                            className={`text-xs px-2 py-1 rounded-full border ${
-                              c.isLive
-                                ? "border-red-400/40 bg-red-500/20 text-red-100"
-                                : "border-white/15 bg-white/5 text-white/70"
-                            }`}
+                  {/* Debug URL line (helps you verify active URL per frame) */}
+                  <div className="px-3 pb-2 text-[11px] text-white/60 break-all">
+                    {c.url}
+                  </div>
+
+                  <div className="px-3 pb-3">
+                    <div className="rounded-xl overflow-hidden bg-black/40 border border-white/10 h-[190px]">
+                      {c.isYouTube ? (
+                        c.videoId ? (
+                          <YouTubeEmbed videoId={c.videoId} />
+                        ) : (
+                          <div className="h-full flex flex-col items-center justify-center text-white/70 text-sm">
+                            <div className="font-semibold mb-1">Unavailable</div>
+                            <div className="text-xs text-white/50">
+                              Live detected but no videoId found.
+                            </div>
+                          </div>
+                        )
+                      ) : (
+                        <div className="h-full flex flex-col items-center justify-center text-white/80">
+                          <div className="text-sm mb-3 text-center px-6">
+                            External source opens in mini window (cannot be embedded).
+                          </div>
+                          <button
+                            onClick={() => openMiniWindow(c.url)}
+                            className="px-4 py-2 rounded-lg bg-white/15 hover:bg-white/20 border border-white/15"
                           >
-                            {c.isLive ? "LIVE" : "Offline"}
-                          </span>
-                        ) : (
-                          <span className="text-xs px-2 py-1 rounded-full border border-amber-400/30 bg-amber-500/15 text-amber-100">
-                            External
-                          </span>
-                        )}
-                      </div>
-
-                      {/* DEBUG LINE: show source URL + active URL */}
-                      <div className="text-[11px] leading-4 text-white/70 break-words">
-                        <div>
-                          <span className="text-white/50">Source:</span>{" "}
-                          {c.url}
+                            ▶ OPEN LIVE
+                          </button>
                         </div>
-
-                        {c.isYouTube && (
-                          <div>
-                            <span className="text-white/50">Handle:</span>{" "}
-                            {c.handle || "(none)"}{" "}
-                            <span className="text-white/40">|</span>{" "}
-                            <span className="text-white/50">Detected:</span>{" "}
-                            {c.activeUrl}
-                            {c.statusError ? (
-                              <>
-                                {" "}
-                                <span className="text-white/40">|</span>{" "}
-                                <span className="text-red-200/80">err:</span>{" "}
-                                {c.statusError}
-                              </>
-                            ) : null}
-                          </div>
-                        )}
-
-                        {c.isYouTube && c.statusTitle ? (
-                          <div>
-                            <span className="text-white/50">YT title:</span>{" "}
-                            {c.statusTitle}
-                          </div>
-                        ) : null}
-                      </div>
-                    </div>
-
-                    {/* PLAYER AREA */}
-                    <div className="px-3 pb-3">
-                      <div className="rounded-xl overflow-hidden bg-black/40 border border-white/10 h-[200px]">
-                        {c.isYouTube ? (
-                          c.isLive && c.videoId ? (
-                            <YouTubeEmbed videoId={c.videoId} />
-                          ) : (
-                            <div className="h-full flex flex-col items-center justify-center text-white/70 text-sm">
-                              <div className="font-semibold mb-1">Unavailable</div>
-                              <div className="text-xs text-white/50 text-center px-6">
-                                {c.statusError === "request_failed"
-                                  ? "Temporary check failure (holding last status)."
-                                  : "Not live right now, or detection returned no videoId."}
-                              </div>
-                            </div>
-                          )
-                        ) : (
-                          <div className="h-full flex flex-col items-center justify-center text-white/80">
-                            <div className="text-sm mb-3 text-center px-6">
-                              External source opens in mini window (cannot be embedded).
-                            </div>
-                            <button
-                              onClick={() => openMiniWindow(c.url)}
-                              className="px-4 py-2 rounded-lg bg-white/15 hover:bg-white/20 border border-white/15"
-                            >
-                              ▶ OPEN LIVE
-                            </button>
-                          </div>
-                        )}
-                      </div>
+                      )}
                     </div>
                   </div>
-                );
-              })}
+                </div>
+              ))}
             </div>
           </section>
 
