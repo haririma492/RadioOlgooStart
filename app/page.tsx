@@ -11,6 +11,7 @@ import Footer from "@/components/Footer/Footer";
 import FloatingVideoPlayer from "@/components/FloatingVideoPlayer/FloatingVideoPlayer";
 import LiveSection from "@/components/LiveSection/LiveSection";
 import { PlaybackProvider, usePlayback } from "@/context/PlaybackContext";
+import type { MediaItem } from "@/types/media";
 
 type PlayingVideo = {
   url: string;
@@ -47,15 +48,50 @@ type ExternalSourceStatus = {
   state: "LIVE" | "OFFLINE" | "ERROR";
 };
 
+function isYouTubeUrl(url: string): boolean {
+  const u = (url ?? "").trim().toLowerCase();
+  return u.includes("youtube.com") || u.includes("youtu.be");
+}
+
 function HomePageContent() {
   const [playingVideo, setPlayingVideo] = useState<PlayingVideo | null>(null);
   const { activePlayback, setActivePlayback } = usePlayback();
+
+  const [mediaItems, setMediaItems] = useState<MediaItem[]>([]);
+  const [mediaLoading, setMediaLoading] = useState(true);
+  const [mediaError, setMediaError] = useState<string | null>(null);
 
   useEffect(() => {
     if (activePlayback && activePlayback.source !== "floating") {
       setPlayingVideo(null);
     }
   }, [activePlayback]);
+
+  // Single media fetch for the whole page
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchMedia() {
+      try {
+        setMediaLoading(true);
+        setMediaError(null);
+        const res = await fetch("/api/media", { cache: "no-store" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (cancelled) return;
+        if (data?.ok && Array.isArray(data.items)) {
+          setMediaItems(data.items);
+        } else {
+          setMediaError("Invalid media response");
+        }
+      } catch (e) {
+        if (!cancelled) setMediaError(e instanceof Error ? e.message : "Failed to load media");
+      } finally {
+        if (!cancelled) setMediaLoading(false);
+      }
+    }
+    fetchMedia();
+    return () => { cancelled = true; };
+  }, []);
 
   const handleVideoPlay = (video: PlayingVideo) => {
     setActivePlayback("floating", video.url);
@@ -94,21 +130,25 @@ function HomePageContent() {
     }
   };
 
-  const liveChannels: LiveChannelInput[] = useMemo(
-    () => [
-      { id: "IRANINTL", title: "IRANINTL", url: "https://www.youtube.com/@IRANINTL/streams", streamsUrl: "https://www.youtube.com/@IRANINTL/streams" },
-      { id: "MoradVaisi", title: "Morad Vaisi", url: "https://www.youtube.com/@MoradVaisi/streams", streamsUrl: "https://www.youtube.com/@MoradVaisi/streams" },
-      { id: "mojtabavahedi43", title: "Mojtaba Vahedi", url: "https://www.youtube.com/@mojtabavahedi43/streams", streamsUrl: "https://www.youtube.com/@mojtabavahedi43/streams" },
-    ],
-    []
-  );
-
-  const externalSources: ExternalSourceInput[] = useMemo(
-    () => [
-      { id: "IranNationalRevolutionTV", title: "Iran National Revolution TV", url: "https://iranopasmigirim.com/en/iran-national-revolution-tv" },
-    ],
-    []
-  );
+  // Derive live channels and external sources from media (section "Live Videos")
+  const { liveChannels, externalSources } = useMemo(() => {
+    const live = mediaItems.filter((item) => (item.section ?? "").trim() === "Live Videos");
+    const channels: LiveChannelInput[] = [];
+    const sources: ExternalSourceInput[] = [];
+    for (const item of live) {
+      const url = (item.url ?? "").trim();
+      if (!url) continue;
+      const title = (item.title || item.group || "Live").trim() || "Live";
+      const id = item.PK;
+      if (isYouTubeUrl(url)) {
+        const streamsUrl = url.includes("/streams") ? url : url.replace(/\/?$/, "") + "/streams";
+        channels.push({ id, title, url, streamsUrl });
+      } else {
+        sources.push({ id, title, url });
+      }
+    }
+    return { liveChannels: channels, externalSources: sources };
+  }, [mediaItems]);
 
   const [ytStatusMap, setYtStatusMap] = useState<Record<string, LiveChannelStatus>>({});
   const [extStatusMap, setExtStatusMap] = useState<Record<string, ExternalSourceStatus>>({});
@@ -212,6 +252,8 @@ function HomePageContent() {
           />
 
           <VideoHub
+            mediaItems={mediaItems}
+            mediaLoading={mediaLoading}
             onVideoClick={(video) => {
               handleVideoPlay({
                 url: video.url,
@@ -221,7 +263,7 @@ function HomePageContent() {
               });
             }}
           />
-          <AudioHub />
+          <AudioHub mediaItems={mediaItems} mediaLoading={mediaLoading} />
           <VideoSubmissionForm />
           <SocialLinksForm />
         </main>

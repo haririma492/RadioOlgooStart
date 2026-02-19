@@ -71,7 +71,7 @@ html, body {
   font-family: var(--font-vazirmatn), sans-serif;
 }
 
-/* Date strip: professional, readable Farsi numbers and text */
+/* Date strip: professional, readable Farsi numbers and text. LTR so "۳۰ · بهمن · ۱۴۰۴" shows in order */
 .date-strip {
   font-family: var(--font-vazirmatn), sans-serif;
   font-variant-numeric: tabular-nums;
@@ -80,6 +80,8 @@ html, body {
   font-weight: 500;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  direction: ltr;
+  unicode-bidi: isolate;
 }
 
 .date-strip-segment {
@@ -89,6 +91,8 @@ html, body {
   font-weight: 500;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  direction: ltr;
+  unicode-bidi: isolate-override;
 }
 
 @keyframes date-strip {

@@ -51,10 +51,11 @@ function DateSegment({
   return (
     <span
       className="date-strip-segment font-farsi relative inline-block px-5 py-1.5 cursor-default text-white"
+      dir="ltr"
       onMouseEnter={handleEnter}
       onMouseMove={handleMove}
       onMouseLeave={handleLeave}
-      style={{ fontSize: "1.125rem", lineHeight: 1.5 }}
+      style={{ fontSize: "1.125rem", lineHeight: 1.5, unicodeBidi: "isolate", direction: "ltr" }}
     >
       {text}
     </span>
@@ -141,7 +142,8 @@ export default function DateDisplay({ date }: DateDisplayProps) {
       >
         <div
           className="date-strip font-farsi text-white whitespace-nowrap animate-date-strip flex items-center"
-          style={{ width: "max-content", fontSize: "1.125rem", lineHeight: 1.5 }}
+          dir="ltr"
+          style={{ width: "max-content", fontSize: "1.125rem", lineHeight: 1.5, direction: "ltr", unicodeBidi: "isolate" }}
         >
           {oneBlock}
           <span className="px-2 text-gray-500 select-none">{SEP}</span>

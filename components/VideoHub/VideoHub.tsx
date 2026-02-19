@@ -7,6 +7,7 @@ import SearchModal from "./SearchModal";
 import ProfileRowWithNav from "./ProfileRowWithNav";
 import DateDisplay from "@/components/DateDisplay/DateDisplay";
 import { usePlayback } from "@/context/PlaybackContext";
+import type { MediaItem } from "@/types/media";
 
 type VideoItem = {
   id: string;
@@ -21,18 +22,9 @@ type VideoItem = {
   group?: string;
 };
 
-type MediaItem = {
-  PK: string;
-  url: string;
-  section: string;
-  group: string;
-  person: string;
-  title: string;
-  description: string;
-  createdAt: string;
-};
-
 type VideoHubProps = {
+  mediaItems?: MediaItem[];
+  mediaLoading?: boolean;
   onVideoClick?: (video: VideoItem) => void;
 };
 
@@ -42,10 +34,10 @@ type Profile = {
   videoCount: number;
 };
 
-export default function VideoHub({ onVideoClick }: VideoHubProps) {
+export default function VideoHub({ mediaItems: mediaItemsProp, mediaLoading: mediaLoadingProp, onVideoClick }: VideoHubProps) {
   const { activePlayback, setActivePlayback } = usePlayback();
-  const [mediaItems, setMediaItems] = useState<MediaItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [internalMediaItems, setInternalMediaItems] = useState<MediaItem[]>([]);
+  const [internalLoading, setInternalLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expandedPerson, setExpandedPerson] = useState<string | null>(null);
   const [selectedPerson, setSelectedPerson] = useState<string | null>(null);
@@ -55,6 +47,9 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
   const [playingVideoOnCard, setPlayingVideoOnCard] = useState<{ personName: string; video: VideoItem } | null>(null);
   const [today, setToday] = useState(() => new Date());
   const hubContentRef = useRef<HTMLDivElement>(null);
+
+  const mediaItems = mediaItemsProp !== undefined ? mediaItemsProp : internalMediaItems;
+  const loading = mediaLoadingProp !== undefined ? mediaLoadingProp : internalLoading;
 
   // Keep "today" in sync (mount + midnight)
   useEffect(() => {
@@ -67,11 +62,12 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
     return () => clearTimeout(t);
   }, []);
 
-  // Fetch media from API on mount
+  // Fetch media from API only when not provided by parent
   useEffect(() => {
+    if (mediaItemsProp !== undefined) return;
     async function fetchMedia() {
       try {
-        setLoading(true);
+        setInternalLoading(true);
         setError(null);
         const response = await fetch("/api/media");
         
@@ -82,7 +78,7 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
         const data = await response.json();
 
         if (data.ok && Array.isArray(data.items)) {
-          setMediaItems(data.items);
+          setInternalMediaItems(data.items);
         } else {
           setError("Failed to load videos: Invalid response format");
         }
@@ -91,12 +87,12 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
         setError(errorMessage);
         console.error("Error fetching media:", err);
       } finally {
-        setLoading(false);
+        setInternalLoading(false);
       }
     }
 
     fetchMedia();
-  }, []);
+  }, [mediaItemsProp]);
 
   // Sync from global playback: clear card/modal when another source is active
   useEffect(() => {

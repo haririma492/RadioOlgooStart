@@ -5,26 +5,22 @@ import RevolutionaryMusicRow from "./RevolutionaryMusicRow";
 import LiveChannels from "../LiveChannels/LiveChannels";
 import type { RevolutionaryMusicItem } from "./RevolutionaryMusicCard";
 import { usePlayback } from "@/context/PlaybackContext";
+import type { MediaItem } from "@/types/media";
 
-type MediaItem = {
-  PK: string;
-  url: string;
-  section: string;
-  group: string;
-  person: string;
-  title: string;
-  description: string;
-  date: string;
-  createdAt: string;
-  updatedAt: string;
+type AudioHubProps = {
+  mediaItems?: MediaItem[];
+  mediaLoading?: boolean;
 };
 
-export default function AudioHub() {
+export default function AudioHub({ mediaItems: mediaItemsProp, mediaLoading: mediaLoadingProp }: AudioHubProps = {}) {
   const { activePlayback, setActivePlayback } = usePlayback();
-  const [mediaItems, setMediaItems] = useState<MediaItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [internalMediaItems, setInternalMediaItems] = useState<MediaItem[]>([]);
+  const [internalLoading, setInternalLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [playingItemId, setPlayingItemId] = useState<string | null>(null);
+
+  const mediaItems = mediaItemsProp !== undefined ? mediaItemsProp : internalMediaItems;
+  const loading = mediaLoadingProp !== undefined ? mediaLoadingProp : internalLoading;
 
   useEffect(() => {
     if (activePlayback && activePlayback.source !== "revolutionary-music") {
@@ -33,15 +29,16 @@ export default function AudioHub() {
   }, [activePlayback]);
 
   useEffect(() => {
+    if (mediaItemsProp !== undefined) return;
     async function fetchMedia() {
       try {
-        setLoading(true);
+        setInternalLoading(true);
         setError(null);
         const response = await fetch("/api/media");
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
         const data = await response.json();
         if (data.ok && Array.isArray(data.items)) {
-          setMediaItems(data.items);
+          setInternalMediaItems(data.items);
         } else {
           setError("Failed to load media: Invalid response format");
         }
@@ -50,11 +47,11 @@ export default function AudioHub() {
         setError(msg);
         console.error("Error fetching media:", err);
       } finally {
-        setLoading(false);
+        setInternalLoading(false);
       }
     }
     fetchMedia();
-  }, []);
+  }, [mediaItemsProp]);
 
   const revolutionMusicItems = mediaItems.filter(
     (item) =>
