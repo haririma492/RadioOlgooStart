@@ -18,17 +18,6 @@ function extractHandleFromUrlOrHandle(input: string): string | null {
   return null;
 }
 
-function extractVideoIdFromUrl(u: string): string | null {
-  try {
-    const url = new URL(u);
-    const v = url.searchParams.get("v");
-    if (v && /^[a-zA-Z0-9_-]{11}$/.test(v)) return v;
-    return null;
-  } catch {
-    return null;
-  }
-}
-
 async function ytApiGet(url: string) {
   const res = await fetch(url, {
     cache: "no-store",
@@ -44,90 +33,111 @@ async function ytApiGet(url: string) {
   return { ok: res.ok, status: res.status, json };
 }
 
+/**
+ * Robust handle -> channelId:
+ * search channels by "@handle" (works when channels.list forHandle fails)
+ */
 async function handleToChannelId(apiKey: string, handle: string): Promise<string | null> {
-  const url =
-    "https://www.googleapis.com/youtube/v3/channels" +
-    `?part=id&forHandle=${encodeURIComponent(handle)}` +
+  // 1) Try search by "@handle"
+  const searchUrl =
+    "https://www.googleapis.com/youtube/v3/search" +
+    `?part=id,snippet&type=channel&maxResults=5` +
+    `&q=${encodeURIComponent("@" + handle)}` +
     `&key=${encodeURIComponent(apiKey)}`;
 
-  const { ok, json } = await ytApiGet(url);
-  if (!ok) return null;
+  const s1 = await ytApiGet(searchUrl);
+  if (s1.ok) {
+    const items: any[] = Array.isArray(s1.json?.items) ? s1.json.items : [];
+    // pick exact match if possible
+    const exact = items.find(
+      (it) =>
+        normalizeHandle(it?.snippet?.channelTitle || "") === normalizeHandle(handle) ||
+        normalizeHandle(it?.snippet?.title || "") === normalizeHandle(handle)
+    );
+    const best = exact || items[0];
+    const cid = best?.id?.channelId;
+    if (typeof cid === "string" && cid) return cid;
+  }
 
-  const id = json?.items?.[0]?.id;
-  return typeof id === "string" ? id : null;
+  // 2) Fallback: channels.list?forUsername (legacy; rarely works)
+  const legacyUrl =
+    "https://www.googleapis.com/youtube/v3/channels" +
+    `?part=id&forUsername=${encodeURIComponent(handle)}` +
+    `&key=${encodeURIComponent(apiKey)}`;
+
+  const s2 = await ytApiGet(legacyUrl);
+  const id2 = s2.json?.items?.[0]?.id;
+  if (typeof id2 === "string" && id2) return id2;
+
+  return null;
 }
 
-async function channelIdToLiveVideo(apiKey: string, channelId: string) {
+async function channelIdToCandidateLiveVideo(apiKey: string, channelId: string) {
   const searchUrl =
     "https://www.googleapis.com/youtube/v3/search" +
     `?part=id,snippet&channelId=${encodeURIComponent(channelId)}` +
-    `&eventType=live&type=video&maxResults=1` +
+    `&eventType=live&type=video&maxResults=5` +
     `&key=${encodeURIComponent(apiKey)}`;
 
   const { ok, json } = await ytApiGet(searchUrl);
   if (!ok) return null;
 
-  const item = json?.items?.[0];
-  const videoId = item?.id?.videoId;
-  const title = item?.snippet?.title;
-
-  if (typeof videoId !== "string" || !videoId) return null;
-  return { videoId, title: typeof title === "string" ? title : undefined };
+  const items: any[] = Array.isArray(json?.items) ? json.items : [];
+  for (const it of items) {
+    const videoId = it?.id?.videoId;
+    const title = it?.snippet?.title;
+    if (typeof videoId === "string" && videoId) {
+      return {
+        videoId,
+        title: typeof title === "string" ? title : undefined,
+        method: "search_eventType_live",
+      };
+    }
+  }
+  return null;
 }
 
-/**
- * ✅ Fallback that does NOT depend on YouTube Data API:
- * Fetch https://www.youtube.com/@HANDLE/live
- * If channel is live, YouTube often redirects to https://www.youtube.com/watch?v=VIDEOID
- */
-async function liveByRedirect(handle: string) {
-  const url = `https://www.youtube.com/@${encodeURIComponent(handle)}/live`;
+async function verifyVideoIsLive(apiKey: string, videoId: string) {
+  const url =
+    "https://www.googleapis.com/youtube/v3/videos" +
+    `?part=snippet,liveStreamingDetails&id=${encodeURIComponent(videoId)}` +
+    `&key=${encodeURIComponent(apiKey)}`;
 
-  const res = await fetch(url, {
-    cache: "no-store",
-    // Important: realistic headers help YouTube respond consistently
-    headers: {
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122 Safari/537.36",
-      Accept: "text/html,application/xhtml+xml",
-      "Accept-Language": "en-US,en;q=0.9",
-    },
-    redirect: "follow",
-  });
+  const { ok, json } = await ytApiGet(url);
+  if (!ok) return { ok: false, isLive: false, reason: "videos_list_failed", raw: json };
 
-  // node fetch exposes final url after redirects:
-  const finalUrl = res.url || url;
+  const item = json?.items?.[0];
+  if (!item) return { ok: true, isLive: false, reason: "no_video_item" };
 
-  // If redirected to watch?v=..., extract v:
-  const vid = extractVideoIdFromUrl(finalUrl);
-  if (vid) return { videoId: vid, method: "redirect" as const, finalUrl };
+  const liveBroadcastContent = item?.snippet?.liveBroadcastContent; // live|upcoming|none
+  const lsd = item?.liveStreamingDetails;
 
-  // If no redirect, sometimes the HTML still contains a watch link.
-  // Try a light regex on HTML (first match only).
-  const html = await res.text().catch(() => "");
-  const m = html.match(/watch\?v=([a-zA-Z0-9_-]{11})/);
-  if (m?.[1]) {
-    return {
-      videoId: m[1],
-      method: "html_regex" as const,
-      finalUrl,
-    };
-  }
+  const hasActualStart = typeof lsd?.actualStartTime === "string" && lsd.actualStartTime.length > 0;
+  const hasActualEnd = typeof lsd?.actualEndTime === "string" && lsd.actualEndTime.length > 0;
 
-  return { videoId: null as string | null, method: "none" as const, finalUrl };
+  const isLive =
+    liveBroadcastContent === "live" ||
+    (hasActualStart && !hasActualEnd);
+
+  return {
+    ok: true,
+    isLive,
+    reason: isLive ? "verified_live" : `not_live:${String(liveBroadcastContent || "unknown")}`,
+  };
 }
 
 export async function GET(req: Request) {
   const apiKey = process.env.YOUTUBE_API_KEY;
+  if (!apiKey) {
+    return NextResponse.json({ ok: false, error: "Missing env var YOUTUBE_API_KEY" }, { status: 500 });
+  }
 
   const { searchParams } = new URL(req.url);
   const handlesParam = searchParams.get("handles") || "";
   const inputsParam = searchParams.get("inputs") || "";
 
   const rawList =
-    (handlesParam ? handlesParam.split(",") : []).concat(
-      inputsParam ? inputsParam.split(",") : []
-    );
+    (handlesParam ? handlesParam.split(",") : []).concat(inputsParam ? inputsParam.split(",") : []);
 
   const handles = rawList
     .map((x) => extractHandleFromUrlOrHandle(x))
@@ -137,77 +147,47 @@ export async function GET(req: Request) {
 
   const results: Record<
     string,
-    {
-      handle: string;
-      isLive: boolean;
-      videoId?: string;
-      title?: string;
-      channelId?: string;
-      source?: "data_api" | "redirect_fallback";
-      error?: string;
-      debug?: any;
-    }
+    { handle: string; isLive: boolean; videoId?: string; title?: string; error?: string; debug?: any }
   > = {};
 
   for (const handle of unique) {
     try {
-      // 1) Try YouTube Data API first (if key exists)
-      if (apiKey) {
-        const channelId = await handleToChannelId(apiKey, handle);
-        if (channelId) {
-          const live = await channelIdToLiveVideo(apiKey, channelId);
-          if (live?.videoId) {
-            results[handle] = {
-              handle,
-              channelId,
-              isLive: true,
-              videoId: live.videoId,
-              title: live.title,
-              source: "data_api",
-            };
-            continue;
-          }
-          // If API says not live, we still fall back (because API can be wrong)
-        } else {
-          // even if channelId not found, still try redirect fallback
-        }
+      const channelId = await handleToChannelId(apiKey, handle);
+
+      if (!channelId) {
+        results[handle] = { handle, isLive: false, error: "channelId_not_found" };
+        continue;
       }
 
-      // 2) Fallback: /live redirect
-      const fb = await liveByRedirect(handle);
-      if (fb.videoId) {
-        results[handle] = {
-          handle,
-          isLive: true,
-          videoId: fb.videoId,
-          source: "redirect_fallback",
-          debug: { method: fb.method, finalUrl: fb.finalUrl },
-        };
-      } else {
-        results[handle] = {
-          handle,
-          isLive: false,
-          source: "redirect_fallback",
-          debug: { method: fb.method, finalUrl: fb.finalUrl },
-        };
+      const candidate = await channelIdToCandidateLiveVideo(apiKey, channelId);
+      if (!candidate) {
+        results[handle] = { handle, isLive: false, debug: { channelId, note: "no live items" } };
+        continue;
       }
-    } catch (e: any) {
+
+      const v = await verifyVideoIsLive(apiKey, candidate.videoId);
+
+      if (!v.ok) {
+        results[handle] = { handle, isLive: false, error: v.reason, debug: { channelId, candidate, verify: v } };
+        continue;
+      }
+
+      if (!v.isLive) {
+        results[handle] = { handle, isLive: false, debug: { channelId, candidate, verify: v } };
+        continue;
+      }
+
       results[handle] = {
         handle,
-        isLive: false,
-        error: e?.message || "unknown_error",
+        isLive: true,
+        videoId: candidate.videoId,
+        title: candidate.title,
+        debug: { channelId, pickedBy: candidate.method, verify: v.reason },
       };
+    } catch (e: any) {
+      results[handle] = { handle, isLive: false, error: e?.message || "unknown_error" };
     }
   }
 
-  return NextResponse.json(
-    { ok: true, results, debug: { handles: unique } },
-    {
-      status: 200,
-      headers: {
-        // absolutely no caching for live detection
-        "Cache-Control": "no-store, max-age=0",
-      },
-    }
-  );
+  return NextResponse.json({ ok: true, results, debug: { handles: unique } }, { status: 200 });
 }
