@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 // ── Types ──────────────────────────────────────────────────────────────
 type DynamoItem = {
@@ -38,11 +38,127 @@ type ContentItem = {
 };
 
 // ── AWS Region (shown on tabs) ────────────────────────────────────────
-const AWS_REGION = process.env.AWS_REGION ||
-                   process.env.AWS_DEFAULT_REGION ||
-                   "ca-central-1"; // fallback to your main region
+const AWS_REGION =
+  process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || "ca-central-1";
 
-// ── Shared Styles ──────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────
+function truncate(str: any, maxLen: number): string {
+  const s = String(str || "");
+  if (s.length <= maxLen) return s;
+  return s.slice(0, maxLen) + "...";
+}
+
+function formatDate(iso: string | undefined): string {
+  if (!iso) return "-";
+  try {
+    return new Date(iso).toLocaleString("en-US", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return iso;
+  }
+}
+
+function rand6(): string {
+  // short random for PK uniqueness
+  return Math.random().toString(36).slice(2, 8);
+}
+
+function makeMediaPK(): string {
+  // MEDIA#<epoch_ms>#<rand>
+  return `MEDIA#${Date.now()}#${rand6()}`;
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Sorting helpers
+// ──────────────────────────────────────────────────────────────────────
+type SortDir = "asc" | "desc";
+type SortState = { key: string; dir: SortDir } | null;
+
+function parseMaybeDate(v: any): number | null {
+  if (!v) return null;
+  const s = String(v).trim();
+  if (!s) return null;
+  const t = Date.parse(s);
+  return Number.isFinite(t) ? t : null;
+}
+
+function parseMaybeNumber(v: any): number | null {
+  if (v === null || v === undefined) return null;
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  const s = String(v).trim().replace(/,/g, "");
+  if (!s) return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+function compareValues(a: any, b: any): number {
+  const aEmpty = a === null || a === undefined || String(a).trim() === "";
+  const bEmpty = b === null || b === undefined || String(b).trim() === "";
+  if (aEmpty && bEmpty) return 0;
+  if (aEmpty) return 1; // empty goes last
+  if (bEmpty) return -1;
+
+  if (typeof a === "boolean" || typeof b === "boolean") {
+    const av = a === true ? 1 : 0;
+    const bv = b === true ? 1 : 0;
+    return av - bv;
+  }
+
+  const ad = parseMaybeDate(a);
+  const bd = parseMaybeDate(b);
+  if (ad !== null && bd !== null) return ad - bd;
+
+  const an = parseMaybeNumber(a);
+  const bn = parseMaybeNumber(b);
+  if (an !== null && bn !== null) return an - bn;
+
+  const as = String(a).toLowerCase();
+  const bs = String(b).toLowerCase();
+  return as < bs ? -1 : as > bs ? 1 : 0;
+}
+
+function sortArray<T extends Record<string, any>>(arr: T[], sort: SortState): T[] {
+  if (!sort) return arr;
+  const { key, dir } = sort;
+  const mul = dir === "asc" ? 1 : -1;
+  const copy = [...arr];
+  copy.sort((x, y) => mul * compareValues(x?.[key], y?.[key]));
+  return copy;
+}
+
+function SortButton({
+  label,
+  colKey,
+  sort,
+  onSort,
+}: {
+  label: string;
+  colKey: string;
+  sort: SortState;
+  onSort: (key: string) => void;
+}) {
+  const active = sort?.key === colKey;
+  const arrow = active ? (sort!.dir === "asc" ? "▲" : "▼") : "";
+  return (
+    <button
+      type="button"
+      onClick={() => onSort(colKey)}
+      className={`text-xs font-medium uppercase hover:text-slate-900 ${
+        active ? "text-slate-900" : "text-slate-500"
+      }`}
+      title="Sort"
+    >
+      {label} {arrow}
+    </button>
+  );
+}
+
+// ── Shared Styles (kept) ──────────────────────────────────────────────
 const buttonStyle: React.CSSProperties = {
   padding: "8px 16px",
   background: "#0070f3",
@@ -54,16 +170,6 @@ const buttonStyle: React.CSSProperties = {
   fontSize: "14px",
 };
 
-const tabButtonStyle: React.CSSProperties = {
-  padding: "12px 24px",
-  background: "none",
-  border: "none",
-  cursor: "pointer",
-  fontSize: "16px",
-  fontWeight: "600",
-  marginRight: "8px",
-};
-
 export default function Admin2Page() {
   const [activeTab, setActiveTab] = useState<"media" | "content">("media");
   const [token, setToken] = useState("");
@@ -72,18 +178,57 @@ export default function Admin2Page() {
   // Media table state
   const [mediaItems, setMediaItems] = useState<DynamoItem[]>([]);
   const [mediaLoading, setMediaLoading] = useState(true);
-  const [selectedMediaPKs, setSelectedMediaPKs] = useState<Set<string>>(new Set());
+  const [selectedMediaPKs, setSelectedMediaPKs] = useState<Set<string>>(
+    new Set()
+  );
   const [mediaDeleting, setMediaDeleting] = useState(false);
+
+  // ✅ Media add/edit state
+  const [showAddMediaForm, setShowAddMediaForm] = useState(false);
+  const [editingMedia, setEditingMedia] = useState<DynamoItem | null>(null);
+  const [mediaSaving, setMediaSaving] = useState(false);
 
   // Content table state
   const [contentItems, setContentItems] = useState<ContentItem[]>([]);
   const [contentLoading, setContentLoading] = useState(true);
-  const [selectedContentPKs, setSelectedContentPKs] = useState<Set<string>>(new Set());
+  const [selectedContentPKs, setSelectedContentPKs] = useState<Set<string>>(
+    new Set()
+  );
   const [contentDeleting, setContentDeleting] = useState(false);
-  const [editingContent, setEditingContent] = useState<ContentItem | null>(null);
+  const [editingContent, setEditingContent] = useState<ContentItem | null>(
+    null
+  );
   const [showAddForm, setShowAddForm] = useState(false);
 
+  // ✅ Sorting state
+  const [mediaSort, setMediaSort] = useState<SortState>(null);
+  const [contentSort, setContentSort] = useState<SortState>(null);
+
   const [error, setError] = useState("");
+
+  const toggleMediaSort = (key: string) => {
+    setMediaSort((prev) => {
+      if (!prev || prev.key !== key) return { key, dir: "asc" };
+      return { key, dir: prev.dir === "asc" ? "desc" : "asc" };
+    });
+  };
+
+  const toggleContentSort = (key: string) => {
+    setContentSort((prev) => {
+      if (!prev || prev.key !== key) return { key, dir: "asc" };
+      return { key, dir: prev.dir === "asc" ? "desc" : "asc" };
+    });
+  };
+
+  const mediaItemsSorted = useMemo(
+    () => sortArray(mediaItems, mediaSort),
+    [mediaItems, mediaSort]
+  );
+
+  const contentItemsSorted = useMemo(
+    () => sortArray(contentItems, contentSort),
+    [contentItems, contentSort]
+  );
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -100,7 +245,7 @@ export default function Admin2Page() {
       } else {
         setError("Invalid admin token");
       }
-    } catch (err) {
+    } catch {
       setError("Failed to authenticate");
     }
   };
@@ -155,10 +300,12 @@ export default function Admin2Page() {
   };
 
   const toggleMediaSelectAll = () => {
-    if (selectedMediaPKs.size === mediaItems.length) {
+    // keep original behavior: select all currently shown rows (sorted view)
+    const shownPKs = mediaItemsSorted.map((it) => it.PK);
+    if (selectedMediaPKs.size === shownPKs.length) {
       setSelectedMediaPKs(new Set());
     } else {
-      setSelectedMediaPKs(new Set(mediaItems.map((item) => item.PK)));
+      setSelectedMediaPKs(new Set(shownPKs));
     }
   };
 
@@ -198,6 +345,41 @@ export default function Admin2Page() {
     }
   };
 
+  // ✅ Save media (Add or Edit)
+  // This assumes your backend supports POST /api/admin/list-all to upsert a single item.
+  const handleSaveMedia = async (item: DynamoItem) => {
+    try {
+      setMediaSaving(true);
+      setError("");
+
+      const res = await fetch("/api/admin/list-all", {
+        method: "POST",
+        headers: {
+          "x-admin-token": token,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(item),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          data?.error ||
+            "Save failed. (Backend must support POST /api/admin/list-all)"
+        );
+      }
+
+      alert("✅ Media saved");
+      setShowAddMediaForm(false);
+      setEditingMedia(null);
+      await loadMediaData(token);
+    } catch (err: any) {
+      setError(err.message || "Failed to save media item");
+    } finally {
+      setMediaSaving(false);
+    }
+  };
+
   const toggleContentSelect = (pk: string) => {
     setSelectedContentPKs((prev) => {
       const next = new Set(prev);
@@ -208,10 +390,11 @@ export default function Admin2Page() {
   };
 
   const toggleContentSelectAll = () => {
-    if (selectedContentPKs.size === contentItems.length) {
+    const shownPKs = contentItemsSorted.map((it) => it.PK);
+    if (selectedContentPKs.size === shownPKs.length) {
       setSelectedContentPKs(new Set());
     } else {
-      setSelectedContentPKs(new Set(contentItems.map((item) => item.PK)));
+      setSelectedContentPKs(new Set(shownPKs));
     }
   };
 
@@ -278,7 +461,9 @@ export default function Admin2Page() {
     return (
       <div className="min-h-screen bg-slate-100 text-slate-900 flex items-center justify-center">
         <div className="bg-white p-8 rounded-xl shadow-lg max-w-md w-full">
-          <h1 className="text-2xl font-bold text-slate-900 mb-6">Admin Login</h1>
+          <h1 className="text-2xl font-bold text-slate-900 mb-6">
+            Admin Login
+          </h1>
           <form onSubmit={handleLogin}>
             <div className="mb-4">
               <label className="block text-slate-700 mb-2 font-medium">
@@ -298,7 +483,9 @@ export default function Admin2Page() {
             >
               Login
             </button>
-            {error && <div className="text-red-600 mt-4 text-center">{error}</div>}
+            {error && (
+              <div className="text-red-600 mt-4 text-center">{error}</div>
+            )}
           </form>
         </div>
       </div>
@@ -342,22 +529,47 @@ export default function Admin2Page() {
 
       {/* Media Table */}
       {activeTab === "media" && (
-        <MediaTable
-          items={mediaItems}
-          loading={mediaLoading}
-          selectedPKs={selectedMediaPKs}
-          deleting={mediaDeleting}
-          onRefresh={() => loadMediaData(token)}
-          onToggleSelect={toggleMediaSelect}
-          onToggleSelectAll={toggleMediaSelectAll}
-          onDelete={handleDeleteMedia}
-        />
+        <>
+          {(showAddMediaForm || editingMedia) && (
+            <MediaEditor
+              existingItems={mediaItems}
+              item={editingMedia}
+              saving={mediaSaving}
+              onCancel={() => {
+                setShowAddMediaForm(false);
+                setEditingMedia(null);
+              }}
+              onSave={handleSaveMedia}
+            />
+          )}
+
+          <MediaTable
+            items={mediaItemsSorted}
+            loading={mediaLoading}
+            selectedPKs={selectedMediaPKs}
+            deleting={mediaDeleting}
+            onRefresh={() => loadMediaData(token)}
+            onToggleSelect={toggleMediaSelect}
+            onToggleSelectAll={toggleMediaSelectAll}
+            onDelete={handleDeleteMedia}
+            onAddNew={() => {
+              setEditingMedia(null);
+              setShowAddMediaForm(true);
+            }}
+            onEdit={(it) => {
+              setShowAddMediaForm(false);
+              setEditingMedia(it);
+            }}
+            sort={mediaSort}
+            onSort={toggleMediaSort}
+          />
+        </>
       )}
 
       {/* Content Table */}
       {activeTab === "content" && (
         <ContentTable
-          items={contentItems}
+          items={contentItemsSorted}
           loading={contentLoading}
           selectedPKs={selectedContentPKs}
           deleting={contentDeleting}
@@ -374,6 +586,8 @@ export default function Admin2Page() {
             setShowAddForm(false);
           }}
           onShowAddForm={() => setShowAddForm(true)}
+          sort={contentSort}
+          onSort={toggleContentSort}
         />
       )}
     </div>
@@ -390,6 +604,10 @@ function MediaTable({
   onToggleSelect,
   onToggleSelectAll,
   onDelete,
+  onAddNew,
+  onEdit,
+  sort,
+  onSort,
 }: {
   items: DynamoItem[];
   loading: boolean;
@@ -399,12 +617,23 @@ function MediaTable({
   onToggleSelect: (pk: string) => void;
   onToggleSelectAll: () => void;
   onDelete: () => void;
+  onAddNew: () => void;
+  onEdit: (item: DynamoItem) => void;
+  sort: SortState;
+  onSort: (key: string) => void;
 }) {
   return (
     <div className="bg-white rounded-lg shadow">
       <div className="p-4 border-b flex justify-between items-center">
         <h2 className="text-lg font-semibold text-slate-900">Media Items</h2>
         <div className="flex gap-3">
+          <button
+            onClick={onAddNew}
+            className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
+          >
+            + Add New
+          </button>
+
           {selectedPKs.size > 0 && (
             <button
               onClick={onDelete}
@@ -414,6 +643,7 @@ function MediaTable({
               {deleting ? "Deleting..." : `Delete (${selectedPKs.size})`}
             </button>
           )}
+
           <button
             onClick={onRefresh}
             disabled={loading}
@@ -425,9 +655,13 @@ function MediaTable({
       </div>
 
       {loading ? (
-        <div className="p-8 text-center text-slate-500">Loading media items...</div>
+        <div className="p-8 text-center text-slate-500">
+          Loading media items...
+        </div>
       ) : items.length === 0 ? (
-        <div className="p-8 text-center text-slate-500">No media items found</div>
+        <div className="p-8 text-center text-slate-500">
+          No media items found
+        </div>
       ) : (
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-slate-200">
@@ -440,14 +674,31 @@ function MediaTable({
                     onChange={onToggleSelectAll}
                   />
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">PK</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Section</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Group</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Title</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Person</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Date</th>
+
+                <th className="px-6 py-3 text-left">
+                  <SortButton label="PK" colKey="PK" sort={sort} onSort={onSort} />
+                </th>
+                <th className="px-6 py-3 text-left">
+                  <SortButton label="Section" colKey="section" sort={sort} onSort={onSort} />
+                </th>
+                <th className="px-6 py-3 text-left">
+                  <SortButton label="Group" colKey="group" sort={sort} onSort={onSort} />
+                </th>
+                <th className="px-6 py-3 text-left">
+                  <SortButton label="Title" colKey="title" sort={sort} onSort={onSort} />
+                </th>
+                <th className="px-6 py-3 text-left">
+                  <SortButton label="Person" colKey="person" sort={sort} onSort={onSort} />
+                </th>
+                <th className="px-6 py-3 text-left">
+                  <SortButton label="Date" colKey="date" sort={sort} onSort={onSort} />
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">
+                  Actions
+                </th>
               </tr>
             </thead>
+
             <tbody className="divide-y divide-slate-200">
               {items.map((item) => (
                 <tr key={item.PK} className="hover:bg-slate-50">
@@ -458,18 +709,336 @@ function MediaTable({
                       onChange={() => onToggleSelect(item.PK)}
                     />
                   </td>
-                  <td className="px-6 py-4 text-sm text-slate-900 truncate max-w-xs">{item.PK}</td>
-                  <td className="px-6 py-4 text-sm text-slate-600">{item.section || "-"}</td>
-                  <td className="px-6 py-4 text-sm text-slate-600">{item.group || "-"}</td>
-                  <td className="px-6 py-4 text-sm text-slate-900">{item.title || "-"}</td>
-                  <td className="px-6 py-4 text-sm text-slate-600">{item.person || "-"}</td>
-                  <td className="px-6 py-4 text-sm text-slate-600">{item.date || "-"}</td>
+                  <td className="px-6 py-4 text-sm text-slate-900 truncate max-w-xs">
+                    {item.PK}
+                  </td>
+                  <td className="px-6 py-4 text-sm text-slate-600">
+                    {item.section || "-"}
+                  </td>
+                  <td className="px-6 py-4 text-sm text-slate-600">
+                    {item.group || "-"}
+                  </td>
+                  <td className="px-6 py-4 text-sm text-slate-900">
+                    {item.title || "-"}
+                  </td>
+                  <td className="px-6 py-4 text-sm text-slate-600">
+                    {item.person || "-"}
+                  </td>
+                  <td className="px-6 py-4 text-sm text-slate-600">
+                    {item.date || "-"}
+                  </td>
+                  <td className="px-6 py-4 text-sm">
+                    <button
+                      onClick={() => onEdit(item)}
+                      className="text-blue-600 hover:text-blue-800"
+                    >
+                      Edit
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
+
+          <div className="px-6 py-3 text-xs text-slate-500">
+            Tip: click headers to sort (click again to reverse).
+          </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Media Editor Modal ────────────────────────────────────────────────
+function MediaEditor({
+  item,
+  onSave,
+  onCancel,
+  saving,
+  existingItems,
+}: {
+  item: DynamoItem | null;
+  onSave: (item: DynamoItem) => void;
+  onCancel: () => void;
+  saving: boolean;
+  existingItems: DynamoItem[];
+}) {
+  const existingSections = useMemo(() => {
+    const s = new Set<string>();
+    for (const it of existingItems) {
+      if (it.section) s.add(it.section);
+    }
+    return Array.from(s).sort((a, b) => a.localeCompare(b));
+  }, [existingItems]);
+
+  const existingGroups = useMemo(() => {
+    const s = new Set<string>();
+    for (const it of existingItems) {
+      if (it.group) s.add(it.group);
+    }
+    return Array.from(s).sort((a, b) => a.localeCompare(b));
+  }, [existingItems]);
+
+  const [formData, setFormData] = useState<DynamoItem>(() => {
+    if (item) return { ...item };
+    const now = new Date().toISOString();
+    return {
+      PK: makeMediaPK(),
+      url: "",
+      section: existingSections[0] || "Live Videos",
+      group: "",
+      title: "",
+      person: "",
+      date: "",
+      description: "",
+      active: true,
+      createdAt: now,
+      updatedAt: now,
+    };
+  });
+
+  useEffect(() => {
+    if (!item) return;
+    setFormData({ ...item });
+  }, [item]);
+
+  const regeneratePK = () => {
+    if (item) return; // no regen on edit
+    setFormData((p) => ({ ...p, PK: makeMediaPK() }));
+  };
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!formData.section || !String(formData.section).trim()) {
+      alert("Section is required.");
+      return;
+    }
+
+    const now = new Date().toISOString();
+
+    const payload: DynamoItem = {
+      ...formData,
+      PK: String(formData.PK).trim(),
+      section: String(formData.section || "").trim(),
+      group: String(formData.group || "").trim() || undefined,
+      url: String(formData.url || "").trim() || undefined,
+      title: String(formData.title || "").trim() || undefined,
+      person: String(formData.person || "").trim() || undefined,
+      date: String(formData.date || "").trim() || undefined,
+      description: String(formData.description || "").trim() || undefined,
+      active: !!formData.active,
+      updatedAt: now,
+      createdAt: item?.createdAt || formData.createdAt || now,
+    };
+
+    onSave(payload);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-xl p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-bold">
+            {item ? "Edit Media Item" : "Add New Media Item"}
+          </h3>
+          <button
+            type="button"
+            onClick={onCancel}
+            className="text-slate-500 hover:text-slate-800"
+            title="Close"
+          >
+            ✕
+          </button>
+        </div>
+
+        <form onSubmit={submit} className="space-y-4">
+          {/* PK */}
+          <div>
+            <label className="block text-sm font-medium mb-1">PK</label>
+            <div className="flex gap-2">
+              <input
+                value={formData.PK}
+                readOnly
+                className="flex-1 border rounded px-3 py-2 bg-slate-50 font-mono text-sm"
+              />
+              {!item && (
+                <button
+                  type="button"
+                  onClick={regeneratePK}
+                  className="px-3 py-2 bg-slate-200 rounded hover:bg-slate-300"
+                >
+                  Regenerate
+                </button>
+              )}
+            </div>
+            <div className="text-xs text-slate-500 mt-1">
+              Auto-generated:{" "}
+              <span className="font-mono">MEDIA#timestamp#rand</span>
+            </div>
+          </div>
+
+          {/* Section */}
+          <div>
+            <label className="block text-sm font-medium mb-1">Section *</label>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <select
+                value={formData.section || ""}
+                onChange={(e) =>
+                  setFormData({ ...formData, section: e.target.value })
+                }
+                className="w-full border rounded px-3 py-2"
+              >
+                {existingSections.length === 0 ? (
+                  <option value="Live Videos">Live Videos</option>
+                ) : (
+                  existingSections.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))
+                )}
+              </select>
+              <input
+                placeholder="Or type a new section..."
+                value={formData.section || ""}
+                onChange={(e) =>
+                  setFormData({ ...formData, section: e.target.value })
+                }
+                className="w-full border rounded px-3 py-2"
+              />
+            </div>
+          </div>
+
+          {/* Group */}
+          <div>
+            <label className="block text-sm font-medium mb-1">Group</label>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <select
+                value={formData.group || ""}
+                onChange={(e) =>
+                  setFormData({ ...formData, group: e.target.value })
+                }
+                className="w-full border rounded px-3 py-2"
+              >
+                <option value="">(none)</option>
+                {existingGroups.map((g) => (
+                  <option key={g} value={g}>
+                    {g}
+                  </option>
+                ))}
+              </select>
+              <input
+                placeholder="Or type a new group..."
+                value={formData.group || ""}
+                onChange={(e) =>
+                  setFormData({ ...formData, group: e.target.value })
+                }
+                className="w-full border rounded px-3 py-2"
+              />
+            </div>
+          </div>
+
+          {/* URL */}
+          <div>
+            <label className="block text-sm font-medium mb-1">URL</label>
+            <input
+              value={formData.url || ""}
+              onChange={(e) => setFormData({ ...formData, url: e.target.value })}
+              className="w-full border rounded px-3 py-2"
+              placeholder="https://..."
+            />
+          </div>
+
+          {/* Title / Person / Date */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div>
+              <label className="block text-sm font-medium mb-1">Title</label>
+              <input
+                value={formData.title || ""}
+                onChange={(e) =>
+                  setFormData({ ...formData, title: e.target.value })
+                }
+                className="w-full border rounded px-3 py-2"
+                placeholder="Title shown to users"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Person</label>
+              <input
+                value={formData.person || ""}
+                onChange={(e) =>
+                  setFormData({ ...formData, person: e.target.value })
+                }
+                className="w-full border rounded px-3 py-2"
+                placeholder="Creator / channel / speaker"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Date</label>
+              <input
+                value={formData.date || ""}
+                onChange={(e) =>
+                  setFormData({ ...formData, date: e.target.value })
+                }
+                className="w-full border rounded px-3 py-2"
+                placeholder="YYYY-MM-DD (or any text)"
+              />
+            </div>
+          </div>
+
+          {/* Description */}
+          <div>
+            <label className="block text-sm font-medium mb-1">Description</label>
+            <textarea
+              value={formData.description || ""}
+              onChange={(e) =>
+                setFormData({ ...formData, description: e.target.value })
+              }
+              className="w-full border rounded px-3 py-2 min-h-[80px]"
+              placeholder="Optional"
+            />
+          </div>
+
+          {/* Active */}
+          <div className="flex items-center gap-2">
+            <input
+              id="active"
+              type="checkbox"
+              checked={!!formData.active}
+              onChange={(e) =>
+                setFormData({ ...formData, active: e.target.checked })
+              }
+            />
+            <label htmlFor="active" className="text-sm font-medium">
+              Active
+            </label>
+          </div>
+
+          {/* Buttons */}
+          <div className="flex gap-3 mt-6">
+            <button
+              type="submit"
+              disabled={saving}
+              className="flex-1 bg-blue-600 text-white py-2 rounded hover:bg-blue-700 disabled:opacity-60"
+            >
+              {saving ? "Saving..." : "Save"}
+            </button>
+            <button
+              type="button"
+              onClick={onCancel}
+              className="flex-1 bg-gray-300 py-2 rounded hover:bg-gray-400"
+            >
+              Cancel
+            </button>
+          </div>
+
+          <div className="text-xs text-slate-500">
+            Saved fields: PK, section, group, url, title, person, date, description,
+            active, createdAt, updatedAt.
+          </div>
+        </form>
+      </div>
     </div>
   );
 }
@@ -490,6 +1059,8 @@ function ContentTable({
   onSave,
   onCancelEdit,
   onShowAddForm,
+  sort,
+  onSort,
 }: {
   items: ContentItem[];
   loading: boolean;
@@ -505,6 +1076,8 @@ function ContentTable({
   onSave: (item: ContentItem) => void;
   onCancelEdit: () => void;
   onShowAddForm: () => void;
+  sort: SortState;
+  onSort: (key: string) => void;
 }) {
   return (
     <div className="bg-white rounded-lg shadow">
@@ -537,11 +1110,7 @@ function ContentTable({
       </div>
 
       {showAddForm && (
-        <ContentEditor
-          item={null}
-          onSave={onSave}
-          onCancel={onCancelEdit}
-        />
+        <ContentEditor item={null} onSave={onSave} onCancel={onCancelEdit} />
       )}
 
       {loading ? (
@@ -560,11 +1129,21 @@ function ContentTable({
                     onChange={onToggleSelectAll}
                   />
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">PK</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Type</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Text</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Active</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Actions</th>
+                <th className="px-6 py-3 text-left">
+                  <SortButton label="PK" colKey="PK" sort={sort} onSort={onSort} />
+                </th>
+                <th className="px-6 py-3 text-left">
+                  <SortButton label="Type" colKey="type" sort={sort} onSort={onSort} />
+                </th>
+                <th className="px-6 py-3 text-left">
+                  <SortButton label="Text" colKey="text" sort={sort} onSort={onSort} />
+                </th>
+                <th className="px-6 py-3 text-left">
+                  <SortButton label="Active" colKey="active" sort={sort} onSort={onSort} />
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">
+                  Actions
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
@@ -577,9 +1156,13 @@ function ContentTable({
                       onChange={() => onToggleSelect(item.PK)}
                     />
                   </td>
-                  <td className="px-6 py-4 text-sm text-slate-900 truncate max-w-xs">{item.PK}</td>
+                  <td className="px-6 py-4 text-sm text-slate-900 truncate max-w-xs">
+                    {item.PK}
+                  </td>
                   <td className="px-6 py-4 text-sm text-slate-600">{item.type}</td>
-                  <td className="px-6 py-4 text-sm text-slate-900 truncate max-w-md">{item.text}</td>
+                  <td className="px-6 py-4 text-sm text-slate-900 truncate max-w-md">
+                    {item.text}
+                  </td>
                   <td className="px-6 py-4 text-sm">{item.active ? "✅" : "❌"}</td>
                   <td className="px-6 py-4 text-sm">
                     <button
@@ -593,22 +1176,30 @@ function ContentTable({
               ))}
             </tbody>
           </table>
+
+          <div className="px-6 py-3 text-xs text-slate-500">
+            Tip: click headers to sort (click again to reverse).
+          </div>
         </div>
       )}
 
       {editingContent && (
-        <ContentEditor
-          item={editingContent}
-          onSave={onSave}
-          onCancel={onCancelEdit}
-        />
+        <ContentEditor item={editingContent} onSave={onSave} onCancel={onCancelEdit} />
       )}
     </div>
   );
 }
 
-// ── Content Editor Modal ─────────────────────────────────────────────
-function ContentEditor({ item, onSave, onCancel }: { item: ContentItem | null; onSave: (item: ContentItem) => void; onCancel: () => void }) {
+// ── Content Editor Modal (unchanged) ─────────────────────────────────
+function ContentEditor({
+  item,
+  onSave,
+  onCancel,
+}: {
+  item: ContentItem | null;
+  onSave: (item: ContentItem) => void;
+  onCancel: () => void;
+}) {
   const [formData, setFormData] = useState<ContentItem>(
     item || {
       PK: "",
@@ -626,6 +1217,10 @@ function ContentEditor({ item, onSave, onCancel }: { item: ContentItem | null; o
     }
   );
 
+  useEffect(() => {
+    if (item) setFormData(item);
+  }, [item]);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     onSave(formData);
@@ -634,10 +1229,14 @@ function ContentEditor({ item, onSave, onCancel }: { item: ContentItem | null; o
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-xl p-6 max-w-lg w-full max-h-[90vh] overflow-y-auto">
-        <h3 className="text-lg font-bold mb-4">{item ? "Edit Content" : "Add New Content"}</h3>
+        <h3 className="text-lg font-bold mb-4">
+          {item ? "Edit Content" : "Add New Content"}
+        </h3>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium mb-1">PK (e.g., HEADER#1, SECTION#1, GROUP#1#1, FOOTER#1):</label>
+            <label className="block text-sm font-medium mb-1">
+              PK (e.g., HEADER#1, SECTION#1, GROUP#1#1, FOOTER#1):
+            </label>
             <input
               type="text"
               value={formData.PK}
@@ -673,13 +1272,18 @@ function ContentEditor({ item, onSave, onCancel }: { item: ContentItem | null; o
             />
           </div>
 
-          {/* ... rest of your form fields (font, color, etc.) ... */}
-
           <div className="flex gap-3 mt-6">
-            <button type="submit" className="flex-1 bg-blue-600 text-white py-2 rounded hover:bg-blue-700">
+            <button
+              type="submit"
+              className="flex-1 bg-blue-600 text-white py-2 rounded hover:bg-blue-700"
+            >
               Save
             </button>
-            <button type="button" onClick={onCancel} className="flex-1 bg-gray-300 py-2 rounded hover:bg-gray-400">
+            <button
+              type="button"
+              onClick={onCancel}
+              className="flex-1 bg-gray-300 py-2 rounded hover:bg-gray-400"
+            >
               Cancel
             </button>
           </div>
@@ -687,122 +1291,4 @@ function ContentEditor({ item, onSave, onCancel }: { item: ContentItem | null; o
       </div>
     </div>
   );
-}
-
-// ── Resizable Table Component (your original, unchanged) ─────────────
-function ResizableTable({
-  columns,
-  data,
-  selectedPKs,
-  onToggleSelect,
-  onToggleSelectAll,
-  onColumnResize,
-  renderCell,
-  editingItem,
-  onSaveEdit,
-  onCancelEdit,
-}: any) {
-  const [resizing, setResizing] = useState<string | null>(null);
-  const startX = useRef(0);
-  const startWidth = useRef(0);
-
-  const handleMouseDown = (key: string, width: number, e: React.MouseEvent) => {
-    setResizing(key);
-    startX.current = e.clientX;
-    startWidth.current = width;
-  };
-
-  useEffect(() => {
-    if (!resizing) return;
-
-    const handleMouseMove = (e: MouseEvent) => {
-      const diff = e.clientX - startX.current;
-      const newWidth = Math.max(50, startWidth.current + diff);
-      onColumnResize(resizing, newWidth);
-    };
-
-    const handleMouseUp = () => {
-      setResizing(null);
-    };
-
-    document.addEventListener("mousemove", handleMouseMove);
-    document.addEventListener("mouseup", handleMouseUp);
-
-    return () => {
-      document.removeEventListener("mousemove", handleMouseMove);
-      document.removeEventListener("mouseup", handleMouseUp);
-    };
-  }, [resizing, onColumnResize]);
-
-  return (
-    <div style={{ overflowX: "auto" }}>
-      <table style={{ borderCollapse: "collapse", width: "100%" }}>
-        <thead>
-          <tr>
-            {columns.map((col: any) => (
-              <th
-                key={col.key}
-                style={{
-                  width: col.width,
-                  minWidth: col.width,
-                  padding: "12px 8px",
-                  textAlign: "left",
-                  background: "#f1f5f9",
-                  fontWeight: "600",
-                  position: "relative",
-                }}
-              >
-                {col.label}
-                <div
-                  style={{
-                    position: "absolute",
-                    right: 0,
-                    top: 0,
-                    bottom: 0,
-                    width: "5px",
-                    cursor: "col-resize",
-                    background: resizing === col.key ? "#0070f3" : "transparent",
-                  }}
-                  onMouseDown={(e) => handleMouseDown(col.key, col.width, e)}
-                />
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {data.map((item: any, idx: number) => (
-            <tr key={item.PK || idx} style={{ borderBottom: "1px solid #e2e8f0" }}>
-              {columns.map((col: any) => (
-                <td key={col.key} style={{ padding: "10px 8px" }}>
-                  {renderCell(item, col)}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-// ── Helpers (your original) ─────────────────────────────────────────
-function truncate(str: any, maxLen: number): string {
-  const s = String(str || "");
-  if (s.length <= maxLen) return s;
-  return s.slice(0, maxLen) + "...";
-}
-
-function formatDate(iso: string | undefined): string {
-  if (!iso) return "-";
-  try {
-    return new Date(iso).toLocaleString("en-US", {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  } catch {
-    return iso;
-  }
 }

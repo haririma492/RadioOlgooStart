@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import Header from "@/components/Header/Header";
 import VideoHub from "@/components/VideoHub/VideoHub";
 import AudioHub from "@/components/AudioHub/AudioHub";
@@ -18,37 +18,64 @@ type PlayingVideo = {
   timestamp?: string;
 };
 
-type LiveChannelInput = {
-  id: string;
-  title: string;
+type LiveRow = {
+  PK: string;
   url: string;
-  streamsUrl: string;
+  title?: string;
+  section?: string;
+  group?: string;
+  active?: boolean;
 };
 
-type LiveChannelStatus = {
-  id: string;
-  state: "LIVE" | "OFFLINE" | "ERROR";
-  liveVideoId: string | null;
-  watchUrl: string | null;
-  embedUrl: string | null;
-  reason?: string;
-  debug?: { errors?: string[]; resolvedBy?: string };
+type YTLiveResult = {
+  handle: string;
+  isLive: boolean;
+  videoId?: string;
+  title?: string;
+  error?: string;
 };
 
-type ExternalSourceInput = {
-  id: string;
-  title: string;
-  url: string;
-};
+function extractHandle(input: string): string | null {
+  const s = (input || "").trim();
+  if (!s) return null;
 
-type ExternalSourceStatus = {
-  id: string;
-  state: "LIVE" | "OFFLINE" | "ERROR";
-};
+  if (/^@?[A-Za-z0-9._-]+$/.test(s)) return s.replace(/^@/, "");
+
+  const m = s.match(/youtube\.com\/@([A-Za-z0-9._-]+)/i);
+  if (m?.[1]) return m[1];
+
+  return null;
+}
+
+function isYouTubeUrl(url: string) {
+  return /youtube\.com|youtu\.be/i.test(url || "");
+}
+
+function YouTubeEmbed({ videoId }: { videoId: string }) {
+  const src = `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&playsinline=1&rel=0`;
+  return (
+    <iframe
+      className="w-full h-full rounded-xl"
+      src={src}
+      title="Live video"
+      allow="autoplay; encrypted-media; picture-in-picture"
+      allowFullScreen
+    />
+  );
+}
 
 function HomePageContent() {
   const [playingVideo, setPlayingVideo] = useState<PlayingVideo | null>(null);
   const { activePlayback, setActivePlayback } = usePlayback();
+
+  const [liveRows, setLiveRows] = useState<LiveRow[]>([]);
+  const [liveLoading, setLiveLoading] = useState(false);
+  const [liveError, setLiveError] = useState<string>("");
+
+  const lastGoodRef = useRef<Record<string, { at: number; data: YTLiveResult }>>(
+    {}
+  );
+  const [ytStatus, setYtStatus] = useState<Record<string, YTLiveResult>>({});
 
   useEffect(() => {
     if (activePlayback && activePlayback.source !== "floating") {
@@ -66,218 +93,309 @@ function HomePageContent() {
     setPlayingVideo(null);
   };
 
-  const openMiniWindow = (url: string, title: string) => {
+  async function loadLiveRows() {
+    setLiveLoading(true);
+    setLiveError("");
+
     try {
-      const width = 520;
-      const height = 460;
+      const res = await fetch("/api/live-videos", { cache: "no-store" });
+      const json = await res.json().catch(() => ({} as any));
 
-      const left = Math.max(0, Math.floor(window.screenX + window.outerWidth - width - 24));
-      const top = Math.max(0, Math.floor(window.screenY + 80));
+      if (!res.ok) {
+        throw new Error(json?.error || `Live rows fetch failed (${res.status})`);
+      }
 
-      const features = [
-        `popup=yes`,
-        `width=${width}`,
-        `height=${height}`,
-        `left=${left}`,
-        `top=${top}`,
-        `resizable=yes`,
-        `scrollbars=yes`,
-        `noopener=yes`,
-        `noreferrer=yes`,
-      ].join(",");
+      const rawItems: any[] =
+        (json?.data?.items ??
+          json?.items ??
+          json?.data ??
+          json?.data?.Items ??
+          []) as any[];
 
-      const w = window.open(url, title.replace(/\s+/g, "_"), features);
-      if (!w) window.open(url, "_blank", "noopener,noreferrer");
-    } catch {
-      window.open(url, "_blank", "noopener,noreferrer");
+      if (!Array.isArray(rawItems)) {
+        throw new Error(
+          `Live rows response shape unexpected. Got keys: ${Object.keys(
+            json || {}
+          ).join(", ")}`
+        );
+      }
+
+      const normalize = (s: any) => String(s ?? "").trim().toLowerCase();
+      const isLiveSection = (s: any) => normalize(s) === "live videos";
+      const isRevolutionGroup = (g: any) => {
+        const x = normalize(g);
+        return x.includes("revolution") && x.includes("tv") && x.includes("channel");
+      };
+      const getUrl = (item: any) => item?.url || item?.URL || item?.link || "";
+
+      const cleaned: LiveRow[] = rawItems
+        .map((x: any) => ({ ...x, url: getUrl(x) }))
+        .filter((x: any) => !!x.url)
+        .filter((x: any) => (x?.active ?? true) === true)
+        .filter((x: any) => isLiveSection(x?.section))
+        .filter((x: any) => isRevolutionGroup(x?.group))
+        .map((x: any) => ({
+          PK: String(x.PK ?? ""),
+          url: String(x.url ?? ""),
+          title: x.title ? String(x.title) : undefined,
+          section: x.section ? String(x.section) : undefined,
+          group: x.group ? String(x.group) : undefined,
+          active: typeof x.active === "boolean" ? x.active : undefined,
+        }))
+        .filter((x) => !!x.PK && !!x.url);
+
+      setLiveRows(cleaned);
+    } catch (e: any) {
+      setLiveError(e?.message || "Failed to load LIVE rows");
+      setLiveRows([]);
+    } finally {
+      setLiveLoading(false);
     }
-  };
-
-  const liveChannels: LiveChannelInput[] = useMemo(
-    () => [
-      { id: "IRANINTL", title: "IRANINTL", url: "https://www.youtube.com/@IRANINTL/streams", streamsUrl: "https://www.youtube.com/@IRANINTL/streams" },
-      { id: "MoradVaisi", title: "Morad Vaisi", url: "https://www.youtube.com/@MoradVaisi/streams", streamsUrl: "https://www.youtube.com/@MoradVaisi/streams" },
-      { id: "mojtabavahedi43", title: "Mojtaba Vahedi", url: "https://www.youtube.com/@mojtabavahedi43/streams", streamsUrl: "https://www.youtube.com/@mojtabavahedi43/streams" },
-    ],
-    []
-  );
-
-  const externalSources: ExternalSourceInput[] = useMemo(
-    () => [
-      { id: "IranNationalRevolutionTV", title: "Iran National Revolution TV", url: "https://iranopasmigirim.com/en/iran-national-revolution-tv" },
-    ],
-    []
-  );
-
-  const [ytStatusMap, setYtStatusMap] = useState<Record<string, LiveChannelStatus>>({});
-  const [extStatusMap, setExtStatusMap] = useState<Record<string, ExternalSourceStatus>>({});
-  const [liveLoading, setLiveLoading] = useState<boolean>(true);
+  }
 
   useEffect(() => {
-    let cancelled = false;
+    loadLiveRows();
+  }, []);
 
-    const run = async () => {
-      try {
-        setLiveLoading(true);
+  async function pollYouTubeLive(handles: string[]) {
+    if (handles.length === 0) return;
 
-        const ytRes = await fetch("/api/youtube/status", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          cache: "no-store",
-          body: JSON.stringify({ channels: liveChannels.map((c) => ({ id: c.id, url: c.url })) }),
-        });
-        const ytData = await ytRes.json();
+    const q = encodeURIComponent(handles.join(","));
+    const url = `/api/youtube/live?handles=${q}`;
 
-        const extRes = await fetch("/api/external/status", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          cache: "no-store",
-          body: JSON.stringify({ sources: externalSources.map((s) => ({ id: s.id, url: s.url })) }),
-        });
-        const extData = await extRes.json();
+    try {
+      const res = await fetch(url, { cache: "no-store" });
+      const json = await res.json();
+      if (!res.ok || !json?.ok) throw new Error(json?.error || "YT live check failed");
 
-        if (cancelled) return;
+      const results: Record<string, YTLiveResult> = json.results || {};
+      const now = Date.now();
 
-        const nextYt: Record<string, LiveChannelStatus> = {};
-        for (const it of ytData?.items ?? []) {
-          nextYt[it.id] = {
-            id: it.id,
-            state: it.state,
-            liveVideoId: it.liveVideoId ?? null,
-            watchUrl: it.watchUrl ?? null,
-            embedUrl: it.embedUrl ?? null,
-            reason: it.reason,
-            debug: it.debug,
-          };
-        }
-        setYtStatusMap(nextYt);
+      Object.entries(results).forEach(([handle, r]) => {
+        lastGoodRef.current[handle] = { at: now, data: r };
+      });
 
-        const nextExt: Record<string, ExternalSourceStatus> = {};
-        for (const it of extData?.items ?? []) nextExt[it.id] = { id: it.id, state: it.state };
-        setExtStatusMap(nextExt);
-      } catch {
-        if (!cancelled) {
-          setYtStatusMap({});
-          setExtStatusMap({});
-        }
-      } finally {
-        if (!cancelled) setLiveLoading(false);
+      setYtStatus(results);
+    } catch {
+      const now = Date.now();
+      const held: Record<string, YTLiveResult> = {};
+      for (const h of handles) {
+        const heldEntry = lastGoodRef.current[h];
+        if (heldEntry && now - heldEntry.at < 90_000) held[h] = heldEntry.data;
+        else held[h] = { handle: h, isLive: false, error: "request_failed" };
       }
-    };
+      setYtStatus(held);
+    }
+  }
 
-    run();
-    const t = window.setInterval(run, 30_000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(t);
-    };
-  }, [liveChannels, externalSources]);
+  const ytHandles = useMemo(() => {
+    const handles = liveRows
+      .map((r) => (isYouTubeUrl(r.url) ? extractHandle(r.url) : null))
+      .filter((h): h is string => !!h);
+    return Array.from(new Set(handles));
+  }, [liveRows]);
 
-  const combinedCards = useMemo(() => {
-    const ytCards = liveChannels.map((c) => {
-      const st = ytStatusMap[c.id] ?? ({ id: c.id, state: "OFFLINE", liveVideoId: null, watchUrl: null, embedUrl: null } as LiveChannelStatus);
-      return { kind: "youtube" as const, id: c.id, title: c.title, openUrl: c.streamsUrl, state: st.state, embedUrl: st.embedUrl, st };
+  useEffect(() => {
+    pollYouTubeLive(ytHandles);
+    const t = setInterval(() => pollYouTubeLive(ytHandles), 20_000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ytHandles.join(",")]);
+
+  const liveCards = useMemo(() => {
+    const cards = liveRows.map((row) => {
+      const isYT = isYouTubeUrl(row.url);
+      const handle = isYT ? extractHandle(row.url) : null;
+      const status = handle ? ytStatus[handle] : undefined;
+
+      const isLive = isYT ? !!status?.isLive && !!status?.videoId : true;
+      const videoId = status?.videoId;
+
+      const activeUrl = isYT
+        ? videoId
+          ? `https://www.youtube.com/watch?v=${videoId}`
+          : "(no live videoId detected)"
+        : row.url;
+
+      return {
+        PK: row.PK,
+        title: row.title || row.PK,
+        url: row.url,
+        isYouTube: isYT,
+        handle,
+        isLive,
+        videoId,
+        statusError: status?.error,
+        statusTitle: status?.title,
+        activeUrl,
+      };
     });
 
-    const extCards = externalSources.map((s) => {
-      const st = extStatusMap[s.id] ?? ({ id: s.id, state: "OFFLINE" } as ExternalSourceStatus);
-      return { kind: "external" as const, id: s.id, title: s.title, openUrl: s.url, state: st.state, embedUrl: null as string | null, st };
+    return cards.sort((a, b) => {
+      const aRank = a.isLive ? 0 : 2;
+      const bRank = b.isLive ? 0 : 2;
+      if (aRank !== bRank) return aRank - bRank;
+      return a.title.localeCompare(b.title);
     });
+  }, [liveRows, ytStatus]);
 
-    const all = [...ytCards, ...extCards];
-    const rank = (state: string) => (state === "LIVE" ? 0 : state === "OFFLINE" ? 1 : 2);
-    all.sort((a, b) => rank(a.state) - rank(b.state));
-    return all;
-  }, [liveChannels, externalSources, ytStatusMap, extStatusMap]);
+  const openMiniWindow = (url: string) => {
+    const w = 520;
+    const h = 380;
+    const left = Math.max(0, window.screenX + window.outerWidth - w - 30);
+    const top = Math.max(0, window.screenY + 80);
+    window.open(
+      url,
+      "olgoo_live_mini",
+      `popup=yes,width=${w},height=${h},left=${left},top=${top},resizable=yes,scrollbars=yes`
+    );
+  };
 
   return (
     <div className="relative min-h-screen text-white">
-      <div className="fixed inset-0 -z-10" style={{ backgroundImage: "url('/images/full-site-background.webp')", backgroundSize: "cover", backgroundPosition: "left center", backgroundRepeat: "no-repeat" }} />
-      <div className="fixed inset-0 -z-[9]" style={{ backgroundColor: "rgba(22, 28, 36, 0.05)" }} />
+      <div
+        className="fixed inset-0 -z-10"
+        style={{
+          backgroundImage: "url('/images/full-site-background.webp')",
+          backgroundSize: "cover",
+          backgroundPosition: "left center",
+          backgroundRepeat: "no-repeat",
+        }}
+      />
+      <div
+        className="fixed inset-0 -z-[9]"
+        style={{ backgroundColor: "rgba(22, 28, 36, 0.05)" }}
+      />
 
-      <div className="relative z-10"><Header /></div>
+      <div className="relative z-10">
+        <Header />
+      </div>
 
       <div className="relative z-0">
         <main className="container mx-auto px-4 py-8">
           <section className="mb-10">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-xl md:text-2xl font-semibold">LIVE</h2>
-              <div className="text-xs text-white/70">{liveLoading ? "Checking live status..." : " "}</div>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-3xl font-bold tracking-wide">LIVE</h2>
+              <button
+                onClick={loadLiveRows}
+                className="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10"
+              >
+                Refresh
+              </button>
             </div>
 
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
-              {combinedCards.map((card) => {
-                const isLive = card.state === "LIVE";
-                const isExternal = card.kind === "external";
-                const externalLive = isExternal && isLive;
+            {liveLoading && <div className="text-white/70">Loading live sources…</div>}
 
-                const cardClass = (() => {
-                  if (externalLive) return "bg-black/45 border border-white/15 shadow-lg backdrop-blur-sm ring-1 ring-white/20";
-                  if (isExternal && !isLive) return "bg-black/20 border border-white/10 opacity-60 grayscale";
-                  return isLive ? "bg-black/35 border border-white/10 shadow-lg backdrop-blur-sm" : "bg-black/20 border border-white/10 opacity-70 grayscale";
-                })();
+            {liveError && (
+              <div className="text-red-200 bg-red-950/30 border border-red-900/40 p-3 rounded-lg">
+                {liveError}
+              </div>
+            )}
+
+            {!liveLoading && !liveError && liveCards.length === 0 && (
+              <div className="text-white/70">No Live Videos records found in DynamoDB.</div>
+            )}
+
+            <div className="flex gap-4 overflow-x-auto pb-2">
+              {liveCards.map((c) => {
+                const offline = c.isYouTube && !c.isLive;
 
                 return (
-                  <div key={`${card.kind}:${card.id}`} className={`rounded-2xl overflow-hidden ${cardClass}`}>
-                    <div className="px-3 py-2 flex items-center justify-between">
-                      <div className="min-w-0">
-                        <div className="font-semibold truncate text-sm">
-                          {card.title}
-                          {isLive && <span className="ml-2 text-[11px] text-white/80">● LIVE</span>}
-                        </div>
+                  <div
+                    key={c.PK}
+                    className={`shrink-0 rounded-2xl border ${
+                      offline
+                        ? "bg-black/35 border-white/10 opacity-60"
+                        : "bg-black/45 border-white/15"
+                    }`}
+                    style={{ width: "360px" }}
+                  >
+                    {/* TOP BAR */}
+                    <div className="p-3 space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="font-semibold truncate">{c.title}</div>
+
+                        {c.isYouTube ? (
+                          <span
+                            className={`text-xs px-2 py-1 rounded-full border ${
+                              c.isLive
+                                ? "border-red-400/40 bg-red-500/20 text-red-100"
+                                : "border-white/15 bg-white/5 text-white/70"
+                            }`}
+                          >
+                            {c.isLive ? "LIVE" : "Offline"}
+                          </span>
+                        ) : (
+                          <span className="text-xs px-2 py-1 rounded-full border border-amber-400/30 bg-amber-500/15 text-amber-100">
+                            External
+                          </span>
+                        )}
                       </div>
 
-                      <button
-                        onClick={() => openMiniWindow(card.openUrl, card.title)}
-                        className={["text-[11px] px-2 py-1 rounded-full border", externalLive ? "bg-white/15 hover:bg-white/20 border-white/20" : "bg-white/10 hover:bg-white/15 border-white/10"].join(" ")}
-                        title="Open mini window"
-                      >
-                        Open
-                      </button>
+                      {/* DEBUG LINE: show source URL + active URL */}
+                      <div className="text-[11px] leading-4 text-white/70 break-words">
+                        <div>
+                          <span className="text-white/50">Source:</span>{" "}
+                          {c.url}
+                        </div>
+
+                        {c.isYouTube && (
+                          <div>
+                            <span className="text-white/50">Handle:</span>{" "}
+                            {c.handle || "(none)"}{" "}
+                            <span className="text-white/40">|</span>{" "}
+                            <span className="text-white/50">Detected:</span>{" "}
+                            {c.activeUrl}
+                            {c.statusError ? (
+                              <>
+                                {" "}
+                                <span className="text-white/40">|</span>{" "}
+                                <span className="text-red-200/80">err:</span>{" "}
+                                {c.statusError}
+                              </>
+                            ) : null}
+                          </div>
+                        )}
+
+                        {c.isYouTube && c.statusTitle ? (
+                          <div>
+                            <span className="text-white/50">YT title:</span>{" "}
+                            {c.statusTitle}
+                          </div>
+                        ) : null}
+                      </div>
                     </div>
 
-                    <div className="w-full bg-black" style={{ aspectRatio: "16 / 7.5" }}>
-                      {card.kind === "youtube" && isLive && card.embedUrl ? (
-                        <iframe
-                          className="w-full h-full"
-                          src={`${card.embedUrl}?autoplay=1&mute=1&playsinline=1&rel=0`}
-                          title={card.title}
-                          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                          allowFullScreen
-                        />
-                      ) : (
-                        <div className="w-full h-full flex items-center justify-center text-center px-4">
-                          {isExternal && externalLive ? (
-                            <div className="w-full">
-                              <div className="text-sm font-semibold mb-2">Broadcast is LIVE</div>
-                              <button
-                                onClick={() => openMiniWindow(card.openUrl, card.title)}
-                                className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl border border-white/25 bg-white/15 hover:bg-white/20 shadow-md"
-                                title="Open live"
-                              >
-                                <span className="text-base">▶</span>
-                                <span className="font-semibold">LIVE</span>
-                              </button>
-                              <div className="mt-2 text-xs text-white/75">Opens in a mini window (this source can’t be embedded here).</div>
-                            </div>
+                    {/* PLAYER AREA */}
+                    <div className="px-3 pb-3">
+                      <div className="rounded-xl overflow-hidden bg-black/40 border border-white/10 h-[200px]">
+                        {c.isYouTube ? (
+                          c.isLive && c.videoId ? (
+                            <YouTubeEmbed videoId={c.videoId} />
                           ) : (
-                            <div>
-                              <div className="text-sm font-semibold mb-1">
-                                {card.state === "ERROR" ? "Unavailable" : "Offline"}
+                            <div className="h-full flex flex-col items-center justify-center text-white/70 text-sm">
+                              <div className="font-semibold mb-1">Unavailable</div>
+                              <div className="text-xs text-white/50 text-center px-6">
+                                {c.statusError === "request_failed"
+                                  ? "Temporary check failure (holding last status)."
+                                  : "Not live right now, or detection returned no videoId."}
                               </div>
-
-                              {/* 🔎 If YouTube ERROR, show 1 useful hint line */}
-                              {card.kind === "youtube" && card.state === "ERROR" ? (
-                                <div className="text-xs text-white/70">
-                                  {card.st?.debug?.errors?.[0] || card.st?.reason || "Check server logs for [youtube-status]."}
-                                </div>
-                              ) : (
-                                <div className="text-xs text-white/70">Moves left and plays automatically when live.</div>
-                              )}
                             </div>
-                          )}
-                        </div>
-                      )}
+                          )
+                        ) : (
+                          <div className="h-full flex flex-col items-center justify-center text-white/80">
+                            <div className="text-sm mb-3 text-center px-6">
+                              External source opens in mini window (cannot be embedded).
+                            </div>
+                            <button
+                              onClick={() => openMiniWindow(c.url)}
+                              className="px-4 py-2 rounded-lg bg-white/15 hover:bg-white/20 border border-white/15"
+                            >
+                              ▶ OPEN LIVE
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 );
@@ -285,6 +403,7 @@ function HomePageContent() {
             </div>
           </section>
 
+          {/* Existing content */}
           <VideoHub
             onVideoClick={(video) => {
               handleVideoPlay({

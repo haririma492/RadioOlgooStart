@@ -1,124 +1,150 @@
-// app/api/admin/list-all/route.ts
-// Returns ALL items from DynamoDB in raw format (no S3 presigning)
 import { NextResponse } from "next/server";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, ScanCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  DynamoDBDocumentClient,
+  ScanCommand,
+  DeleteCommand,
+  PutCommand,
+} from "@aws-sdk/lib-dynamodb";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
+export const runtime = "nodejs"; // IMPORTANT: AWS SDK needs node runtime (not edge)
 
-function requireAdmin(req: Request) {
-  const incoming = (req.headers.get("x-admin-token") || "").trim();
-  const expected = (process.env.ADMIN_TOKEN || "").trim();
-  if (!expected) throw new Error("Missing ADMIN_TOKEN in env");
-  if (!incoming || incoming !== expected) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  return null;
-}
+// ---- Env / Config ----
+const REGION =
+  process.env.AWS_REGION ||
+  process.env.AWS_DEFAULT_REGION ||
+  "ca-central-1";
 
+const TABLE_NAME =
+  process.env.DDB_TABLE_NAME ||
+  process.env.DYNAMODB_TABLE ||
+  process.env.TABLE_NAME;
+
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
+
+// ---- DynamoDB client ----
 const ddb = DynamoDBDocumentClient.from(
-  new DynamoDBClient({
-    region: process.env.AWS_REGION || "ca-central-1",
-  }),
-  { marshallOptions: { removeUndefinedValues: true } }
+  new DynamoDBClient({ region: REGION }),
+  {
+    marshallOptions: { removeUndefinedValues: true },
+  }
 );
 
-function tableName() {
-  const v = (process.env.DDB_TABLE_NAME || "").trim();
-  if (!v) throw new Error("Missing DDB_TABLE_NAME in env");
-  return v;
+function requireAdmin(req: Request) {
+  const token = req.headers.get("x-admin-token") || "";
+  if (!ADMIN_TOKEN) {
+    return { ok: false, error: "Server missing ADMIN_TOKEN env var." };
+  }
+  if (token !== ADMIN_TOKEN) {
+    return { ok: false, error: "Invalid admin token." };
+  }
+  if (!TABLE_NAME) {
+    return { ok: false, error: "Server missing DynamoDB table env var (DDB_TABLE_NAME)." };
+  }
+  return { ok: true, token };
 }
 
+// ---- GET: list all items (media table) ----
 export async function GET(req: Request) {
   const auth = requireAdmin(req);
-  if (auth) return auth;
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: 401 });
 
   try {
-    const TableName = tableName();
+    // NOTE: Scan can be expensive. Works fine for small tables.
+    // If you have a PK prefix pattern (MEDIA#...), you can filter later.
+    const items: any[] = [];
+    let lastKey: any = undefined;
 
-    // Scan entire table (no filters)
-    const result = await ddb.send(new ScanCommand({ TableName }));
-    const items = result.Items || [];
+    do {
+      const out = await ddb.send(
+        new ScanCommand({
+          TableName: TABLE_NAME!,
+          ExclusiveStartKey: lastKey,
+        })
+      );
+      if (out.Items?.length) items.push(...out.Items);
+      lastKey = out.LastEvaluatedKey;
+    } while (lastKey);
 
-    // Sort by createdAt descending (newest first)
-    items.sort((a, b) => {
-      const da = a.createdAt || "";
-      const db = b.createdAt || "";
-      return db.localeCompare(da);
-    });
-
-    return NextResponse.json(
-      { ok: true, count: items.length, items },
-      { status: 200, headers: { "cache-control": "no-store" } }
-    );
+    return NextResponse.json({ items });
   } catch (e: any) {
     return NextResponse.json(
-      { error: "Failed to load items", detail: e?.message },
-      { status: 500, headers: { "cache-control": "no-store" } }
+      { error: e?.message || "Failed to list items." },
+      { status: 500 }
     );
   }
 }
 
+// ---- DELETE: batch delete by PK list ----
 export async function DELETE(req: Request) {
   const auth = requireAdmin(req);
-  if (auth) return auth;
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: 401 });
 
   try {
-    const TableName = tableName();
-    const body = await req.json().catch(() => null);
-    
-    if (!body || !Array.isArray(body.pks)) {
-      return NextResponse.json(
-        { error: "Body must include { pks: string[] }" },
-        { status: 400, headers: { "cache-control": "no-store" } }
-      );
-    }
+    const body = await req.json().catch(() => ({}));
+    const pks: string[] = Array.isArray(body?.pks) ? body.pks : [];
 
-    const pks = body.pks.filter((pk: any) => typeof pk === "string" && pk.trim());
-    
     if (pks.length === 0) {
-      return NextResponse.json(
-        { error: "No valid PKs provided" },
-        { status: 400, headers: { "cache-control": "no-store" } }
-      );
+      return NextResponse.json({ error: "No PKs provided." }, { status: 400 });
     }
 
-    // Import DeleteCommand
-    const { DeleteCommand } = await import("@aws-sdk/lib-dynamodb");
-
-    // Delete each item
-    const deleted: string[] = [];
-    const failed: { pk: string; error: string }[] = [];
-
+    let deleted = 0;
     for (const pk of pks) {
-      try {
-        await ddb.send(
-          new DeleteCommand({
-            TableName,
-            Key: { PK: pk },
-          })
-        );
-        deleted.push(pk);
-      } catch (err: any) {
-        failed.push({ pk, error: err.message || String(err) });
-      }
+      if (!pk || typeof pk !== "string") continue;
+      await ddb.send(
+        new DeleteCommand({
+          TableName: TABLE_NAME!,
+          Key: { PK: pk },
+        })
+      );
+      deleted += 1;
     }
 
-    return NextResponse.json(
-      {
-        ok: true,
-        deleted: deleted.length,
-        failed: failed.length,
-        deletedPKs: deleted,
-        failedItems: failed,
-      },
-      { status: 200, headers: { "cache-control": "no-store" } }
-    );
+    return NextResponse.json({ deleted });
   } catch (e: any) {
     return NextResponse.json(
-      { error: "Delete failed", detail: e?.message },
-      { status: 500, headers: { "cache-control": "no-store" } }
+      { error: e?.message || "Delete failed." },
+      { status: 500 }
+    );
+  }
+}
+
+// ---- POST: upsert a single item (create/update) ----
+export async function POST(req: Request) {
+  const auth = requireAdmin(req);
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: 401 });
+
+  try {
+    const item = await req.json();
+
+    const pk = String(item?.PK || "").trim();
+    if (!pk) {
+      return NextResponse.json({ error: "PK is required." }, { status: 400 });
+    }
+
+    // Minimal validation for media records (adjust as you like)
+    // We allow any shape, but enforce PK and update timestamps.
+    const now = new Date().toISOString();
+
+    const putItem = {
+      ...item,
+      PK: pk,
+      updatedAt: now,
+      createdAt: item?.createdAt || now,
+    };
+
+    await ddb.send(
+      new PutCommand({
+        TableName: TABLE_NAME!,
+        Item: putItem,
+      })
+    );
+
+    return NextResponse.json({ ok: true, PK: pk });
+  } catch (e: any) {
+    return NextResponse.json(
+      { error: e?.message || "Save failed." },
+      { status: 500 }
     );
   }
 }

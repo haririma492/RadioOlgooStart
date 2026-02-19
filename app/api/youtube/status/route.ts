@@ -1,30 +1,19 @@
 // app/api/youtube/status/route.ts
 import { NextResponse } from "next/server";
 
-/**
- * Robust YouTube live detection:
- *  - Accepts @handle URLs, /streams URLs, /channel/UC... URLs, etc.
- *  - Resolves channelId using multiple strategies:
- *      1) Extract /channel/UC... from URL
- *      2) channels.list(forHandle=handle)
- *      3) search.list(type=channel&q=handle)
- *      4) Fetch channel HTML and parse "channelId":"UC...." (server-side fallback)
- *  - Detects live:
- *      search.list(eventType=live&type=video&channelId=...)
- *      then verifies with videos.list(liveStreamingDetails)
- *  - Returns per-channel debug info so you can see failures.
- */
+export const runtime = "nodejs";
 
-type ChannelInput = {
-  id: string;
-  url: string;
-};
+type ChannelInput = { id: string; url: string };
 
 type DebugInfo = {
   steps: string[];
   errors: string[];
   resolvedBy?: string;
   candidateVideoIds?: string[];
+  htmlFallback?: {
+    tried: boolean;
+    foundVideoId?: string | null;
+  };
 };
 
 type ChannelResult = {
@@ -40,23 +29,33 @@ type ChannelResult = {
   debug?: DebugInfo;
 };
 
-// Small in-memory cache to reduce quota burn when UI polls
+// ---- cache ----
 type CacheEntry = { at: number; value: any };
-const cache = new Map<string, CacheEntry>();
+const batchCache = new Map<string, CacheEntry>();
 
-function getCache<T>(key: string, ttlMs: number): T | null {
-  const e = cache.get(key);
+type LastLive = {
+  at: number;
+  liveVideoId: string;
+  watchUrl: string;
+  embedUrl: string;
+  channelId: string | null;
+};
+const lastLiveById = new Map<string, LastLive>();
+
+function getCache<T>(m: Map<string, CacheEntry>, key: string, ttlMs: number): T | null {
+  const e = m.get(key);
   if (!e) return null;
   if (Date.now() - e.at > ttlMs) {
-    cache.delete(key);
+    m.delete(key);
     return null;
   }
   return e.value as T;
 }
-function setCache(key: string, value: any) {
-  cache.set(key, { at: Date.now(), value });
+function setCache(m: Map<string, CacheEntry>, key: string, value: any) {
+  m.set(key, { at: Date.now(), value });
 }
 
+// ---- helpers ----
 function normalizeUrl(u: string): string {
   const s = (u ?? "").trim();
   if (!s) return s;
@@ -76,16 +75,12 @@ function extractChannelId(s: string): string | null {
 
 function extractVideoIdFromWatchUrl(input: string): string | null {
   const s = normalizeUrl(input);
-
   const m1 = s.match(/[?&]v=([A-Za-z0-9_-]{6,})/);
   if (m1) return m1[1];
-
   const m2 = s.match(/youtu\.be\/([A-Za-z0-9_-]{6,})/);
   if (m2) return m2[1];
-
   const m3 = s.match(/\/live\/([A-Za-z0-9_-]{6,})/);
   if (m3) return m3[1];
-
   return null;
 }
 
@@ -104,9 +99,7 @@ async function fetchText(url: string, debug: DebugInfo) {
   const res = await fetch(url, {
     cache: "no-store",
     headers: {
-      // Helps get consistent HTML
-      "User-Agent":
-        "Mozilla/5.0 (compatible; OlgooLiveChecker/1.0; +https://olgoo.com)",
+      "User-Agent": "Mozilla/5.0 (compatible; OlgooLiveChecker/1.0)",
       "Accept-Language": "en-US,en;q=0.9",
     },
   });
@@ -117,12 +110,29 @@ async function fetchText(url: string, debug: DebugInfo) {
   return res.text();
 }
 
-async function resolveChannelId(
-  inputUrl: string,
-  apiKey: string,
-  debug: DebugInfo
-): Promise<{ handle: string | null; channelId: string | null }> {
-  // 1) Direct /channel/UC...
+// ✅ HTML fallback: try https://www.youtube.com/@handle/live and extract watch?v=
+async function htmlFallbackFindLiveVideoId(handle: string, debug: DebugInfo): Promise<string | null> {
+  debug.htmlFallback = { tried: true, foundVideoId: null };
+  try {
+    const h = handle.replace(/^@/, "");
+    const liveUrl = `https://www.youtube.com/@${encodeURIComponent(h)}/live`;
+    const html = await fetchText(liveUrl, debug);
+
+    // Look for watch?v=VIDEOID occurrences
+    // YouTube pages usually include several; we pick the first plausible.
+    const matches = Array.from(html.matchAll(/watch\?v=([A-Za-z0-9_-]{11})/g)).map((m) => m[1]);
+    const vid = matches?.[0] || null;
+
+    debug.htmlFallback.foundVideoId = vid;
+
+    return vid;
+  } catch (e: any) {
+    debug.errors.push(`html /live fallback failed: ${String(e?.message ?? e)}`);
+    return null;
+  }
+}
+
+async function resolveChannelId(inputUrl: string, apiKey: string, debug: DebugInfo) {
   const direct = extractChannelId(inputUrl);
   if (direct) {
     debug.resolvedBy = "extractChannelIdFromUrl";
@@ -130,10 +140,9 @@ async function resolveChannelId(
   }
 
   const handle = extractHandle(inputUrl);
-  const handleOrGuess = handle || inputUrl.replace(/^https?:\/\/(www\.)?youtube\.com\//, "").replace(/^@/, "");
-  const cleaned = handleOrGuess?.trim() || null;
+  const cleaned = handle?.trim() || null;
 
-  // 2) channels.list(forHandle=)
+  // channels.list(forHandle=)
   if (cleaned && !cleaned.includes("/")) {
     try {
       const url =
@@ -151,7 +160,7 @@ async function resolveChannelId(
     }
   }
 
-  // 3) search.list(type=channel&q=handle)
+  // search.list(type=channel&q=@handle)
   if (cleaned) {
     try {
       const q = cleaned.startsWith("@") ? cleaned : `@${cleaned}`;
@@ -164,7 +173,7 @@ async function resolveChannelId(
       for (const it of items) {
         const cid = it?.snippet?.channelId;
         if (typeof cid === "string" && cid.startsWith("UC")) {
-          debug.resolvedBy = "search.list(type=channel&q=@handle)";
+          debug.resolvedBy = "search.list(type=channel)";
           return { handle: cleaned, channelId: cid };
         }
       }
@@ -173,25 +182,21 @@ async function resolveChannelId(
     }
   }
 
-  // 4) HTML fallback: fetch https://www.youtube.com/@handle and parse "channelId":"UC..."
+  // HTML parse channelId from @handle page
   if (cleaned) {
     try {
       const pageUrl = `https://www.youtube.com/@${encodeURIComponent(cleaned.replace(/^@/, ""))}`;
       const html = await fetchText(pageUrl, debug);
-
-      // Common patterns in YouTube HTML
       const m =
         html.match(/"channelId":"(UC[a-zA-Z0-9_-]+)"/) ||
         html.match(/externalId":"(UC[a-zA-Z0-9_-]+)"/);
-
       if (m && m[1]) {
         debug.resolvedBy = "htmlParse(channelId)";
         return { handle: cleaned, channelId: m[1] };
       }
-
-      debug.errors.push("HTML fetched but channelId not found in page source.");
+      debug.errors.push("HTML fetched but channelId not found.");
     } catch (e: any) {
-      debug.errors.push(`html fallback failed: ${String(e?.message ?? e)}`);
+      debug.errors.push(`html channelId fallback failed: ${String(e?.message ?? e)}`);
     }
   }
 
@@ -204,7 +209,6 @@ async function searchLiveCandidates(channelId: string, apiKey: string, debug: De
     `?part=id&channelId=${encodeURIComponent(channelId)}` +
     `&eventType=live&type=video&maxResults=5&order=date` +
     `&key=${encodeURIComponent(apiKey)}`;
-
   const data = await fetchJson(url, debug);
   const items = Array.isArray(data?.items) ? data.items : [];
   const ids: string[] = [];
@@ -223,7 +227,6 @@ async function verifyTrulyLive(videoIds: string[], apiKey: string, debug: DebugI
     "https://www.googleapis.com/youtube/v3/videos" +
     `?part=liveStreamingDetails,status&id=${encodeURIComponent(videoIds.join(","))}` +
     `&key=${encodeURIComponent(apiKey)}`;
-
   const data = await fetchJson(url, debug);
   const items = Array.isArray(data?.items) ? data.items : [];
 
@@ -250,12 +253,7 @@ async function verifyTrulyLive(videoIds: string[], apiKey: string, debug: DebugI
 
 export async function POST(req: Request) {
   const apiKey = process.env.YOUTUBE_API_KEY;
-  if (!apiKey) {
-    return NextResponse.json(
-      { error: "Missing YOUTUBE_API_KEY. Add it to .env.local (local) and Vercel env vars." },
-      { status: 500 }
-    );
-  }
+  if (!apiKey) return NextResponse.json({ error: "Missing YOUTUBE_API_KEY" }, { status: 500 });
 
   let body: { channels?: ChannelInput[] } = {};
   try {
@@ -267,23 +265,17 @@ export async function POST(req: Request) {
   const channels = Array.isArray(body.channels) ? body.channels : [];
   if (channels.length === 0) return NextResponse.json({ items: [] as ChannelResult[] });
 
-  // Cache per requested list for 15s
   const batchKey = `batch:${JSON.stringify(channels.map((c) => c.url))}`;
-  const cached = getCache<{ items: ChannelResult[] }>(batchKey, 15_000);
+  const cached = getCache<{ items: ChannelResult[] }>(batchCache, batchKey, 15_000);
   if (cached) return NextResponse.json(cached);
 
   const items: ChannelResult[] = [];
 
   for (const ch of channels) {
     const debug: DebugInfo = { steps: [], errors: [] };
-
     const inputUrl = normalizeUrl(ch.url);
 
     try {
-      // If a watch URL is passed, we can verify it, but we still want channel-based detection.
-      const directVideoId = extractVideoIdFromWatchUrl(inputUrl);
-      if (directVideoId) debug.steps.push(`watchUrlVideoIdDetected: ${directVideoId}`);
-
       const { handle, channelId } = await resolveChannelId(inputUrl, apiKey, debug);
 
       if (!channelId) {
@@ -296,16 +288,30 @@ export async function POST(req: Request) {
           liveVideoId: null,
           watchUrl: null,
           embedUrl: null,
-          reason: "Could not resolve channelId (see debug).",
+          reason: "Could not resolve channelId.",
           debug,
         });
         continue;
       }
 
       const candidates = await searchLiveCandidates(channelId, apiKey, debug);
-      const trulyLiveId = await verifyTrulyLive(candidates, apiKey, debug);
+      let trulyLiveId = await verifyTrulyLive(candidates, apiKey, debug);
+
+      // ✅ NEW: if API says offline, try HTML /@handle/live fallback
+      if (!trulyLiveId && handle) {
+        const fallbackId = await htmlFallbackFindLiveVideoId(handle, debug);
+        if (fallbackId) {
+          trulyLiveId = fallbackId;
+          debug.steps.push("LIVE overridden by HTML /@handle/live fallback");
+        }
+      }
 
       if (trulyLiveId) {
+        const watchUrl = `https://www.youtube.com/watch?v=${trulyLiveId}`;
+        const embedUrl = `https://www.youtube-nocookie.com/embed/${trulyLiveId}`;
+
+        lastLiveById.set(ch.id, { at: Date.now(), liveVideoId: trulyLiveId, watchUrl, embedUrl, channelId });
+
         items.push({
           id: ch.id,
           inputUrl,
@@ -313,8 +319,8 @@ export async function POST(req: Request) {
           channelId,
           state: "LIVE",
           liveVideoId: trulyLiveId,
-          watchUrl: `https://www.youtube.com/watch?v=${trulyLiveId}`,
-          embedUrl: `https://www.youtube-nocookie.com/embed/${trulyLiveId}`,
+          watchUrl,
+          embedUrl,
           debug,
         });
       } else {
@@ -332,22 +338,41 @@ export async function POST(req: Request) {
       }
     } catch (e: any) {
       debug.errors.push(String(e?.message ?? e));
-      items.push({
-        id: ch.id,
-        inputUrl,
-        handle: extractHandle(inputUrl),
-        channelId: extractChannelId(inputUrl),
-        state: "ERROR",
-        liveVideoId: null,
-        watchUrl: null,
-        embedUrl: null,
-        reason: "Request failed (see debug).",
-        debug,
-      });
+
+      const last = lastLiveById.get(ch.id);
+      const graceMs = 120_000;
+
+      if (last && Date.now() - last.at <= graceMs) {
+        items.push({
+          id: ch.id,
+          inputUrl,
+          handle: extractHandle(inputUrl),
+          channelId: last.channelId,
+          state: "LIVE",
+          liveVideoId: last.liveVideoId,
+          watchUrl: last.watchUrl,
+          embedUrl: last.embedUrl,
+          reason: "Using last-known LIVE (temporary API error).",
+          debug,
+        });
+      } else {
+        items.push({
+          id: ch.id,
+          inputUrl,
+          handle: extractHandle(inputUrl),
+          channelId: extractChannelId(inputUrl),
+          state: "ERROR",
+          liveVideoId: null,
+          watchUrl: null,
+          embedUrl: null,
+          reason: "Request failed.",
+          debug,
+        });
+      }
     }
   }
 
   const payload = { items };
-  setCache(batchKey, payload);
+  setCache(batchCache, batchKey, payload);
   return NextResponse.json(payload);
 }
