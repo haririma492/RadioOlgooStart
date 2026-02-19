@@ -19,7 +19,7 @@ type PersonProfileModalProps = {
   isOpen: boolean;
   onClose: () => void;
   personName: string;
-  profilePictureUrl: string;
+  profilePictureUrl?: string;
   videos: VideoItem[];
   onVideoClick: (video: VideoItem, playInModal: boolean) => void;
   playingVideo: VideoItem | null;
@@ -29,7 +29,6 @@ export default function PersonProfileModal({
   isOpen,
   onClose,
   personName,
-  profilePictureUrl,
   videos,
   onVideoClick,
   playingVideo,
@@ -124,7 +123,7 @@ export default function PersonProfileModal({
         overflow: 'hidden',
       }}
     >
-      {/* Backdrop Overlay - Blurs everything including header */}
+      {/* Backdrop - light so rest of site stays visible */}
       <div
         style={{
           position: 'absolute',
@@ -132,8 +131,8 @@ export default function PersonProfileModal({
           left: 0,
           right: 0,
           bottom: 0,
-          backdropFilter: 'blur(40px)',
-          backgroundColor: 'rgba(60, 60, 60, 0.08)', // #3C3C3C14
+          backdropFilter: 'blur(8px)',
+          backgroundColor: 'rgba(0, 0, 0, 0.35)',
         }}
         onClick={onClose}
       />
@@ -154,23 +153,23 @@ export default function PersonProfileModal({
         }}
       >
         <div
-          className="relative bg-[#1a1a1a] rounded-lg p-6 max-w-6xl w-full mx-4 overflow-y-auto scrollbar-hide"
+          className="relative flex flex-col bg-[#1a1a1a] rounded-xl border border-white/10 max-w-6xl w-full mx-4 scrollbar-hide"
           style={{
             pointerEvents: 'auto',
-            maxHeight: '75vh',
+            maxHeight: '55vh',
           }}
           onClick={(e) => e.stopPropagation()}
         >
-          {/* Header with Close Button */}
-          <div className="flex items-center justify-between mb-6">
+          {/* Header with Close Button - always visible, does not scroll */}
+          <div className="flex-shrink-0 flex items-center justify-between p-6 pb-4">
             <h2 className="text-white text-xl md:text-2xl font-semibold">{personName}</h2>
             <button
               onClick={onClose}
               className="text-white hover:opacity-80 transition-opacity cursor-pointer flex items-center justify-center"
               aria-label="Close modal"
               type="button"
-              style={{ 
-                width: '32px', 
+              style={{
+                width: '32px',
                 height: '32px',
                 minWidth: '32px',
                 minHeight: '32px',
@@ -194,59 +193,53 @@ export default function PersonProfileModal({
             </button>
           </div>
 
-          {/* Profile Picture or Video Player */}
-          <div className="flex justify-center mb-6">
-            {playingVideo ? (
-              <div className="relative w-full max-w-md aspect-video rounded-lg overflow-hidden border border-white/20 bg-black">
-                <video
-                  key={playingVideo.url}
-                  src={playingVideo.url}
-                  controls
-                  autoPlay
-                  className="w-full h-full"
-                  controlsList="nodownload"
-                />
-              </div>
-            ) : profilePictureUrl ? (
-              <img
-                src={profilePictureUrl}
-                alt={personName}
-                className="w-32 h-32 rounded-full object-cover border-2 border-white/20"
+          {/* Scrollable content - vertical scrollbar hidden */}
+          <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-6 pb-6 scrollbar-hide">
+          {/* Video player only when a video is playing */}
+          {playingVideo && (
+            <div className="relative w-full max-w-md aspect-video rounded-lg overflow-hidden border border-white/20 bg-black mb-4">
+              <video
+                key={playingVideo.url}
+                src={playingVideo.url}
+                controls
+                autoPlay
+                className="w-full h-full"
+                controlsList="nodownload"
               />
-            ) : (
-              <div className="w-32 h-32 rounded-full bg-white/10 flex items-center justify-center text-white text-4xl font-semibold border-2 border-white/20">
-                {personName.charAt(0).toUpperCase()}
-              </div>
-            )}
-          </div>
+            </div>
+          )}
 
           {/* Videos: single horizontal row with prev/next — 4 cards visible at a time */}
           {videos.length > 0 ? (
-            <div className="relative w-full mt-6 mb-6">
+            <div className="relative w-full">
               <div
                 ref={scrollContainerRef}
-                className="flex w-full overflow-x-auto overflow-y-hidden scroll-smooth gap-4 -mx-1 px-1 pb-1"
+                className="flex w-full overflow-x-auto overflow-y-hidden scroll-smooth gap-4 -mx-1 px-1 pb-5 scrollbar-modern"
                 style={{ scrollBehavior: "smooth" }}
               >
                 {videos.map((video) => (
                   <div
                     key={video.id}
-                    className="flex-shrink-0 w-[calc((100%-3*1rem)/4)] min-w-[calc((100%-3*1rem)/4)] cursor-pointer hover:opacity-90 transition-opacity"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => onVideoClick(video, false)}
+                    onKeyDown={(e) => e.key === "Enter" && onVideoClick(video, false)}
+                    className="flex-shrink-0 w-[250px] cursor-pointer hover:opacity-90 transition-opacity"
                   >
-                    <div className="relative w-full aspect-square rounded-lg overflow-hidden border border-white/20 bg-black">
+                    <div className="relative w-full aspect-video rounded-lg overflow-hidden border border-white/20 bg-black">
                       <video
                         src={video.url}
                         className="w-full h-full object-cover"
                         preload="metadata"
                         muted
                       />
-                      <div className="absolute inset-0 flex items-center justify-center bg-black/30 hover:bg-black/20 transition-colors pointer-events-none">
+                      <div className="absolute inset-0 flex items-center justify-start pl-3 bg-black/30 hover:bg-black/20 transition-colors pointer-events-none">
                         <svg
-                          width="48"
-                          height="48"
+                          width="28"
+                          height="28"
                           viewBox="0 0 48 48"
                           fill="none"
-                          xmlns="http://www.w3.org/2000/svg"
+                          className="shrink-0"
                         >
                           <circle cx="24" cy="24" r="20" fill="white" fillOpacity="0.9" />
                           <path
@@ -326,6 +319,7 @@ export default function PersonProfileModal({
               No videos available for this person
             </div>
           )}
+          </div>
         </div>
       </div>
     </div>

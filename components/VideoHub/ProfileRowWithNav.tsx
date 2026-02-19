@@ -97,7 +97,7 @@ export default function ProfileRowWithNav({
       <div className="flex-1 min-w-0 rounded-xl border border-white/10 bg-white/[0.02] p-4 md:p-5 lg:p-6 pb-8 md:pb-10 relative">
         <div
           ref={scrollContainerRef}
-          className="flex overflow-x-auto scroll-smooth gap-4 md:gap-6 -mx-1 px-1"
+          className="flex overflow-x-auto scroll-smooth gap-4 md:gap-6 -mx-1 px-1 pb-3 scrollbar-modern"
           style={{ scrollBehavior: "smooth" }}
         >
           {isEmpty ? (
