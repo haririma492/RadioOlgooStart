@@ -23,6 +23,8 @@ type ProfileCardWithDropdownProps = {
   isExpanded: boolean;
   onToggle: () => void;
   onViewAllClick?: () => void;
+  /** Opens the Search modal when the Search button is clicked */
+  onSearchClick?: () => void;
   /** When set, this card shows an inline video player instead of the profile image */
   playingVideo?: VideoItem | null;
   onClearPlayingVideo?: () => void;
@@ -37,6 +39,7 @@ export default function ProfileCardWithDropdown({
   isExpanded,
   onToggle,
   onViewAllClick,
+  onSearchClick,
   playingVideo = null,
   onClearPlayingVideo,
   size = "default",
@@ -152,12 +155,10 @@ export default function ProfileCardWithDropdown({
             </div>
           )}
 
-          {/* UX cues: "View videos" pill (bottom-left) + play/list icon (bottom-right) — only when not playing */}
           {!isPlayingOnCard && (
-            <>
-              {/* Pill: View videos + chevron */}
+            <div className="absolute bottom-2 left-2 right-2 flex flex-col gap-1.5 items-start">
               <span
-                className="absolute bottom-2 left-2 px-2.5 py-1 rounded-full bg-black/60 text-white/95 text-xs font-medium flex items-center gap-1 border border-white/20"
+                className="px-2.5 py-1 rounded-full bg-black/60 text-white/95 text-sm font-medium flex items-center gap-1 border border-white/20"
                 aria-hidden
               >
                 View videos
@@ -165,23 +166,40 @@ export default function ProfileCardWithDropdown({
                   <polyline points="6 9 12 15 18 9" />
                 </svg>
               </span>
-              {/* Small list/play icon */}
-              <span
-                className="absolute bottom-2 right-2 w-8 h-8 rounded-full bg-black/60 flex items-center justify-center border border-white/20"
-                aria-hidden
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="2" y="4" width="20" height="16" rx="2" />
-                  <path d="M10 9l5 3-5 3V9z" />
-                </svg>
-              </span>
-            </>
+              {isKing && onSearchClick && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onSearchClick();
+                  }}
+                  className="px-2.5 py-1 rounded-full bg-black/60 hover:bg-black/70 text-white/95 text-sm font-medium border border-white/20 transition-colors"
+                >
+                  Search
+                </button>
+              )}
+            </div>
           )}
         </div>
         <div className={`text-white text-sm mt-2 text-center truncate ${isKing ? "flex-shrink-0" : ""}`}>
           {profile.person}
         </div>
       </button>
+
+      {/* Search button beneath name for non-king cards (Political, News) */}
+      {!isKing && onSearchClick && (
+        <button
+          type="button"
+          onClick={onSearchClick}
+          className="w-full mt-1.5 py-1.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] backdrop-blur-sm text-white/90 text-sm font-medium border border-white/15 hover:border-white/25 transition-all duration-200 flex items-center justify-center gap-2 shadow-sm"
+        >
+          <svg className="w-3.5 h-3.5 text-white/80 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <circle cx="11" cy="11" r="8" />
+            <path d="m21 21-4.35-4.35" />
+          </svg>
+          Search
+        </button>
+      )}
 
       {/* Dropdown - portaled to body to avoid clipping, positioned absolutely relative to card middle */}
       {isExpanded && dropdownStyle && typeof document !== "undefined" &&

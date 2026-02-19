@@ -663,7 +663,7 @@ function MediaTable({
           No media items found
         </div>
       ) : (
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto scrollbar-modern">
           <table className="min-w-full divide-y divide-slate-200">
             <thead className="bg-slate-50">
               <tr>
@@ -1118,7 +1118,7 @@ function ContentTable({
       ) : items.length === 0 ? (
         <div className="p-8 text-center text-slate-500">No content items found</div>
       ) : (
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto scrollbar-modern">
           <table className="min-w-full divide-y divide-slate-200">
             <thead className="bg-slate-50">
               <tr>

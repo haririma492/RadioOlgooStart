@@ -2,7 +2,7 @@
 
 import React, { useMemo, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { getThreeCalendars, type ThreeCalendars } from "@/lib/dateCalendars";
+import { getThreeCalendars, getWeekdayWithMiddlePersian, type ThreeCalendars } from "@/lib/dateCalendars";
 
 type DateDisplayProps = {
   date: Date;
@@ -50,11 +50,11 @@ function DateSegment({
 
   return (
     <span
-      className="font-farsi relative inline-block px-5 py-1 cursor-default"
+      className="date-strip-segment font-farsi relative inline-block px-5 py-1.5 cursor-default text-white"
       onMouseEnter={handleEnter}
       onMouseMove={handleMove}
       onMouseLeave={handleLeave}
-      style={{fontSize: '20px'}}
+      style={{ fontSize: "1.125rem", lineHeight: 1.5 }}
     >
       {text}
     </span>
@@ -107,9 +107,19 @@ export default function DateDisplay({ date }: DateDisplayProps) {
     () => getThreeCalendars(date),
     [date.getTime()]
   );
+  const weekdayText = useMemo(
+    () => getWeekdayWithMiddlePersian(date),
+    [date.getTime()]
+  );
 
   const oneBlock = (
     <>
+      <DateSegment
+        label="Weekday"
+        text={weekdayText}
+        onHover={handleSegmentHover}
+      />
+      {SEP}
       {SEGMENTS.map(({ key, label }) => (
         <React.Fragment key={key}>
           <DateSegment
@@ -127,11 +137,11 @@ export default function DateDisplay({ date }: DateDisplayProps) {
     <>
       <div
         className="w-full overflow-x-hidden"
-        aria-label={[calendars.shamsi, calendars.georgianFarsi, calendars.shahanshahi].join(" ")}
+        aria-label={[weekdayText, calendars.shamsi, calendars.georgianFarsi, calendars.shahanshahi].join(" ")}
       >
         <div
-          className="font-farsi text-white text-sm md:text-base font-normal whitespace-nowrap animate-date-strip flex items-center"
-          style={{ width: "max-content" }}
+          className="date-strip font-farsi text-white whitespace-nowrap animate-date-strip flex items-center"
+          style={{ width: "max-content", fontSize: "1.125rem", lineHeight: 1.5 }}
         >
           {oneBlock}
           <span className="px-2 text-gray-500 select-none">{SEP}</span>

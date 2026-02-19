@@ -141,7 +141,7 @@ export default function VideoRow({ videos = [], category, onVideoClick }: VideoR
     <div className="relative w-full overflow-visible">
       <div
         ref={scrollContainerRef}
-        className="flex gap-4 md:gap-5 overflow-x-auto scrollbar-hide scroll-smooth w-full"
+        className="flex gap-4 md:gap-5 overflow-x-auto scrollbar-modern scroll-smooth w-full"
         style={{
           scrollbarWidth: 'none',
           msOverflowStyle: 'none',

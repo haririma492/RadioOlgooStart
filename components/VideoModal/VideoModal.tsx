@@ -62,16 +62,16 @@ export default function VideoModal({ isOpen, onClose, title, videos }: VideoModa
         zIndex: 99999,
       }}
     >
-      {/* Backdrop Overlay - Blurs everything including header */}
+      {/* Backdrop - light so rest of site stays visible (same as all modals) */}
       <div
         className="absolute inset-0"
         style={{
-          backdropFilter: 'blur(40px)',
-          backgroundColor: 'rgba(60, 60, 60, 0.08)', // #3C3C3C14
+          backdropFilter: 'blur(8px)',
+          backgroundColor: 'rgba(0, 0, 0, 0.35)',
         }}
         onClick={onClose}
       />
-      
+
       {/* Modal Container */}
       <div
         className="absolute inset-0 flex items-center justify-center p-4"
@@ -80,16 +80,16 @@ export default function VideoModal({ isOpen, onClose, title, videos }: VideoModa
         }}
       >
         <div
-          className="relative rounded-lg p-6 w-full max-w-[calc(2*308px+10px+48px)] scrollbar-hide"
+          className="relative rounded-xl border border-white/10 bg-[#1a1a1a] p-6 w-full max-w-[calc(2*308px+10px+48px)] scrollbar-hide"
           style={{
             pointerEvents: 'auto',
-            maxHeight: '90vh',
+            maxHeight: '55vh',
             overflowY: 'auto',
           }}
           onClick={(e) => e.stopPropagation()}
         >
           {/* Header with Title and Close Button */}
-          <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center justify-between mb-4">
             <h2 className="text-white text-xl md:text-2xl font-semibold">{title}</h2>
             <button
               onClick={onClose}

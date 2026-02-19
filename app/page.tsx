@@ -9,6 +9,7 @@ import SocialLinksForm from "@/components/Forms/SocialLinksForm";
 import BreakingNewsBanner from "@/components/BreakingNews/BreakingNewsBanner";
 import Footer from "@/components/Footer/Footer";
 import FloatingVideoPlayer from "@/components/FloatingVideoPlayer/FloatingVideoPlayer";
+import LiveSection from "@/components/LiveSection/LiveSection";
 import { PlaybackProvider, usePlayback } from "@/context/PlaybackContext";
 
 type PlayingVideo = {
