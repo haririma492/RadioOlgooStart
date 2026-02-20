@@ -6,7 +6,6 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 type FoundBy = "live_redirect" | "live_html_signals" | "streams_html_signals" | "none";
-
 type Result = {
   handle: string;
   isLive: boolean;
@@ -19,7 +18,6 @@ type Result = {
 };
 
 type CandidateName = "live" | "streams";
-
 type CandidateCheck = {
   isLive: boolean;
   videoId?: string;
@@ -78,7 +76,6 @@ async function fetchHtml(url: string, init: RequestInit = {}) {
     cache: "no-store",
     redirect: "follow",
     headers: {
-      // keep existing headers if caller provided them
       ...(init.headers || {}),
       "User-Agent":
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122 Safari/537.36",
@@ -98,62 +95,6 @@ async function fetchHtml(url: string, init: RequestInit = {}) {
   };
 }
 
-function hasStrongLiveSignals(html: string): boolean {
-  const lower = (html || "").toLowerCase();
-
-  // If YouTube served a consent/interstitial/bot-like page, don't trust any "videoId" we find.
-  if (
-    lower.includes("consent.youtube.com") ||
-    lower.includes("before you continue") ||
-    lower.includes("our systems have detected unusual traffic") ||
-    lower.includes("sorry for the interruption")
-  ) {
-    return false;
-  }
-
-  // Strong positive signals
-  if (
-    lower.includes("watching now") ||
-    lower.includes('"watching"') ||
-    lower.includes("livechat") ||
-    lower.includes("live-chat") ||
-    lower.includes('"islive":true') ||
-    lower.match(/"[0-9,]+ watching"/) ||
-    lower.includes('"status":"live"') ||
-    lower.includes('"is_live":true')
-  ) {
-    return true;
-  }
-
-  // Strong negative signals
-  if (
-    lower.includes("streamed") ||
-    lower.includes("ended") ||
-    lower.includes("premiered") ||
-    lower.includes("premiere") ||
-    lower.includes("upcoming") ||
-    lower.includes('"status":"upcoming"')
-  ) {
-    return false;
-  }
-
-  return false;
-}
-
-function extractVideoIdFromHtml(html: string): string | null {
-  const patterns = [
-    /"videoId":"([a-zA-Z0-9_-]{11})"/,
-    /"video_id":"([a-zA-Z0-9_-]{11})"/,
-    /\/watch\?v=([a-zA-Z0-9_-]{11})/,
-  ];
-
-  for (const regex of patterns) {
-    const match = (html || "").match(regex);
-    if (match?.[1] && isValidVideoId(match[1])) return match[1];
-  }
-  return null;
-}
-
 function looksLikeConsentOrInterstitial(finalUrl: string, html: string): boolean {
   const u = (finalUrl || "").toLowerCase();
   const h = (html || "").toLowerCase();
@@ -164,6 +105,63 @@ function looksLikeConsentOrInterstitial(finalUrl: string, html: string): boolean
     h.includes("our systems have detected unusual traffic") ||
     h.includes("sorry for the interruption")
   );
+}
+
+/**
+ * Extract ytInitialPlayerResponse JSON object from YouTube HTML.
+ * This is far more reliable than regexing random "videoId" occurrences.
+ */
+function extractPlayerResponse(html: string): any | null {
+  if (!html) return null;
+
+  // Pattern A: ytInitialPlayerResponse = {...};
+  let m = html.match(/ytInitialPlayerResponse\s*=\s*(\{[\s\S]*?\})\s*;/);
+  if (m && m[1]) {
+    try {
+      return JSON.parse(m[1]);
+    } catch {
+      // ignore
+    }
+  }
+
+  // Pattern B: "ytInitialPlayerResponse":{...}
+  m = html.match(/"ytInitialPlayerResponse"\s*:\s*(\{[\s\S]*?\})\s*,\s*"ytInitialData"/);
+  if (m && m[1]) {
+    try {
+      return JSON.parse(m[1]);
+    } catch {
+      // ignore
+    }
+  }
+
+  return null;
+}
+/**
+ * Decide if the page is LIVE *now* using structured player response.
+ * We try to be strict to avoid false positives.
+ */
+function isLiveNowFromPlayerResponse(pr: any): { isLive: boolean; videoId?: string; reason?: string } {
+  if (!pr) return { isLive: false, reason: "no_player_response" };
+
+  const videoId = pr.videoDetails?.videoId;
+  if (!videoId || !isValidVideoId(videoId)) return { isLive: false, reason: "no_valid_videoId" };
+
+  const isLiveContent = pr.videoDetails?.isLiveContent === true;
+
+  // Most reliable: explicit isLiveNow true
+  const isLiveNow =
+    pr.microformat?.playerMicroformatRenderer?.liveBroadcastDetails?.isLiveNow === true;
+
+  // Additional hint: liveStreamingDetails exists for live content, but can also exist for scheduled streams.
+  const hasLiveStreamingDetails = !!pr.liveStreamingDetails;
+
+  // Strict rule:
+  // - must have videoId
+  // - AND (isLiveNow true OR (isLiveContent true AND hasLiveStreamingDetails))
+  const isLive =
+    isLiveNow || (isLiveContent && hasLiveStreamingDetails);
+
+  return { isLive, videoId: isLive ? videoId : undefined, reason: isLive ? "live" : "not_live" };
 }
 
 async function checkCandidate(url: string, candidateName: CandidateName): Promise<CandidateCheck> {
@@ -183,7 +181,7 @@ async function checkCandidate(url: string, candidateName: CandidateName): Promis
     htmlLen: page.text?.length || 0,
   };
 
-  // If YouTube served consent/interstitial, do NOT parse video IDs (they can be random/trending).
+  // If YouTube served consent/interstitial, do NOT parse anything.
   if (looksLikeConsentOrInterstitial(page.finalUrl, page.text)) {
     return {
       isLive: false,
@@ -192,7 +190,7 @@ async function checkCandidate(url: string, candidateName: CandidateName): Promis
     };
   }
 
-  // 1) Redirect-based live ID (often the most reliable)
+  // 1) Redirect-based live ID (safe)
   const redirectedVideoId = extractVideoIdFromUrl(page.finalUrl);
   if (redirectedVideoId) {
     return {
@@ -204,24 +202,24 @@ async function checkCandidate(url: string, candidateName: CandidateName): Promis
     };
   }
 
-  // 2) HTML signal-based detection + extraction
-  const hasLive = hasStrongLiveSignals(page.text);
-  const htmlVideoId = extractVideoIdFromHtml(page.text) || extractVideoIdFromUrl(page.finalUrl);
+  // 2) Structured player response (safe)
+  const pr = extractPlayerResponse(page.text);
+  const live = isLiveNowFromPlayerResponse(pr);
 
-  if (hasLive && htmlVideoId) {
+  if (live.isLive && live.videoId) {
     return {
       isLive: true,
-      videoId: htmlVideoId,
-      watchUrl: `https://www.youtube.com/watch?v=${htmlVideoId}`,
+      videoId: live.videoId,
+      watchUrl: `https://www.youtube.com/watch?v=${live.videoId}`,
       foundBy: candidateName === "live" ? "live_html_signals" : "streams_html_signals",
-      debug: { ...debugEntry, htmlSignals: true, extractedVideoId: htmlVideoId },
+      debug: { ...debugEntry, playerResponseLive: true, extractedVideoId: live.videoId, liveReason: live.reason },
     };
   }
 
   return {
     isLive: false,
     foundBy: "none",
-    debug: { ...debugEntry, hasLiveSignals: hasLive, extractedVideoId: htmlVideoId || null },
+    debug: { ...debugEntry, playerResponseLive: false, liveReason: live.reason },
   };
 }
 
