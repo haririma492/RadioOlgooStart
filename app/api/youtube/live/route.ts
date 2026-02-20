@@ -1,143 +1,262 @@
+// app/api/youtube/live/route.ts
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 
+/**
+ * OPTION 1 (No YouTube Data API at all)
+ * -----------------------------------
+ * We detect "live" by scraping YouTube HTML pages:
+ *   - https://www.youtube.com/@HANDLE/live
+ *   - https://www.youtube.com/@HANDLE/streams
+ *   - https://www.youtube.com/@HANDLE
+ *
+ * We extract candidate videoIds and:
+ *   - If /live yields ANY videoId => treat it as LIVE and return that watch URL.
+ *   - Otherwise, not live.
+ *
+ * This avoids quota completely.
+ */
+
+type FoundBy = "live_page_html" | "live_redirect" | "streams_html" | "home_html" | "none";
+
+type Candidate = {
+  videoId: string;
+  foundBy: Exclude<FoundBy, "none">;
+  sourceUrl: string;
+};
+
+type Result = {
+  handle: string;
+  isLive: boolean;
+  videoId?: string;
+  watchUrl?: string;
+  foundBy: FoundBy;
+  candidatesChecked: number;
+  error?: string;
+  debug?: any;
+};
+
 function normalizeHandle(h: string) {
-  return h.trim().replace(/^@/, "").toLowerCase();
+  return (h || "").trim().replace(/^@/, "");
 }
 
 function extractHandleFromUrlOrHandle(input: string): string | null {
   const s = (input || "").trim();
   if (!s) return null;
 
+  // direct handle e.g. "IRANINTL" or "@IRANINTL"
   if (/^@?[A-Za-z0-9._-]+$/.test(s)) return normalizeHandle(s);
 
+  // youtube handle URL: https://www.youtube.com/@IRANINTL or /@IRANINTL/streams
   const m = s.match(/youtube\.com\/@([A-Za-z0-9._-]+)/i);
   if (m?.[1]) return normalizeHandle(m[1]);
 
   return null;
 }
 
-async function ytApiGet(url: string) {
+function isValidVideoId(v: string) {
+  return /^[a-zA-Z0-9_-]{11}$/.test(v);
+}
+
+function extractVideoIdFromUrl(u: string): string | null {
+  try {
+    const url = new URL(u);
+    const v = url.searchParams.get("v");
+    if (v && isValidVideoId(v)) return v;
+
+    if (/youtu\.be$/i.test(url.hostname)) {
+      const id = url.pathname.replace("/", "");
+      if (isValidVideoId(id)) return id;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchHtml(url: string) {
   const res = await fetch(url, {
     cache: "no-store",
-    headers: { Accept: "application/json" },
+    redirect: "follow",
+    headers: {
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122 Safari/537.36",
+      Accept: "text/html,application/xhtml+xml",
+      "Accept-Language": "en-US,en;q=0.9",
+    },
   });
   const text = await res.text().catch(() => "");
-  let json: any = {};
-  try {
-    json = text ? JSON.parse(text) : {};
-  } catch {
-    json = { _raw: text?.slice(0, 800) };
+  return { ok: res.ok, status: res.status, finalUrl: res.url || url, text };
+}
+
+/** Extract many possible videoIds from YouTube HTML (no matchAll, TS-safe) */
+function extractVideoIdsFromHtml(html: string, max = 30): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+
+  const push = (id: string) => {
+    if (isValidVideoId(id) && !seen.has(id)) {
+      seen.add(id);
+      out.push(id);
+    }
+  };
+
+  // 1) watch?v=XXXXXXXXXXX
+  {
+    const re = /watch\?v=([a-zA-Z0-9_-]{11})/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(html)) !== null) {
+      push(m[1]);
+      if (out.length >= max) break;
+    }
   }
-  return { ok: res.ok, status: res.status, json };
+
+  // 2) "videoId":"XXXXXXXXXXX"
+  {
+    const re = /"videoId"\s*:\s*"([a-zA-Z0-9_-]{11})"/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(html)) !== null) {
+      push(m[1]);
+      if (out.length >= max) break;
+    }
+  }
+
+  // 3) canonical watch link
+  {
+    const re = /<link[^>]+rel="canonical"[^>]+href="([^"]+)"/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(html)) !== null) {
+      const vid = extractVideoIdFromUrl(m[1]);
+      if (vid) push(vid);
+      if (out.length >= max) break;
+    }
+  }
+
+  return out;
+}
+
+function uniqCandidates(list: Candidate[]) {
+  const seen = new Set<string>();
+  const out: Candidate[] = [];
+  for (const c of list) {
+    if (!seen.has(c.videoId)) {
+      seen.add(c.videoId);
+      out.push(c);
+    }
+  }
+  return out;
+}
+
+async function candidatesFromPage(
+  url: string,
+  foundBy: Candidate["foundBy"],
+  max = 25
+): Promise<{ candidates: Candidate[]; meta: any; redirectVideoId: string | null }> {
+  const res = await fetchHtml(url);
+  const ids = extractVideoIdsFromHtml(res.text, max);
+  const redirectVid = extractVideoIdFromUrl(res.finalUrl);
+
+  return {
+    candidates: ids.map((videoId) => ({
+      videoId,
+      foundBy,
+      sourceUrl: res.finalUrl,
+    })),
+    meta: { status: res.status, finalUrl: res.finalUrl, extracted: ids.length },
+    redirectVideoId: redirectVid,
+  };
 }
 
 /**
- * Robust handle -> channelId:
- * search channels by "@handle" (works when channels.list forHandle fails)
+ * Decide "live" without API:
+ * - If /live yields a redirect watch?v => live
+ * - Else if /live html yields at least one videoId => live, pick first
+ * - Else not live
  */
-async function handleToChannelId(apiKey: string, handle: string): Promise<string | null> {
-  // 1) Try search by "@handle"
-  const searchUrl =
-    "https://www.googleapis.com/youtube/v3/search" +
-    `?part=id,snippet&type=channel&maxResults=5` +
-    `&q=${encodeURIComponent("@" + handle)}` +
-    `&key=${encodeURIComponent(apiKey)}`;
+async function resolveLive(handle: string): Promise<Result> {
+  const h = normalizeHandle(handle);
+  const debug: any = { handle: h };
 
-  const s1 = await ytApiGet(searchUrl);
-  if (s1.ok) {
-    const items: any[] = Array.isArray(s1.json?.items) ? s1.json.items : [];
-    // pick exact match if possible
-    const exact = items.find(
-      (it) =>
-        normalizeHandle(it?.snippet?.channelTitle || "") === normalizeHandle(handle) ||
-        normalizeHandle(it?.snippet?.title || "") === normalizeHandle(handle)
-    );
-    const best = exact || items[0];
-    const cid = best?.id?.channelId;
-    if (typeof cid === "string" && cid) return cid;
+  const liveUrl = `https://www.youtube.com/@${encodeURIComponent(
+    h
+  )}/live?hl=en&persist_app=1&app=desktop`;
+
+  const livePage = await candidatesFromPage(liveUrl, "live_page_html", 25);
+  debug.livePage = livePage.meta;
+  debug.liveRedirect = {
+    videoId: livePage.redirectVideoId,
+    finalUrl: livePage.meta.finalUrl,
+    status: livePage.meta.status,
+  };
+
+  // 1) If /live redirected to watch?v=... => live
+  if (livePage.redirectVideoId) {
+    return {
+      handle: h,
+      isLive: true,
+      videoId: livePage.redirectVideoId,
+      watchUrl: `https://www.youtube.com/watch?v=${livePage.redirectVideoId}`,
+      foundBy: "live_redirect",
+      candidatesChecked: 1,
+      debug,
+    };
   }
 
-  // 2) Fallback: channels.list?forUsername (legacy; rarely works)
-  const legacyUrl =
-    "https://www.googleapis.com/youtube/v3/channels" +
-    `?part=id&forUsername=${encodeURIComponent(handle)}` +
-    `&key=${encodeURIComponent(apiKey)}`;
+  // 2) If /live HTML contains ANY videoId => treat as live (best effort)
+  const liveCandidates = uniqCandidates(livePage.candidates);
+  debug.liveCandidatesCount = liveCandidates.length;
+  debug.liveCandidatesSample = liveCandidates.slice(0, 8);
 
-  const s2 = await ytApiGet(legacyUrl);
-  const id2 = s2.json?.items?.[0]?.id;
-  if (typeof id2 === "string" && id2) return id2;
-
-  return null;
-}
-
-async function channelIdToCandidateLiveVideo(apiKey: string, channelId: string) {
-  const searchUrl =
-    "https://www.googleapis.com/youtube/v3/search" +
-    `?part=id,snippet&channelId=${encodeURIComponent(channelId)}` +
-    `&eventType=live&type=video&maxResults=5` +
-    `&key=${encodeURIComponent(apiKey)}`;
-
-  const { ok, json } = await ytApiGet(searchUrl);
-  if (!ok) return null;
-
-  const items: any[] = Array.isArray(json?.items) ? json.items : [];
-  for (const it of items) {
-    const videoId = it?.id?.videoId;
-    const title = it?.snippet?.title;
-    if (typeof videoId === "string" && videoId) {
-      return {
-        videoId,
-        title: typeof title === "string" ? title : undefined,
-        method: "search_eventType_live",
-      };
-    }
+  if (liveCandidates.length > 0) {
+    const winner = liveCandidates[0];
+    return {
+      handle: h,
+      isLive: true,
+      videoId: winner.videoId,
+      watchUrl: `https://www.youtube.com/watch?v=${winner.videoId}`,
+      foundBy: "live_page_html",
+      candidatesChecked: 1,
+      debug: { ...debug, winner },
+    };
   }
-  return null;
-}
 
-async function verifyVideoIsLive(apiKey: string, videoId: string) {
-  const url =
-    "https://www.googleapis.com/youtube/v3/videos" +
-    `?part=snippet,liveStreamingDetails&id=${encodeURIComponent(videoId)}` +
-    `&key=${encodeURIComponent(apiKey)}`;
+  // Optional fallbacks (NOT used to declare live; just debug help)
+  const streamsUrl = `https://www.youtube.com/@${encodeURIComponent(h)}/streams?hl=en`;
+  const streamsPage = await candidatesFromPage(streamsUrl, "streams_html", 25);
+  debug.streamsPage = streamsPage.meta;
 
-  const { ok, json } = await ytApiGet(url);
-  if (!ok) return { ok: false, isLive: false, reason: "videos_list_failed", raw: json };
+  const homeUrl = `https://www.youtube.com/@${encodeURIComponent(h)}?hl=en`;
+  const homePage = await candidatesFromPage(homeUrl, "home_html", 25);
+  debug.homePage = homePage.meta;
 
-  const item = json?.items?.[0];
-  if (!item) return { ok: true, isLive: false, reason: "no_video_item" };
-
-  const liveBroadcastContent = item?.snippet?.liveBroadcastContent; // live|upcoming|none
-  const lsd = item?.liveStreamingDetails;
-
-  const hasActualStart = typeof lsd?.actualStartTime === "string" && lsd.actualStartTime.length > 0;
-  const hasActualEnd = typeof lsd?.actualEndTime === "string" && lsd.actualEndTime.length > 0;
-
-  const isLive =
-    liveBroadcastContent === "live" ||
-    (hasActualStart && !hasActualEnd);
+  const all = uniqCandidates([
+    ...streamsPage.candidates,
+    ...homePage.candidates,
+  ]);
+  debug.candidatesTotalFallback = all.length;
+  debug.sampleCandidatesFallback = all.slice(0, 8);
 
   return {
-    ok: true,
-    isLive,
-    reason: isLive ? "verified_live" : `not_live:${String(liveBroadcastContent || "unknown")}`,
+    handle: h,
+    isLive: false,
+    foundBy: "none",
+    candidatesChecked: 0,
+    debug,
   };
 }
 
 export async function GET(req: Request) {
-  const apiKey = process.env.YOUTUBE_API_KEY;
-  if (!apiKey) {
-    return NextResponse.json({ ok: false, error: "Missing env var YOUTUBE_API_KEY" }, { status: 500 });
-  }
-
   const { searchParams } = new URL(req.url);
+
+  // /api/youtube/live?handles=IRANINTL,gghamarimpp,manototv
+  // OR /api/youtube/live?inputs=https://www.youtube.com/@IRANINTL/streams,@manototv
   const handlesParam = searchParams.get("handles") || "";
   const inputsParam = searchParams.get("inputs") || "";
 
-  const rawList =
-    (handlesParam ? handlesParam.split(",") : []).concat(inputsParam ? inputsParam.split(",") : []);
+  const rawList = (handlesParam ? handlesParam.split(",") : []).concat(
+    inputsParam ? inputsParam.split(",") : []
+  );
 
   const handles = rawList
     .map((x) => extractHandleFromUrlOrHandle(x))
@@ -145,49 +264,26 @@ export async function GET(req: Request) {
 
   const unique = Array.from(new Set(handles));
 
-  const results: Record<
-    string,
-    { handle: string; isLive: boolean; videoId?: string; title?: string; error?: string; debug?: any }
-  > = {};
+  const results: Record<string, Result> = {};
 
-  for (const handle of unique) {
+  for (const h of unique) {
     try {
-      const channelId = await handleToChannelId(apiKey, handle);
-
-      if (!channelId) {
-        results[handle] = { handle, isLive: false, error: "channelId_not_found" };
-        continue;
-      }
-
-      const candidate = await channelIdToCandidateLiveVideo(apiKey, channelId);
-      if (!candidate) {
-        results[handle] = { handle, isLive: false, debug: { channelId, note: "no live items" } };
-        continue;
-      }
-
-      const v = await verifyVideoIsLive(apiKey, candidate.videoId);
-
-      if (!v.ok) {
-        results[handle] = { handle, isLive: false, error: v.reason, debug: { channelId, candidate, verify: v } };
-        continue;
-      }
-
-      if (!v.isLive) {
-        results[handle] = { handle, isLive: false, debug: { channelId, candidate, verify: v } };
-        continue;
-      }
-
-      results[handle] = {
-        handle,
-        isLive: true,
-        videoId: candidate.videoId,
-        title: candidate.title,
-        debug: { channelId, pickedBy: candidate.method, verify: v.reason },
-      };
+      const r = await resolveLive(h);
+      results[r.handle] = r;
     } catch (e: any) {
-      results[handle] = { handle, isLive: false, error: e?.message || "unknown_error" };
+      const hh = normalizeHandle(h);
+      results[hh] = {
+        handle: hh,
+        isLive: false,
+        foundBy: "none",
+        candidatesChecked: 0,
+        error: e?.message || "unknown_error",
+      };
     }
   }
 
-  return NextResponse.json({ ok: true, results, debug: { handles: unique } }, { status: 200 });
+  return NextResponse.json(
+    { ok: true, results },
+    { status: 200, headers: { "Cache-Control": "no-store, max-age=0" } }
+  );
 }
