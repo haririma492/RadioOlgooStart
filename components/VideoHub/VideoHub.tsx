@@ -394,7 +394,11 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
         </nav>
 
         {/* Dates Display - sliding strip: Shamsi, Georgian (Farsi months), Shahanshahi */}
-        <div className="flex flex-col items-end md:items-end text-right w-full md:w-auto" style={{ width: "100%" }}>
+        <div
+          className="flex flex-col items-end md:items-end text-right w-full md:w-auto"
+          dir="ltr"
+          style={{ width: "100%", direction: "ltr" }}
+        >
           <DateDisplay date={today} />
         </div>
       </div>

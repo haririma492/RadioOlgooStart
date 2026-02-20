@@ -38,7 +38,14 @@ function toFarsiDigits(n: number): string {
 }
 
 /** Separator between day, month, year for instant readability */
-const DATE_PART_SEP = "  ·  ";
+const DATE_PART_SEP = " · ";
+const LTR_MARK = "\u200E";
+
+export interface CalendarParts {
+  day: string;
+  month: string;
+  year: string;
+}
 
 /** Shamsi (Solar Hijri): e.g. "۲۹  ·  بهمن  ·  ۱۴۰۴" */
 export function formatShamsi(date: Date): string {
@@ -50,7 +57,7 @@ export function formatShamsi(date: Date): string {
     day
   );
   const month = SHAMSI_MONTHS_FARSI[jm - 1];
-  return `${toFarsiDigits(jd)}${DATE_PART_SEP}${month}${DATE_PART_SEP}${toFarsiDigits(jy)}`;
+  return `${LTR_MARK}${toFarsiDigits(jd)}${DATE_PART_SEP}${month}${DATE_PART_SEP}${toFarsiDigits(jy)}`;
 }
 
 /** Georgian with Farsi month names: e.g. "۳۰  ·  ژانویه  ·  ۲۰۲۶" */
@@ -58,7 +65,7 @@ export function formatGeorgianFarsi(date: Date): string {
   const day = date.getDate();
   const month = GREGORIAN_MONTHS_FARSI[date.getMonth()];
   const year = date.getFullYear();
-  return `${toFarsiDigits(day)}${DATE_PART_SEP}${month}${DATE_PART_SEP}${toFarsiDigits(year)}`;
+  return `${LTR_MARK}${toFarsiDigits(day)}${DATE_PART_SEP}${month}${DATE_PART_SEP}${toFarsiDigits(year)}`;
 }
 
 /** Shahanshahi (Shamsi year + 1180): e.g. "۱۰  ·  بهمن  ·  ۲۵۸۴" */
@@ -72,7 +79,37 @@ export function formatShahanshahi(date: Date): string {
   );
   const month = SHAMSI_MONTHS_FARSI[jm - 1];
   const shahanshahiYear = jy + 1180;
-  return `${toFarsiDigits(jd)}${DATE_PART_SEP}${month}${DATE_PART_SEP}${toFarsiDigits(shahanshahiYear)}`;
+  return `${LTR_MARK}${toFarsiDigits(jd)}${DATE_PART_SEP}${month}${DATE_PART_SEP}${toFarsiDigits(shahanshahiYear)}`;
+}
+
+export function getShamsiParts(date: Date): CalendarParts {
+  const month1Based = (date.getMonth() + 1) as MonthType;
+  const day = date.getDate() as DayType;
+  const [jy, jm, jd] = gregorianToJalali(date.getFullYear(), month1Based, day);
+  return {
+    day: toFarsiDigits(jd),
+    month: SHAMSI_MONTHS_FARSI[jm - 1],
+    year: toFarsiDigits(jy),
+  };
+}
+
+export function getGeorgianFarsiParts(date: Date): CalendarParts {
+  return {
+    day: toFarsiDigits(date.getDate()),
+    month: GREGORIAN_MONTHS_FARSI[date.getMonth()],
+    year: toFarsiDigits(date.getFullYear()),
+  };
+}
+
+export function getShahanshahiParts(date: Date): CalendarParts {
+  const month1Based = (date.getMonth() + 1) as MonthType;
+  const day = date.getDate() as DayType;
+  const [jy, jm, jd] = gregorianToJalali(date.getFullYear(), month1Based, day);
+  return {
+    day: toFarsiDigits(jd),
+    month: SHAMSI_MONTHS_FARSI[jm - 1],
+    year: toFarsiDigits(jy + 1180),
+  };
 }
 
 export interface ThreeCalendars {

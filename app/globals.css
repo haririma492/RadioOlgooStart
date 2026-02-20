@@ -81,6 +81,10 @@ html, body {
   font-feature-settings: "tnum" 1;
   letter-spacing: 0.02em;
   font-weight: 500;
+  direction: ltr;
+  unicode-bidi: isolate;
+  transform: translateZ(0);
+  backface-visibility: hidden;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -90,21 +94,24 @@ html, body {
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum" 1;
   font-weight: 500;
+  direction: ltr;
+  unicode-bidi: isolate-override;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
 @keyframes date-strip {
   from {
-    transform: translateX(0);
+    transform: translate3d(0, 0, 0);
   }
   to {
-    transform: translateX(-33.333%);
+    transform: translate3d(-50%, 0, 0);
   }
 }
 
 .animate-date-strip {
-  animation: date-strip 25s linear infinite;
+  animation: date-strip 55s linear infinite;
+  will-change: transform;
 }
 
 @media (prefers-reduced-motion: reduce) {
