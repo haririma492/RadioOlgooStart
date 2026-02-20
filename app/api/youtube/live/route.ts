@@ -114,23 +114,54 @@ function looksLikeConsentOrInterstitial(finalUrl: string, html: string): boolean
 function extractPlayerResponse(html: string): any | null {
   if (!html) return null;
 
-  // Pattern A: ytInitialPlayerResponse = {...};
-  let m = html.match(/ytInitialPlayerResponse\s*=\s*(\{[\s\S]*?\})\s*;/);
-  if (m && m[1]) {
-    try {
-      return JSON.parse(m[1]);
-    } catch {
-      // ignore
-    }
-  }
+  // Find either: ytInitialPlayerResponse = { ... }
+  // or: "ytInitialPlayerResponse": { ... }
+  const keys = ["ytInitialPlayerResponse", '"ytInitialPlayerResponse"'];
 
-  // Pattern B: "ytInitialPlayerResponse":{...}
-  m = html.match(/"ytInitialPlayerResponse"\s*:\s*(\{[\s\S]*?\})\s*,\s*"ytInitialData"/);
-  if (m && m[1]) {
-    try {
-      return JSON.parse(m[1]);
-    } catch {
-      // ignore
+  for (const key of keys) {
+    const idx = html.indexOf(key);
+    if (idx < 0) continue;
+
+    // Find the first '{' after the key
+    const braceStart = html.indexOf("{", idx);
+    if (braceStart < 0) continue;
+
+    // Extract a balanced JSON object by counting braces,
+    // being careful about strings and escapes.
+    let i = braceStart;
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+
+    for (; i < html.length; i++) {
+      const ch = html[i];
+
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (ch === "\\") {
+        if (inString) escape = true;
+        continue;
+      }
+      if (ch === '"') {
+        inString = !inString;
+        continue;
+      }
+      if (inString) continue;
+
+      if (ch === "{") depth++;
+      else if (ch === "}") {
+        depth--;
+        if (depth === 0) {
+          const jsonText = html.slice(braceStart, i + 1);
+          try {
+            return JSON.parse(jsonText);
+          } catch {
+            return null;
+          }
+        }
+      }
     }
   }
 
@@ -204,6 +235,19 @@ async function checkCandidate(url: string, candidateName: CandidateName): Promis
 
   // 2) Structured player response (safe)
   const pr = extractPlayerResponse(page.text);
+  const prVideoId = pr?.videoDetails?.videoId || null;
+const prIsLiveContent = pr?.videoDetails?.isLiveContent ?? null;
+const prIsLiveNow =
+  pr?.microformat?.playerMicroformatRenderer?.liveBroadcastDetails?.isLiveNow ?? null;
+const prHasLiveStreamingDetails = !!pr?.liveStreamingDetails;
+
+debugEntry.playerResponse = {
+  extracted: !!pr,
+  videoId: prVideoId,
+  isLiveContent: prIsLiveContent,
+  isLiveNow: prIsLiveNow,
+  hasLiveStreamingDetails: prHasLiveStreamingDetails,
+};
   const live = isLiveNowFromPlayerResponse(pr);
 
   if (live.isLive && live.videoId) {
