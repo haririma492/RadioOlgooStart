@@ -31,6 +31,7 @@
     "shamsi": "^1.1.6",
     "tailwind-merge": "^3.4.1",
     "tailwindcss-animate": "^1.0.7",
+    "use-debounce": "^10.1.0",
     "uuid": "^13.0.0",
     "ytdl-core": "^4.11.5"
   },

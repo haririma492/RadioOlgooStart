@@ -2,7 +2,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-// ── Types ──────────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────────────
+// TYPES
+// ──────────────────────────────────────────────────────────────────────
+
+type SortDir = "asc" | "desc";
+type SortState = { key: string; dir: SortDir } | null;
+
 type DynamoItem = {
   PK: string;
   url?: string;
@@ -37,15 +43,16 @@ type ContentItem = {
   updatedAt?: string;
 };
 
-// ── AWS Region (shown on tabs) ────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────────────
+// HELPERS
+// ──────────────────────────────────────────────────────────────────────
+
 const AWS_REGION =
   process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || "ca-central-1";
 
-// ── Helpers ───────────────────────────────────────────────────────────
-function truncate(str: any, maxLen: number): string {
+function truncate(str: any, maxLen: number = 40): string {
   const s = String(str || "");
-  if (s.length <= maxLen) return s;
-  return s.slice(0, maxLen) + "...";
+  return s.length <= maxLen ? s : s.slice(0, maxLen) + "...";
 }
 
 function formatDate(iso: string | undefined): string {
@@ -64,71 +71,51 @@ function formatDate(iso: string | undefined): string {
 }
 
 function rand6(): string {
-  // short random for PK uniqueness
   return Math.random().toString(36).slice(2, 8);
 }
 
 function makeMediaPK(): string {
-  // MEDIA#<epoch_ms>#<rand>
   return `MEDIA#${Date.now()}#${rand6()}`;
 }
 
-// ──────────────────────────────────────────────────────────────────────
-// Sorting helpers
-// ──────────────────────────────────────────────────────────────────────
-type SortDir = "asc" | "desc";
-type SortState = { key: string; dir: SortDir } | null;
-
-function parseMaybeDate(v: any): number | null {
-  if (!v) return null;
-  const s = String(v).trim();
-  if (!s) return null;
-  const t = Date.parse(s);
-  return Number.isFinite(t) ? t : null;
-}
-
-function parseMaybeNumber(v: any): number | null {
-  if (v === null || v === undefined) return null;
-  if (typeof v === "number" && Number.isFinite(v)) return v;
-  const s = String(v).trim().replace(/,/g, "");
-  if (!s) return null;
-  const n = Number(s);
-  return Number.isFinite(n) ? n : null;
-}
-
-function compareValues(a: any, b: any): number {
-  const aEmpty = a === null || a === undefined || String(a).trim() === "";
-  const bEmpty = b === null || b === undefined || String(b).trim() === "";
+function compareValues(a: any, b: any, key?: string): number {
+  const aEmpty = a == null || String(a).trim() === "";
+  const bEmpty = b == null || String(b).trim() === "";
   if (aEmpty && bEmpty) return 0;
-  if (aEmpty) return 1; // empty goes last
+  if (aEmpty) return 1;
   if (bEmpty) return -1;
 
-  if (typeof a === "boolean" || typeof b === "boolean") {
-    const av = a === true ? 1 : 0;
-    const bv = b === true ? 1 : 0;
-    return av - bv;
+  if (key === "PK") {
+    const getTS = (pk: string): number => {
+      const parts = String(pk).split("#");
+      if (parts.length >= 2) {
+        const ts = Number(parts[1]);
+        return Number.isFinite(ts) ? ts : 0;
+      }
+      return 0;
+    };
+    return getTS(a) - getTS(b);
   }
 
-  const ad = parseMaybeDate(a);
-  const bd = parseMaybeDate(b);
-  if (ad !== null && bd !== null) return ad - bd;
+  if (typeof a === "boolean" || typeof b === "boolean") {
+    return (a ? 1 : 0) - (b ? 1 : 0);
+  }
 
-  const an = parseMaybeNumber(a);
-  const bn = parseMaybeNumber(b);
-  if (an !== null && bn !== null) return an - bn;
+  const ad = Date.parse(String(a));
+  const bd = Date.parse(String(b));
+  if (!isNaN(ad) && !isNaN(bd)) return ad - bd;
 
-  const as = String(a).toLowerCase();
-  const bs = String(b).toLowerCase();
-  return as < bs ? -1 : as > bs ? 1 : 0;
+  const an = Number(String(a).replace(/,/g, ""));
+  const bn = Number(String(b).replace(/,/g, ""));
+  if (!isNaN(an) && !isNaN(bn)) return an - bn;
+
+  return String(a).toLowerCase().localeCompare(String(b).toLowerCase());
 }
 
 function sortArray<T extends Record<string, any>>(arr: T[], sort: SortState): T[] {
   if (!sort) return arr;
-  const { key, dir } = sort;
-  const mul = dir === "asc" ? 1 : -1;
-  const copy = [...arr];
-  copy.sort((x, y) => mul * compareValues(x?.[key], y?.[key]));
-  return copy;
+  const mul = sort.dir === "asc" ? 1 : -1;
+  return [...arr].sort((x, y) => mul * compareValues(x?.[sort.key], y?.[sort.key], sort.key));
 }
 
 function SortButton({
@@ -143,458 +130,44 @@ function SortButton({
   onSort: (key: string) => void;
 }) {
   const active = sort?.key === colKey;
-  const arrow = active ? (sort!.dir === "asc" ? "▲" : "▼") : "";
+  const arrow = active ? (sort!.dir === "asc" ? " ▲" : " ▼") : "";
   return (
     <button
       type="button"
       onClick={() => onSort(colKey)}
-      className={`text-xs font-medium uppercase hover:text-slate-900 ${
-        active ? "text-slate-900" : "text-slate-500"
-      }`}
-      title="Sort"
+      className={`text-xs font-medium uppercase ${
+        active ? "text-gray-900" : "text-gray-500"
+      } hover:text-gray-900`}
     >
-      {label} {arrow}
+      {label}
+      {arrow}
     </button>
   );
 }
 
-// ── Shared Styles (kept) ──────────────────────────────────────────────
-const buttonStyle: React.CSSProperties = {
-  padding: "8px 16px",
-  background: "#0070f3",
-  color: "white",
-  border: "none",
-  borderRadius: "4px",
-  cursor: "pointer",
-  fontWeight: "600",
-  fontSize: "14px",
-};
+// ──────────────────────────────────────────────────────────────────────
+// MEDIA TABLE PROPS INTERFACE (this fixes the red underline)
+// ──────────────────────────────────────────────────────────────────────
 
-export default function Admin2Page() {
-  const [activeTab, setActiveTab] = useState<"media" | "content">("media");
-  const [token, setToken] = useState("");
-  const [authenticated, setAuthenticated] = useState(false);
-
-  // Media table state
-  const [mediaItems, setMediaItems] = useState<DynamoItem[]>([]);
-  const [mediaLoading, setMediaLoading] = useState(true);
-  const [selectedMediaPKs, setSelectedMediaPKs] = useState<Set<string>>(
-    new Set()
-  );
-  const [mediaDeleting, setMediaDeleting] = useState(false);
-
-  // ✅ Media add/edit state
-  const [showAddMediaForm, setShowAddMediaForm] = useState(false);
-  const [editingMedia, setEditingMedia] = useState<DynamoItem | null>(null);
-  const [mediaSaving, setMediaSaving] = useState(false);
-
-  // Content table state
-  const [contentItems, setContentItems] = useState<ContentItem[]>([]);
-  const [contentLoading, setContentLoading] = useState(true);
-  const [selectedContentPKs, setSelectedContentPKs] = useState<Set<string>>(
-    new Set()
-  );
-  const [contentDeleting, setContentDeleting] = useState(false);
-  const [editingContent, setEditingContent] = useState<ContentItem | null>(
-    null
-  );
-  const [showAddForm, setShowAddForm] = useState(false);
-
-  // ✅ Sorting state
-  const [mediaSort, setMediaSort] = useState<SortState>(null);
-  const [contentSort, setContentSort] = useState<SortState>(null);
-
-  const [error, setError] = useState("");
-
-  const toggleMediaSort = (key: string) => {
-    setMediaSort((prev) => {
-      if (!prev || prev.key !== key) return { key, dir: "asc" };
-      return { key, dir: prev.dir === "asc" ? "desc" : "asc" };
-    });
-  };
-
-  const toggleContentSort = (key: string) => {
-    setContentSort((prev) => {
-      if (!prev || prev.key !== key) return { key, dir: "asc" };
-      return { key, dir: prev.dir === "asc" ? "desc" : "asc" };
-    });
-  };
-
-  const mediaItemsSorted = useMemo(
-    () => sortArray(mediaItems, mediaSort),
-    [mediaItems, mediaSort]
-  );
-
-  const contentItemsSorted = useMemo(
-    () => sortArray(contentItems, contentSort),
-    [contentItems, contentSort]
-  );
-
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    try {
-      const res = await fetch("/api/admin/list-all", {
-        headers: { "x-admin-token": token },
-      });
-
-      if (res.ok) {
-        setAuthenticated(true);
-        loadMediaData(token);
-        loadContentData(token);
-      } else {
-        setError("Invalid admin token");
-      }
-    } catch {
-      setError("Failed to authenticate");
-    }
-  };
-
-  const loadMediaData = async (adminToken: string) => {
-    try {
-      setMediaLoading(true);
-      const res = await fetch("/api/admin/list-all", {
-        headers: { "x-admin-token": adminToken },
-      });
-
-      if (!res.ok) throw new Error("Failed to load media data");
-
-      const data = await res.json();
-      setMediaItems(data.items || []);
-      setSelectedMediaPKs(new Set());
-      setError("");
-    } catch (err: any) {
-      setError(err.message || "Failed to load media data");
-    } finally {
-      setMediaLoading(false);
-    }
-  };
-
-  const loadContentData = async (adminToken: string) => {
-    try {
-      setContentLoading(true);
-      const res = await fetch("/api/admin/content", {
-        headers: { "x-admin-token": adminToken },
-      });
-
-      if (!res.ok) throw new Error("Failed to load content data");
-
-      const data = await res.json();
-      setContentItems(data.items || []);
-      setSelectedContentPKs(new Set());
-      setError("");
-    } catch (err: any) {
-      setError(err.message || "Failed to load content data");
-    } finally {
-      setContentLoading(false);
-    }
-  };
-
-  const toggleMediaSelect = (pk: string) => {
-    setSelectedMediaPKs((prev) => {
-      const next = new Set(prev);
-      if (next.has(pk)) next.delete(pk);
-      else next.add(pk);
-      return next;
-    });
-  };
-
-  const toggleMediaSelectAll = () => {
-    // keep original behavior: select all currently shown rows (sorted view)
-    const shownPKs = mediaItemsSorted.map((it) => it.PK);
-    if (selectedMediaPKs.size === shownPKs.length) {
-      setSelectedMediaPKs(new Set());
-    } else {
-      setSelectedMediaPKs(new Set(shownPKs));
-    }
-  };
-
-  const handleDeleteMedia = async () => {
-    if (selectedMediaPKs.size === 0) {
-      setError("No items selected");
-      return;
-    }
-
-    const confirmed = window.confirm(
-      `Delete ${selectedMediaPKs.size} media item(s)? This cannot be undone.`
-    );
-    if (!confirmed) return;
-
-    try {
-      setMediaDeleting(true);
-      setError("");
-
-      const res = await fetch("/api/admin/list-all", {
-        method: "DELETE",
-        headers: {
-          "x-admin-token": token,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ pks: Array.from(selectedMediaPKs) }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Delete failed");
-
-      alert(`✅ Deleted ${data.deleted} item(s)`);
-      await loadMediaData(token);
-    } catch (err: any) {
-      setError(err.message || "Failed to delete media items");
-    } finally {
-      setMediaDeleting(false);
-    }
-  };
-
-  // ✅ Save media (Add or Edit)
-  // This assumes your backend supports POST /api/admin/list-all to upsert a single item.
-  const handleSaveMedia = async (item: DynamoItem) => {
-    try {
-      setMediaSaving(true);
-      setError("");
-
-      const res = await fetch("/api/admin/list-all", {
-        method: "POST",
-        headers: {
-          "x-admin-token": token,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(item),
-      });
-
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(
-          data?.error ||
-            "Save failed. (Backend must support POST /api/admin/list-all)"
-        );
-      }
-
-      alert("✅ Media saved");
-      setShowAddMediaForm(false);
-      setEditingMedia(null);
-      await loadMediaData(token);
-    } catch (err: any) {
-      setError(err.message || "Failed to save media item");
-    } finally {
-      setMediaSaving(false);
-    }
-  };
-
-  const toggleContentSelect = (pk: string) => {
-    setSelectedContentPKs((prev) => {
-      const next = new Set(prev);
-      if (next.has(pk)) next.delete(pk);
-      else next.add(pk);
-      return next;
-    });
-  };
-
-  const toggleContentSelectAll = () => {
-    const shownPKs = contentItemsSorted.map((it) => it.PK);
-    if (selectedContentPKs.size === shownPKs.length) {
-      setSelectedContentPKs(new Set());
-    } else {
-      setSelectedContentPKs(new Set(shownPKs));
-    }
-  };
-
-  const handleDeleteContent = async () => {
-    if (selectedContentPKs.size === 0) {
-      setError("No items selected");
-      return;
-    }
-
-    const confirmed = window.confirm(
-      `Delete ${selectedContentPKs.size} content item(s)? This cannot be undone.`
-    );
-    if (!confirmed) return;
-
-    try {
-      setContentDeleting(true);
-      setError("");
-
-      const res = await fetch("/api/admin/content", {
-        method: "DELETE",
-        headers: {
-          "x-admin-token": token,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ pks: Array.from(selectedContentPKs) }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Delete failed");
-
-      alert(`✅ Deleted ${data.deleted} item(s)`);
-      await loadContentData(token);
-    } catch (err: any) {
-      setError(err.message || "Failed to delete content items");
-    } finally {
-      setContentDeleting(false);
-    }
-  };
-
-  const handleSaveContent = async (item: ContentItem) => {
-    try {
-      const res = await fetch("/api/admin/content", {
-        method: "POST",
-        headers: {
-          "x-admin-token": token,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(item),
-      });
-
-      if (!res.ok) throw new Error("Save failed");
-
-      alert("✅ Saved successfully");
-      setEditingContent(null);
-      setShowAddForm(false);
-      await loadContentData(token);
-    } catch (err: any) {
-      setError(err.message || "Failed to save");
-    }
-  };
-
-  // ── Login Form ──────────────────────────────────────────────────────
-  if (!authenticated) {
-    return (
-      <div className="min-h-screen bg-slate-100 text-slate-900 flex items-center justify-center">
-        <div className="bg-white p-8 rounded-xl shadow-lg max-w-md w-full">
-          <h1 className="text-2xl font-bold text-slate-900 mb-6">
-            Admin Login
-          </h1>
-          <form onSubmit={handleLogin}>
-            <div className="mb-4">
-              <label className="block text-slate-700 mb-2 font-medium">
-                Admin Token:
-              </label>
-              <input
-                type="password"
-                value={token}
-                onChange={(e) => setToken(e.target.value)}
-                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                required
-              />
-            </div>
-            <button
-              type="submit"
-              className="w-full py-3 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 transition-colors"
-            >
-              Login
-            </button>
-            {error && (
-              <div className="text-red-600 mt-4 text-center">{error}</div>
-            )}
-          </form>
-        </div>
-      </div>
-    );
-  }
-
-  // ── Main Admin Interface ────────────────────────────────────────────
-  return (
-    <div className="min-h-screen bg-slate-100 text-slate-900 p-6">
-      {/* Tabs with table names + AWS region */}
-      <div className="border-b border-slate-300 mb-6">
-        <div className="flex space-x-1">
-          <button
-            onClick={() => setActiveTab("media")}
-            className={`px-6 py-3 font-medium text-sm transition-all ${
-              activeTab === "media"
-                ? "border-b-4 border-blue-600 text-blue-700 bg-blue-50"
-                : "text-slate-600 hover:text-slate-800 hover:bg-slate-100"
-            }`}
-          >
-            Media Items Table – Region: {AWS_REGION} ({mediaItems.length})
-          </button>
-          <button
-            onClick={() => setActiveTab("content")}
-            className={`px-6 py-3 font-medium text-sm transition-all ${
-              activeTab === "content"
-                ? "border-b-4 border-blue-600 text-blue-700 bg-blue-50"
-                : "text-slate-600 hover:text-slate-800 hover:bg-slate-100"
-            }`}
-          >
-            Website Content Table – Region: {AWS_REGION} ({contentItems.length})
-          </button>
-        </div>
-      </div>
-
-      {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-6">
-          {error}
-        </div>
-      )}
-
-      {/* Media Table */}
-      {activeTab === "media" && (
-        <>
-          {(showAddMediaForm || editingMedia) && (
-            <MediaEditor
-              existingItems={mediaItems}
-              item={editingMedia}
-              saving={mediaSaving}
-              onCancel={() => {
-                setShowAddMediaForm(false);
-                setEditingMedia(null);
-              }}
-              onSave={handleSaveMedia}
-            />
-          )}
-
-          <MediaTable
-            items={mediaItemsSorted}
-            loading={mediaLoading}
-            selectedPKs={selectedMediaPKs}
-            deleting={mediaDeleting}
-            onRefresh={() => loadMediaData(token)}
-            onToggleSelect={toggleMediaSelect}
-            onToggleSelectAll={toggleMediaSelectAll}
-            onDelete={handleDeleteMedia}
-            onAddNew={() => {
-              setEditingMedia(null);
-              setShowAddMediaForm(true);
-            }}
-            onEdit={(it) => {
-              setShowAddMediaForm(false);
-              setEditingMedia(it);
-            }}
-            sort={mediaSort}
-            onSort={toggleMediaSort}
-          />
-        </>
-      )}
-
-      {/* Content Table */}
-      {activeTab === "content" && (
-        <ContentTable
-          items={contentItemsSorted}
-          loading={contentLoading}
-          selectedPKs={selectedContentPKs}
-          deleting={contentDeleting}
-          editingContent={editingContent}
-          showAddForm={showAddForm}
-          onRefresh={() => loadContentData(token)}
-          onToggleSelect={toggleContentSelect}
-          onToggleSelectAll={toggleContentSelectAll}
-          onDelete={handleDeleteContent}
-          onEdit={setEditingContent}
-          onSave={handleSaveContent}
-          onCancelEdit={() => {
-            setEditingContent(null);
-            setShowAddForm(false);
-          }}
-          onShowAddForm={() => setShowAddForm(true)}
-          sort={contentSort}
-          onSort={toggleContentSort}
-        />
-      )}
-    </div>
-  );
+interface MediaTableProps {
+  items: DynamoItem[];
+  loading: boolean;
+  selectedPKs: Set<string>;
+  deleting: boolean;
+  onRefresh: () => void;
+  onToggleSelect: (pk: string) => void;
+  onToggleSelectAll: () => void;
+  onDelete: () => void;
+  onAddNew: () => void;
+  onEdit: (item: DynamoItem) => void;
+  sort: SortState;
+  onSort: (key: string) => void;
 }
 
-// ── Media Table Component ────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────────────
+// MEDIA TABLE COMPONENT (defined BEFORE Admin2Page)
+// ──────────────────────────────────────────────────────────────────────
+
 function MediaTable({
   items,
   loading,
@@ -608,20 +181,7 @@ function MediaTable({
   onEdit,
   sort,
   onSort,
-}: {
-  items: DynamoItem[];
-  loading: boolean;
-  selectedPKs: Set<string>;
-  deleting: boolean;
-  onRefresh: () => void;
-  onToggleSelect: (pk: string) => void;
-  onToggleSelectAll: () => void;
-  onDelete: () => void;
-  onAddNew: () => void;
-  onEdit: (item: DynamoItem) => void;
-  sort: SortState;
-  onSort: (key: string) => void;
-}) {
+}: MediaTableProps) {
   return (
     <div className="bg-white rounded-lg shadow">
       <div className="p-4 border-b flex justify-between items-center">
@@ -633,7 +193,6 @@ function MediaTable({
           >
             + Add New
           </button>
-
           {selectedPKs.size > 0 && (
             <button
               onClick={onDelete}
@@ -643,7 +202,6 @@ function MediaTable({
               {deleting ? "Deleting..." : `Delete (${selectedPKs.size})`}
             </button>
           )}
-
           <button
             onClick={onRefresh}
             disabled={loading}
@@ -655,13 +213,9 @@ function MediaTable({
       </div>
 
       {loading ? (
-        <div className="p-8 text-center text-slate-500">
-          Loading media items...
-        </div>
+        <div className="p-8 text-center text-slate-500">Loading media items...</div>
       ) : items.length === 0 ? (
-        <div className="p-8 text-center text-slate-500">
-          No media items found
-        </div>
+        <div className="p-8 text-center text-slate-500">No media items found</div>
       ) : (
         <div className="overflow-x-auto scrollbar-modern">
           <table className="min-w-full divide-y divide-slate-200">
@@ -674,7 +228,6 @@ function MediaTable({
                     onChange={onToggleSelectAll}
                   />
                 </th>
-
                 <th className="px-6 py-3 text-left">
                   <SortButton label="PK" colKey="PK" sort={sort} onSort={onSort} />
                 </th>
@@ -698,7 +251,6 @@ function MediaTable({
                 </th>
               </tr>
             </thead>
-
             <tbody className="divide-y divide-slate-200">
               {items.map((item) => (
                 <tr key={item.PK} className="hover:bg-slate-50">
@@ -739,7 +291,6 @@ function MediaTable({
               ))}
             </tbody>
           </table>
-
           <div className="px-6 py-3 text-xs text-slate-500">
             Tip: click headers to sort (click again to reverse).
           </div>
@@ -749,7 +300,10 @@ function MediaTable({
   );
 }
 
-// ── Media Editor Modal ────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────────────
+// MEDIA EDITOR (kept almost unchanged)
+// ──────────────────────────────────────────────────────────────────────
+
 function MediaEditor({
   item,
   onSave,
@@ -803,20 +357,17 @@ function MediaEditor({
   }, [item]);
 
   const regeneratePK = () => {
-    if (item) return; // no regen on edit
+    if (item) return;
     setFormData((p) => ({ ...p, PK: makeMediaPK() }));
   };
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-
     if (!formData.section || !String(formData.section).trim()) {
       alert("Section is required.");
       return;
     }
-
     const now = new Date().toISOString();
-
     const payload: DynamoItem = {
       ...formData,
       PK: String(formData.PK).trim(),
@@ -831,7 +382,6 @@ function MediaEditor({
       updatedAt: now,
       createdAt: item?.createdAt || formData.createdAt || now,
     };
-
     onSave(payload);
   };
 
@@ -851,7 +401,6 @@ function MediaEditor({
             ✕
           </button>
         </div>
-
         <form onSubmit={submit} className="space-y-4">
           {/* PK */}
           <div>
@@ -873,20 +422,16 @@ function MediaEditor({
               )}
             </div>
             <div className="text-xs text-slate-500 mt-1">
-              Auto-generated:{" "}
-              <span className="font-mono">MEDIA#timestamp#rand</span>
+              Auto-generated: <span className="font-mono">MEDIA#timestamp#rand</span>
             </div>
           </div>
-
           {/* Section */}
           <div>
             <label className="block text-sm font-medium mb-1">Section *</label>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
               <select
                 value={formData.section || ""}
-                onChange={(e) =>
-                  setFormData({ ...formData, section: e.target.value })
-                }
+                onChange={(e) => setFormData({ ...formData, section: e.target.value })}
                 className="w-full border rounded px-3 py-2"
               >
                 {existingSections.length === 0 ? (
@@ -902,23 +447,18 @@ function MediaEditor({
               <input
                 placeholder="Or type a new section..."
                 value={formData.section || ""}
-                onChange={(e) =>
-                  setFormData({ ...formData, section: e.target.value })
-                }
+                onChange={(e) => setFormData({ ...formData, section: e.target.value })}
                 className="w-full border rounded px-3 py-2"
               />
             </div>
           </div>
-
           {/* Group */}
           <div>
             <label className="block text-sm font-medium mb-1">Group</label>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
               <select
                 value={formData.group || ""}
-                onChange={(e) =>
-                  setFormData({ ...formData, group: e.target.value })
-                }
+                onChange={(e) => setFormData({ ...formData, group: e.target.value })}
                 className="w-full border rounded px-3 py-2"
               >
                 <option value="">(none)</option>
@@ -931,14 +471,11 @@ function MediaEditor({
               <input
                 placeholder="Or type a new group..."
                 value={formData.group || ""}
-                onChange={(e) =>
-                  setFormData({ ...formData, group: e.target.value })
-                }
+                onChange={(e) => setFormData({ ...formData, group: e.target.value })}
                 className="w-full border rounded px-3 py-2"
               />
             </div>
           </div>
-
           {/* URL */}
           <div>
             <label className="block text-sm font-medium mb-1">URL</label>
@@ -949,16 +486,13 @@ function MediaEditor({
               placeholder="https://..."
             />
           </div>
-
           {/* Title / Person / Date */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div>
               <label className="block text-sm font-medium mb-1">Title</label>
               <input
                 value={formData.title || ""}
-                onChange={(e) =>
-                  setFormData({ ...formData, title: e.target.value })
-                }
+                onChange={(e) => setFormData({ ...formData, title: e.target.value })}
                 className="w-full border rounded px-3 py-2"
                 placeholder="Title shown to users"
               />
@@ -967,9 +501,7 @@ function MediaEditor({
               <label className="block text-sm font-medium mb-1">Person</label>
               <input
                 value={formData.person || ""}
-                onChange={(e) =>
-                  setFormData({ ...formData, person: e.target.value })
-                }
+                onChange={(e) => setFormData({ ...formData, person: e.target.value })}
                 className="w-full border rounded px-3 py-2"
                 placeholder="Creator / channel / speaker"
               />
@@ -978,43 +510,34 @@ function MediaEditor({
               <label className="block text-sm font-medium mb-1">Date</label>
               <input
                 value={formData.date || ""}
-                onChange={(e) =>
-                  setFormData({ ...formData, date: e.target.value })
-                }
+                onChange={(e) => setFormData({ ...formData, date: e.target.value })}
                 className="w-full border rounded px-3 py-2"
                 placeholder="YYYY-MM-DD (or any text)"
               />
             </div>
           </div>
-
           {/* Description */}
           <div>
             <label className="block text-sm font-medium mb-1">Description</label>
             <textarea
               value={formData.description || ""}
-              onChange={(e) =>
-                setFormData({ ...formData, description: e.target.value })
-              }
+              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
               className="w-full border rounded px-3 py-2 min-h-[80px]"
               placeholder="Optional"
             />
           </div>
-
           {/* Active */}
           <div className="flex items-center gap-2">
             <input
               id="active"
               type="checkbox"
               checked={!!formData.active}
-              onChange={(e) =>
-                setFormData({ ...formData, active: e.target.checked })
-              }
+              onChange={(e) => setFormData({ ...formData, active: e.target.checked })}
             />
             <label htmlFor="active" className="text-sm font-medium">
               Active
             </label>
           </div>
-
           {/* Buttons */}
           <div className="flex gap-3 mt-6">
             <button
@@ -1032,10 +555,8 @@ function MediaEditor({
               Cancel
             </button>
           </div>
-
           <div className="text-xs text-slate-500">
-            Saved fields: PK, section, group, url, title, person, date, description,
-            active, createdAt, updatedAt.
+            Saved fields: PK, section, group, url, title, person, date, description, active, createdAt, updatedAt.
           </div>
         </form>
       </div>
@@ -1043,7 +564,384 @@ function MediaEditor({
   );
 }
 
-// ── Content Table Component ──────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────────────
+// MAIN ADMIN2 PAGE
+// ──────────────────────────────────────────────────────────────────────
+
+export default function Admin2Page() {
+  const [activeTab, setActiveTab] = useState<"media" | "content">("media");
+  const [token, setToken] = useState("");
+  const [authenticated, setAuthenticated] = useState(false);
+
+  const [mediaItems, setMediaItems] = useState<DynamoItem[]>([]);
+  const [mediaLoading, setMediaLoading] = useState(true);
+  const [selectedMediaPKs, setSelectedMediaPKs] = useState<Set<string>>(new Set());
+  const [mediaDeleting, setMediaDeleting] = useState(false);
+
+  const [showAddMediaForm, setShowAddMediaForm] = useState(false);
+  const [editingMedia, setEditingMedia] = useState<DynamoItem | null>(null);
+  const [mediaSaving, setMediaSaving] = useState(false);
+
+  const [contentItems, setContentItems] = useState<ContentItem[]>([]);
+  const [contentLoading, setContentLoading] = useState(true);
+  const [selectedContentPKs, setSelectedContentPKs] = useState<Set<string>>(new Set());
+  const [contentDeleting, setContentDeleting] = useState(false);
+  const [editingContent, setEditingContent] = useState<ContentItem | null>(null);
+  const [showAddForm, setShowAddForm] = useState(false);
+
+  const [mediaSort, setMediaSort] = useState<SortState>({ key: "PK", dir: "desc" });
+  const [contentSort, setContentSort] = useState<SortState>({ key: "PK", dir: "desc" });
+
+  const [error, setError] = useState("");
+
+  const toggleMediaSort = (key: string) => {
+    setMediaSort((prev) => {
+      if (!prev || prev.key !== key) return { key, dir: "asc" };
+      return { key, dir: prev.dir === "asc" ? "desc" : "asc" };
+    });
+  };
+
+  const toggleContentSort = (key: string) => {
+    setContentSort((prev) => {
+      if (!prev || prev.key !== key) return { key, dir: "asc" };
+      return { key, dir: prev.dir === "asc" ? "desc" : "asc" };
+    });
+  };
+
+  const mediaItemsSorted = useMemo(() => sortArray(mediaItems, mediaSort), [mediaItems, mediaSort]);
+  const contentItemsSorted = useMemo(() => sortArray(contentItems, contentSort), [contentItems, contentSort]);
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const res = await fetch("/api/admin/list-all", {
+        headers: { "x-admin-token": token },
+      });
+      if (res.ok) {
+        setAuthenticated(true);
+        loadMediaData(token);
+        loadContentData(token);
+      } else {
+        setError("Invalid admin token");
+      }
+    } catch {
+      setError("Failed to authenticate");
+    }
+  };
+
+  const loadMediaData = async (adminToken: string) => {
+    try {
+      setMediaLoading(true);
+      const res = await fetch("/api/admin/list-all", {
+        headers: { "x-admin-token": adminToken },
+      });
+      if (!res.ok) throw new Error("Failed to load media data");
+      const data = await res.json();
+      setMediaItems(data.items || []);
+      setSelectedMediaPKs(new Set());
+      setError("");
+    } catch (err: any) {
+      setError(err.message || "Failed to load media data");
+    } finally {
+      setMediaLoading(false);
+    }
+  };
+
+  const loadContentData = async (adminToken: string) => {
+    try {
+      setContentLoading(true);
+      const res = await fetch("/api/admin/content", {
+        headers: { "x-admin-token": adminToken },
+      });
+      if (!res.ok) throw new Error("Failed to load content data");
+      const data = await res.json();
+      setContentItems(data.items || []);
+      setSelectedContentPKs(new Set());
+      setError("");
+    } catch (err: any) {
+      setError(err.message || "Failed to load content data");
+    } finally {
+      setContentLoading(false);
+    }
+  };
+
+  const toggleMediaSelect = (pk: string) => {
+    setSelectedMediaPKs((prev) => {
+      const next = new Set(prev);
+      if (next.has(pk)) next.delete(pk);
+      else next.add(pk);
+      return next;
+    });
+  };
+
+  const toggleMediaSelectAll = () => {
+    const shownPKs = mediaItemsSorted.map((it) => it.PK);
+    if (selectedMediaPKs.size === shownPKs.length) {
+      setSelectedMediaPKs(new Set());
+    } else {
+      setSelectedMediaPKs(new Set(shownPKs));
+    }
+  };
+
+  const handleDeleteMedia = async () => {
+    if (selectedMediaPKs.size === 0) {
+      setError("No items selected");
+      return;
+    }
+    const confirmed = window.confirm(
+      `Delete ${selectedMediaPKs.size} media item(s)? This cannot be undone.`
+    );
+    if (!confirmed) return;
+    try {
+      setMediaDeleting(true);
+      setError("");
+      const res = await fetch("/api/admin/list-all", {
+        method: "DELETE",
+        headers: {
+          "x-admin-token": token,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ pks: Array.from(selectedMediaPKs) }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Delete failed");
+      alert(`✅ Deleted ${data.deleted} item(s)`);
+      await loadMediaData(token);
+    } catch (err: any) {
+      setError(err.message || "Failed to delete media items");
+    } finally {
+      setMediaDeleting(false);
+    }
+  };
+
+  const handleSaveMedia = async (item: DynamoItem) => {
+    try {
+      setMediaSaving(true);
+      setError("");
+      const res = await fetch("/api/admin/list-all", {
+        method: "POST",
+        headers: {
+          "x-admin-token": token,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(item),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          data?.error || "Save failed. (Backend must support POST /api/admin/list-all)"
+        );
+      }
+      alert("✅ Media saved");
+      setShowAddMediaForm(false);
+      setEditingMedia(null);
+      await loadMediaData(token);
+    } catch (err: any) {
+      setError(err.message || "Failed to save media item");
+    } finally {
+      setMediaSaving(false);
+    }
+  };
+
+  const toggleContentSelect = (pk: string) => {
+    setSelectedContentPKs((prev) => {
+      const next = new Set(prev);
+      if (next.has(pk)) next.delete(pk);
+      else next.add(pk);
+      return next;
+    });
+  };
+
+  const toggleContentSelectAll = () => {
+    const shownPKs = contentItemsSorted.map((it) => it.PK);
+    if (selectedContentPKs.size === shownPKs.length) {
+      setSelectedContentPKs(new Set());
+    } else {
+      setSelectedContentPKs(new Set(shownPKs));
+    }
+  };
+
+  const handleDeleteContent = async () => {
+    if (selectedContentPKs.size === 0) {
+      setError("No items selected");
+      return;
+    }
+    const confirmed = window.confirm(
+      `Delete ${selectedContentPKs.size} content item(s)? This cannot be undone.`
+    );
+    if (!confirmed) return;
+    try {
+      setContentDeleting(true);
+      setError("");
+      const res = await fetch("/api/admin/content", {
+        method: "DELETE",
+        headers: {
+          "x-admin-token": token,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ pks: Array.from(selectedContentPKs) }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Delete failed");
+      alert(`✅ Deleted ${data.deleted} item(s)`);
+      await loadContentData(token);
+    } catch (err: any) {
+      setError(err.message || "Failed to delete content items");
+    } finally {
+      setContentDeleting(false);
+    }
+  };
+
+  const handleSaveContent = async (item: ContentItem) => {
+    try {
+      const res = await fetch("/api/admin/content", {
+        method: "POST",
+        headers: {
+          "x-admin-token": token,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(item),
+      });
+      if (!res.ok) throw new Error("Save failed");
+      alert("✅ Saved successfully");
+      setEditingContent(null);
+      setShowAddForm(false);
+      await loadContentData(token);
+    } catch (err: any) {
+      setError(err.message || "Failed to save");
+    }
+  };
+
+  if (!authenticated) {
+    return (
+      <div className="min-h-screen bg-slate-100 text-slate-900 flex items-center justify-center">
+        <div className="bg-white p-8 rounded-xl shadow-lg max-w-md w-full">
+          <h1 className="text-2xl font-bold text-slate-900 mb-6">Admin Login</h1>
+          <form onSubmit={handleLogin}>
+            <div className="mb-4">
+              <label className="block text-slate-700 mb-2 font-medium">Admin Token:</label>
+              <input
+                type="password"
+                value={token}
+                onChange={(e) => setToken(e.target.value)}
+                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                required
+              />
+            </div>
+            <button
+              type="submit"
+              className="w-full py-3 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              Login
+            </button>
+            {error && <div className="text-red-600 mt-4 text-center">{error}</div>}
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-100 text-slate-900 p-6">
+      <div className="border-b border-slate-300 mb-6">
+        <div className="flex space-x-1">
+          <button
+            onClick={() => setActiveTab("media")}
+            className={`px-6 py-3 font-medium text-sm transition-all ${
+              activeTab === "media"
+                ? "border-b-4 border-blue-600 text-blue-700 bg-blue-50"
+                : "text-slate-600 hover:text-slate-800 hover:bg-slate-100"
+            }`}
+          >
+            Media Items Table – Region: {AWS_REGION} ({mediaItems.length})
+          </button>
+          <button
+            onClick={() => setActiveTab("content")}
+            className={`px-6 py-3 font-medium text-sm transition-all ${
+              activeTab === "content"
+                ? "border-b-4 border-blue-600 text-blue-700 bg-blue-50"
+                : "text-slate-600 hover:text-slate-800 hover:bg-slate-100"
+            }`}
+          >
+            Website Content Table – Region: {AWS_REGION} ({contentItems.length})
+          </button>
+        </div>
+      </div>
+
+      {error && (
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-6">
+          {error}
+        </div>
+      )}
+
+      {activeTab === "media" && (
+        <>
+          {(showAddMediaForm || editingMedia) && (
+            <MediaEditor
+              existingItems={mediaItems}
+              item={editingMedia}
+              saving={mediaSaving}
+              onCancel={() => {
+                setShowAddMediaForm(false);
+                setEditingMedia(null);
+              }}
+              onSave={handleSaveMedia}
+            />
+          )}
+          <MediaTable
+            items={mediaItemsSorted}
+            loading={mediaLoading}
+            selectedPKs={selectedMediaPKs}
+            deleting={mediaDeleting}
+            onRefresh={() => loadMediaData(token)}
+            onToggleSelect={toggleMediaSelect}
+            onToggleSelectAll={toggleMediaSelectAll}
+            onDelete={handleDeleteMedia}
+            onAddNew={() => {
+              setEditingMedia(null);
+              setShowAddMediaForm(true);
+            }}
+            onEdit={(it) => {
+              setShowAddMediaForm(false);
+              setEditingMedia(it);
+            }}
+            sort={mediaSort}
+            onSort={toggleMediaSort}
+          />
+        </>
+      )}
+
+      {activeTab === "content" && (
+        <ContentTable
+          items={contentItemsSorted}
+          loading={contentLoading}
+          selectedPKs={selectedContentPKs}
+          deleting={contentDeleting}
+          editingContent={editingContent}
+          showAddForm={showAddForm}
+          onRefresh={() => loadContentData(token)}
+          onToggleSelect={toggleContentSelect}
+          onToggleSelectAll={toggleContentSelectAll}
+          onDelete={handleDeleteContent}
+          onEdit={setEditingContent}
+          onSave={handleSaveContent}
+          onCancelEdit={() => {
+            setEditingContent(null);
+            setShowAddForm(false);
+          }}
+          onShowAddForm={() => setShowAddForm(true)}
+          sort={contentSort}
+          onSort={toggleContentSort}
+        />
+      )}
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// CONTENT TABLE & EDITOR (kept as-is from your code)
+// ──────────────────────────────────────────────────────────────────────
+
 function ContentTable({
   items,
   loading,
@@ -1109,9 +1007,7 @@ function ContentTable({
         </div>
       </div>
 
-      {showAddForm && (
-        <ContentEditor item={null} onSave={onSave} onCancel={onCancelEdit} />
-      )}
+      {showAddForm && <ContentEditor item={null} onSave={onSave} onCancel={onCancelEdit} />}
 
       {loading ? (
         <div className="p-8 text-center text-slate-500">Loading content...</div>
@@ -1176,7 +1072,6 @@ function ContentTable({
               ))}
             </tbody>
           </table>
-
           <div className="px-6 py-3 text-xs text-slate-500">
             Tip: click headers to sort (click again to reverse).
           </div>
@@ -1190,7 +1085,6 @@ function ContentTable({
   );
 }
 
-// ── Content Editor Modal (unchanged) ─────────────────────────────────
 function ContentEditor({
   item,
   onSave,
@@ -1246,7 +1140,6 @@ function ContentEditor({
               disabled={!!item}
             />
           </div>
-
           <div>
             <label className="block text-sm font-medium mb-1">Type:</label>
             <select
@@ -1261,7 +1154,6 @@ function ContentEditor({
               <option value="footer">Footer</option>
             </select>
           </div>
-
           <div>
             <label className="block text-sm font-medium mb-1">Text:</label>
             <textarea
@@ -1271,7 +1163,6 @@ function ContentEditor({
               required
             />
           </div>
-
           <div className="flex gap-3 mt-6">
             <button
               type="submit"
