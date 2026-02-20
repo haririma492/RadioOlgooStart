@@ -1,8 +1,12 @@
 // app/api/youtube/live/route.ts
 import { NextResponse } from "next/server";
+
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 type FoundBy = "live_redirect" | "live_html_signals" | "streams_html_signals" | "none";
+
 type Result = {
   handle: string;
   isLive: boolean;
@@ -14,6 +18,16 @@ type Result = {
   debug?: any;
 };
 
+type CandidateName = "live" | "streams";
+
+type CandidateCheck = {
+  isLive: boolean;
+  videoId?: string;
+  watchUrl?: string;
+  foundBy?: FoundBy;
+  debug?: any;
+};
+
 function normalizeHandle(h: string) {
   return (h || "").trim().replace(/^@/, "");
 }
@@ -21,9 +35,14 @@ function normalizeHandle(h: string) {
 function extractHandleFromUrlOrHandle(input: string): string | null {
   const s = (input || "").trim();
   if (!s) return null;
+
+  // plain handle (with or without @)
   if (/^@?[A-Za-z0-9._-]+$/.test(s)) return normalizeHandle(s);
-  const m = s.match(/youtube\.com\/@([A-Za-z0-9._-]+)/i);
-  if (m?.[1]) return normalizeHandle(m[1]);
+
+  // youtube.com/@handle
+  const m1 = s.match(/youtube\.com\/@([A-Za-z0-9._-]+)/i);
+  if (m1?.[1]) return normalizeHandle(m1[1]);
+
   return null;
 }
 
@@ -34,101 +53,160 @@ function isValidVideoId(v: string) {
 function extractVideoIdFromUrl(u: string): string | null {
   try {
     const url = new URL(u);
+
     const v = url.searchParams.get("v");
     if (v && isValidVideoId(v)) return v;
+
     if (/youtu\.be$/i.test(url.hostname)) {
       const id = url.pathname.replace("/", "");
       if (isValidVideoId(id)) return id;
     }
-    // Also catch rare /live/VIDEO_ID format
+
+    // Rare /live/VIDEO_ID
     const livePathMatch = url.pathname.match(/^\/live\/([a-zA-Z0-9_-]{11})/);
     if (livePathMatch?.[1]) return livePathMatch[1];
+
     return null;
   } catch {
     return null;
   }
 }
 
-async function fetchHtml(url: string) {
+async function fetchHtml(url: string, init: RequestInit = {}) {
   const res = await fetch(url, {
+    ...init,
     cache: "no-store",
     redirect: "follow",
     headers: {
+      // keep existing headers if caller provided them
+      ...(init.headers || {}),
       "User-Agent":
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122 Safari/537.36",
       Accept: "text/html,application/xhtml+xml",
       "Accept-Language": "en-US,en;q=0.9",
     },
   });
+
+  const finalUrl = res.url || url;
   const text = await res.text().catch(() => "");
-  return { ok: res.ok, status: res.status, finalUrl: res.url || url, text };
+
+  return {
+    ok: res.ok,
+    status: res.status,
+    finalUrl,
+    text,
+  };
 }
 
 function hasStrongLiveSignals(html: string): boolean {
-  const lower = html.toLowerCase();
-  // Strong positive signals (present → likely live)
+  const lower = (html || "").toLowerCase();
+
+  // If YouTube served a consent/interstitial/bot-like page, don't trust any "videoId" we find.
+  if (
+    lower.includes("consent.youtube.com") ||
+    lower.includes("before you continue") ||
+    lower.includes("our systems have detected unusual traffic") ||
+    lower.includes("sorry for the interruption")
+  ) {
+    return false;
+  }
+
+  // Strong positive signals
   if (
     lower.includes("watching now") ||
     lower.includes('"watching"') ||
     lower.includes("livechat") ||
     lower.includes("live-chat") ||
-    lower.includes('"isLive":true') ||
+    lower.includes('"islive":true') ||
     lower.match(/"[0-9,]+ watching"/) ||
-    lower.includes('"status":"LIVE"')
+    lower.includes('"status":"live"') ||
+    lower.includes('"is_live":true')
   ) {
     return true;
   }
-  // Negative signals that usually mean NOT live (past VOD/premiere)
+
+  // Strong negative signals
   if (
     lower.includes("streamed") ||
     lower.includes("ended") ||
     lower.includes("premiered") ||
     lower.includes("premiere") ||
-    lower.includes("upcoming")
+    lower.includes("upcoming") ||
+    lower.includes('"status":"upcoming"')
   ) {
     return false;
   }
-  // Neutral / weak → don't count as live
+
   return false;
 }
 
 function extractVideoIdFromHtml(html: string): string | null {
-  // Look for common places where video ID appears in live embed config
   const patterns = [
     /"videoId":"([a-zA-Z0-9_-]{11})"/,
     /"video_id":"([a-zA-Z0-9_-]{11})"/,
     /\/watch\?v=([a-zA-Z0-9_-]{11})/,
   ];
+
   for (const regex of patterns) {
-    const match = html.match(regex);
-    if (match?.[1]) return match[1];
+    const match = (html || "").match(regex);
+    if (match?.[1] && isValidVideoId(match[1])) return match[1];
   }
   return null;
 }
 
-async function checkCandidate(url: string, candidateName: "live" | "streams"): Promise<Partial<Result>> {
-  const res = await fetchHtml(url);
-  const debugEntry = {
+function looksLikeConsentOrInterstitial(finalUrl: string, html: string): boolean {
+  const u = (finalUrl || "").toLowerCase();
+  const h = (html || "").toLowerCase();
+
+  return (
+    u.includes("consent.youtube.com") ||
+    h.includes("before you continue") ||
+    h.includes("our systems have detected unusual traffic") ||
+    h.includes("sorry for the interruption")
+  );
+}
+
+async function checkCandidate(url: string, candidateName: CandidateName): Promise<CandidateCheck> {
+  const page = await fetchHtml(url);
+
+  const debugEntry: any = {
     url,
-    status: res.status,
-    finalUrl: res.finalUrl,
-    finalPath: new URL(res.finalUrl).pathname,
+    status: page.status,
+    finalUrl: page.finalUrl,
+    finalPath: (() => {
+      try {
+        return new URL(page.finalUrl).pathname;
+      } catch {
+        return "";
+      }
+    })(),
+    htmlLen: page.text?.length || 0,
   };
 
-  const redirectedVideoId = extractVideoIdFromUrl(res.finalUrl);
+  // If YouTube served consent/interstitial, do NOT parse video IDs (they can be random/trending).
+  if (looksLikeConsentOrInterstitial(page.finalUrl, page.text)) {
+    return {
+      isLive: false,
+      foundBy: "none",
+      debug: { ...debugEntry, blockedOrConsent: true },
+    };
+  }
+
+  // 1) Redirect-based live ID (often the most reliable)
+  const redirectedVideoId = extractVideoIdFromUrl(page.finalUrl);
   if (redirectedVideoId) {
     return {
       isLive: true,
       videoId: redirectedVideoId,
       watchUrl: `https://www.youtube.com/watch?v=${redirectedVideoId}`,
-      foundBy: "live_redirect" as FoundBy,
+      foundBy: "live_redirect",
       debug: { ...debugEntry, redirected: true },
     };
   }
 
-  // No redirect → check HTML signals
-  const hasLive = hasStrongLiveSignals(res.text);
-  const htmlVideoId = extractVideoIdFromHtml(res.text) || extractVideoIdFromUrl(res.finalUrl);
+  // 2) HTML signal-based detection + extraction
+  const hasLive = hasStrongLiveSignals(page.text);
+  const htmlVideoId = extractVideoIdFromHtml(page.text) || extractVideoIdFromUrl(page.finalUrl);
 
   if (hasLive && htmlVideoId) {
     return {
@@ -142,13 +220,8 @@ async function checkCandidate(url: string, candidateName: "live" | "streams"): P
 
   return {
     isLive: false,
-    foundBy: "none" as FoundBy,
-    debug: {
-      ...debugEntry,
-      htmlHasWatchingNow: res.text.toLowerCase().includes("watching now"),
-      htmlHasLiveChat: res.text.toLowerCase().includes("livechat"),
-      htmlHasEnded: res.text.toLowerCase().includes("ended") || res.text.toLowerCase().includes("streamed"),
-    },
+    foundBy: "none",
+    debug: { ...debugEntry, hasLiveSignals: hasLive, extractedVideoId: htmlVideoId || null },
   };
 }
 
@@ -158,7 +231,7 @@ async function resolveLive(handle: string): Promise<Result> {
   let candidatesChecked = 0;
 
   // Primary: /live
-  const liveUrl = `https://www.youtube.com/@${encodeURIComponent(h)}/live?hl=en&persist_app=1&app=desktop`;
+  const liveUrl = `https://www.youtube.com/@${encodeURIComponent(h)}/live?hl=en&gl=US&persist_app=1&app=desktop`;
   const liveResult = await checkCandidate(liveUrl, "live");
   candidatesChecked++;
   debug.live = liveResult.debug;
@@ -169,14 +242,14 @@ async function resolveLive(handle: string): Promise<Result> {
       isLive: true,
       videoId: liveResult.videoId,
       watchUrl: liveResult.watchUrl,
-      foundBy: liveResult.foundBy!,
+      foundBy: liveResult.foundBy || "none",
       candidatesChecked,
       debug,
     };
   }
 
-  // Secondary: /streams (fallback)
-  const streamsUrl = `https://www.youtube.com/@${encodeURIComponent(h)}/streams?hl=en&persist_app=1&app=desktop`;
+  // Secondary: /streams
+  const streamsUrl = `https://www.youtube.com/@${encodeURIComponent(h)}/streams?hl=en&gl=US&persist_app=1&app=desktop`;
   const streamsResult = await checkCandidate(streamsUrl, "streams");
   candidatesChecked++;
   debug.streams = streamsResult.debug;
@@ -187,13 +260,12 @@ async function resolveLive(handle: string): Promise<Result> {
       isLive: true,
       videoId: streamsResult.videoId,
       watchUrl: streamsResult.watchUrl,
-      foundBy: streamsResult.foundBy!,
+      foundBy: streamsResult.foundBy || "none",
       candidatesChecked,
       debug,
     };
   }
 
-  // Neither worked
   return {
     handle: h,
     isLive: false,
@@ -205,14 +277,18 @@ async function resolveLive(handle: string): Promise<Result> {
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
+
   const handlesParam = searchParams.get("handles") || "";
   const inputsParam = searchParams.get("inputs") || "";
+
   const rawList = (handlesParam ? handlesParam.split(",") : []).concat(
     inputsParam ? inputsParam.split(",") : []
   );
+
   const handles = rawList
     .map((x) => extractHandleFromUrlOrHandle(x))
     .filter((x): x is string => !!x);
+
   const unique = Array.from(new Set(handles));
   const results: Record<string, Result> = {};
 
