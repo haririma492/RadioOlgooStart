@@ -5,7 +5,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-type FoundBy = "live_redirect" | "live_html_signals" | "streams_html_signals" | "none";
+type FoundBy = "yt_api_live" | "yt_api_no_live" | "live_redirect" | "live_html_signals" | "streams_html_signals" | "none";
 type Result = {
   handle: string;
   isLive: boolean;
@@ -34,10 +34,8 @@ function extractHandleFromUrlOrHandle(input: string): string | null {
   const s = (input || "").trim();
   if (!s) return null;
 
-  // plain handle (with or without @)
   if (/^@?[A-Za-z0-9._-]+$/.test(s)) return normalizeHandle(s);
 
-  // youtube.com/@handle
   const m1 = s.match(/youtube\.com\/@([A-Za-z0-9._-]+)/i);
   if (m1?.[1]) return normalizeHandle(m1[1]);
 
@@ -60,7 +58,6 @@ function extractVideoIdFromUrl(u: string): string | null {
       if (isValidVideoId(id)) return id;
     }
 
-    // Rare /live/VIDEO_ID
     const livePathMatch = url.pathname.match(/^\/live\/([a-zA-Z0-9_-]{11})/);
     if (livePathMatch?.[1]) return livePathMatch[1];
 
@@ -109,25 +106,20 @@ function looksLikeConsentOrInterstitial(finalUrl: string, html: string): boolean
 
 /**
  * Extract ytInitialPlayerResponse JSON object from YouTube HTML.
- * This is far more reliable than regexing random "videoId" occurrences.
+ * Balanced-brace extraction (safe, no regex-dotall).
  */
 function extractPlayerResponse(html: string): any | null {
   if (!html) return null;
 
-  // Find either: ytInitialPlayerResponse = { ... }
-  // or: "ytInitialPlayerResponse": { ... }
   const keys = ["ytInitialPlayerResponse", '"ytInitialPlayerResponse"'];
 
   for (const key of keys) {
     const idx = html.indexOf(key);
     if (idx < 0) continue;
 
-    // Find the first '{' after the key
     const braceStart = html.indexOf("{", idx);
     if (braceStart < 0) continue;
 
-    // Extract a balanced JSON object by counting braces,
-    // being careful about strings and escapes.
     let i = braceStart;
     let depth = 0;
     let inString = false;
@@ -167,10 +159,7 @@ function extractPlayerResponse(html: string): any | null {
 
   return null;
 }
-/**
- * Decide if the page is LIVE *now* using structured player response.
- * We try to be strict to avoid false positives.
- */
+
 function isLiveNowFromPlayerResponse(pr: any): { isLive: boolean; videoId?: string; reason?: string } {
   if (!pr) return { isLive: false, reason: "no_player_response" };
 
@@ -178,19 +167,10 @@ function isLiveNowFromPlayerResponse(pr: any): { isLive: boolean; videoId?: stri
   if (!videoId || !isValidVideoId(videoId)) return { isLive: false, reason: "no_valid_videoId" };
 
   const isLiveContent = pr.videoDetails?.isLiveContent === true;
-
-  // Most reliable: explicit isLiveNow true
-  const isLiveNow =
-    pr.microformat?.playerMicroformatRenderer?.liveBroadcastDetails?.isLiveNow === true;
-
-  // Additional hint: liveStreamingDetails exists for live content, but can also exist for scheduled streams.
+  const isLiveNow = pr.microformat?.playerMicroformatRenderer?.liveBroadcastDetails?.isLiveNow === true;
   const hasLiveStreamingDetails = !!pr.liveStreamingDetails;
 
-  // Strict rule:
-  // - must have videoId
-  // - AND (isLiveNow true OR (isLiveContent true AND hasLiveStreamingDetails))
-  const isLive =
-    isLiveNow || (isLiveContent && hasLiveStreamingDetails);
+  const isLive = isLiveNow || (isLiveContent && hasLiveStreamingDetails);
 
   return { isLive, videoId: isLive ? videoId : undefined, reason: isLive ? "live" : "not_live" };
 }
@@ -212,7 +192,6 @@ async function checkCandidate(url: string, candidateName: CandidateName): Promis
     htmlLen: page.text?.length || 0,
   };
 
-  // If YouTube served consent/interstitial, do NOT parse anything.
   if (looksLikeConsentOrInterstitial(page.finalUrl, page.text)) {
     return {
       isLive: false,
@@ -233,21 +212,16 @@ async function checkCandidate(url: string, candidateName: CandidateName): Promis
     };
   }
 
-  // 2) Structured player response (safe)
+  // 2) Structured player response (safe-ish; works on localhost, may fail on Vercel)
   const pr = extractPlayerResponse(page.text);
-  const prVideoId = pr?.videoDetails?.videoId || null;
-const prIsLiveContent = pr?.videoDetails?.isLiveContent ?? null;
-const prIsLiveNow =
-  pr?.microformat?.playerMicroformatRenderer?.liveBroadcastDetails?.isLiveNow ?? null;
-const prHasLiveStreamingDetails = !!pr?.liveStreamingDetails;
+  debugEntry.playerResponse = {
+    extracted: !!pr,
+    videoId: pr?.videoDetails?.videoId ?? null,
+    isLiveContent: pr?.videoDetails?.isLiveContent ?? null,
+    isLiveNow: pr?.microformat?.playerMicroformatRenderer?.liveBroadcastDetails?.isLiveNow ?? null,
+    hasLiveStreamingDetails: !!pr?.liveStreamingDetails,
+  };
 
-debugEntry.playerResponse = {
-  extracted: !!pr,
-  videoId: prVideoId,
-  isLiveContent: prIsLiveContent,
-  isLiveNow: prIsLiveNow,
-  hasLiveStreamingDetails: prHasLiveStreamingDetails,
-};
   const live = isLiveNowFromPlayerResponse(pr);
 
   if (live.isLive && live.videoId) {
@@ -267,12 +241,11 @@ debugEntry.playerResponse = {
   };
 }
 
-async function resolveLive(handle: string): Promise<Result> {
+async function resolveLiveHtmlFallback(handle: string): Promise<Result> {
   const h = normalizeHandle(handle);
-  const debug: any = { handle: h };
+  const debug: any = { handle: h, mode: "html_fallback" };
   let candidatesChecked = 0;
 
-  // Primary: /live
   const liveUrl = `https://www.youtube.com/@${encodeURIComponent(h)}/live?hl=en&gl=US&persist_app=1&app=desktop`;
   const liveResult = await checkCandidate(liveUrl, "live");
   candidatesChecked++;
@@ -284,13 +257,12 @@ async function resolveLive(handle: string): Promise<Result> {
       isLive: true,
       videoId: liveResult.videoId,
       watchUrl: liveResult.watchUrl,
-      foundBy: liveResult.foundBy || "none",
+      foundBy: (liveResult.foundBy as FoundBy) || "none",
       candidatesChecked,
       debug,
     };
   }
 
-  // Secondary: /streams
   const streamsUrl = `https://www.youtube.com/@${encodeURIComponent(h)}/streams?hl=en&gl=US&persist_app=1&app=desktop`;
   const streamsResult = await checkCandidate(streamsUrl, "streams");
   candidatesChecked++;
@@ -302,7 +274,7 @@ async function resolveLive(handle: string): Promise<Result> {
       isLive: true,
       videoId: streamsResult.videoId,
       watchUrl: streamsResult.watchUrl,
-      foundBy: streamsResult.foundBy || "none",
+      foundBy: (streamsResult.foundBy as FoundBy) || "none",
       candidatesChecked,
       debug,
     };
@@ -313,6 +285,117 @@ async function resolveLive(handle: string): Promise<Result> {
     isLive: false,
     foundBy: "none",
     candidatesChecked,
+    debug,
+  };
+}
+
+/** ───────────── API-only live check (Vercel-safe) ───────────── */
+
+type ApiLiveItem = {
+  videoId: string;
+  channelId: string;
+};
+
+async function ytApiJson(url: string) {
+  const res = await fetch(url, { cache: "no-store" });
+  const text = await res.text().catch(() => "");
+  let json: any = null;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    json = null;
+  }
+  if (!res.ok) {
+    const msg = json?.error?.message || `YouTube API HTTP ${res.status}`;
+    throw new Error(msg);
+  }
+  return json;
+}
+
+/**
+ * Deterministic live check for a channelId.
+ * Cost: search.list ~= 100 units per call.
+ */
+async function isChannelLiveById(channelId: string, apiKey: string): Promise<ApiLiveItem | null> {
+  const url =
+    `https://www.googleapis.com/youtube/v3/search?part=snippet&channelId=${encodeURIComponent(
+      channelId
+    )}&eventType=live&type=video&maxResults=1&key=${encodeURIComponent(apiKey)}`;
+
+  const json = await ytApiJson(url);
+  const item = json?.items?.[0];
+  const videoId = item?.id?.videoId;
+
+  if (typeof videoId === "string" && isValidVideoId(videoId)) {
+    return { videoId, channelId };
+  }
+  return null;
+}
+
+/**
+ * Resolve channelId from handle using YouTube API search (best-effort).
+ * For your 5 critical channels, you should store channelIds in your list/config later.
+ */
+async function resolveChannelIdFromHandle(handle: string, apiKey: string): Promise<string | null> {
+  const h = normalizeHandle(handle);
+
+  // ✅ Deterministic handle -> channelId
+  // Docs: channels.list supports `forHandle` (value can include or omit '@')
+  const url =
+    `https://www.googleapis.com/youtube/v3/channels?part=id&forHandle=${encodeURIComponent(
+      "@" + h
+    )}&key=${encodeURIComponent(apiKey)}`;
+
+  const json = await ytApiJson(url);
+  const channelId = json?.items?.[0]?.id;
+
+  if (typeof channelId === "string" && channelId.startsWith("UC")) return channelId;
+  return null;
+}
+
+/**
+ * API-first resolve:
+ * - If you provide channelIds as inputs, it will be fully deterministic.
+ * - If only handles are provided, channelId resolution is best-effort (still better than HTML on Vercel).
+ */
+async function resolveLiveApi(handle: string, apiKey: string): Promise<Result> {
+  const h = normalizeHandle(handle);
+  const debug: any = { handle: h, mode: "yt_api", hasKey: true };
+
+  const channelId = await resolveChannelIdFromHandle(h, apiKey);
+  debug.channelId = channelId;
+
+  if (!channelId) {
+    return {
+      handle: h,
+      isLive: false,
+      foundBy: "yt_api_no_live",
+      candidatesChecked: 0,
+      debug,
+      error: "channelId_not_resolved",
+    };
+  }
+
+  const live = await isChannelLiveById(channelId, apiKey);
+  debug.live = live ? { videoId: live.videoId } : null;
+
+  if (live?.videoId) {
+    return {
+      handle: h,
+      isLive: true,
+      videoId: live.videoId,
+      watchUrl: `https://www.youtube.com/watch?v=${live.videoId}`,
+      foundBy: "yt_api_live",
+      candidatesChecked: 0,
+      debug,
+    };
+  }
+
+  return {
+    handle: h,
+    isLive: false,
+    foundBy: "yt_api_no_live",
+    candidatesChecked: 0,
     debug,
   };
 }
@@ -334,9 +417,16 @@ export async function GET(req: Request) {
   const unique = Array.from(new Set(handles));
   const results: Record<string, Result> = {};
 
+  const apiKey = process.env.YOUTUBE_API_KEY || "";
+  const apiEnabled = apiKey.length > 0;
+
   for (const h of unique) {
     try {
-      const r = await resolveLive(h);
+      // Vercel-safe: API first if key exists
+      const r = apiEnabled ? await resolveLiveApi(h, apiKey) : await resolveLiveHtmlFallback(h);
+
+      // If API fails to resolve, fallback to HTML ONLY if no key (keep cloud clean).
+      // (We intentionally do NOT scrape HTML on Vercel when API key exists.)
       results[r.handle] = r;
     } catch (e: any) {
       const hh = normalizeHandle(h);
@@ -346,12 +436,13 @@ export async function GET(req: Request) {
         foundBy: "none",
         candidatesChecked: 0,
         error: e?.message || "unknown_error",
+        debug: { apiEnabled },
       };
     }
   }
 
   return NextResponse.json(
-    { ok: true, results },
+    { ok: true, results, apiEnabled },
     { status: 200, headers: { "Cache-Control": "no-store, max-age=0" } }
   );
 }

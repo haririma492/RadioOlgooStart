@@ -11,6 +11,10 @@ import Footer from "@/components/Footer/Footer";
 import FloatingVideoPlayer from "@/components/FloatingVideoPlayer/FloatingVideoPlayer";
 import { PlaybackProvider, usePlayback } from "@/context/PlaybackContext";
 
+import LiveSection from "@/components/LiveSection/LiveSection";
+import type { LiveItem } from "@/lib/youtubeLive";
+import { youtubeWatchUrl } from "@/lib/youtubeLive";
+
 type PlayingVideo = {
   url: string;
   person?: string;
@@ -81,19 +85,6 @@ function extractVideoIdFromYouTubeUrl(url: string): string | null {
   } catch {
     return null;
   }
-}
-
-function YouTubeEmbed({ videoId }: { videoId: string }) {
-  const src = `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&playsinline=1&rel=0`;
-  return (
-    <iframe
-      className="w-full h-full rounded-xl"
-      src={src}
-      title="Live video"
-      allow="autoplay; encrypted-media; picture-in-picture"
-      allowFullScreen
-    />
-  );
 }
 
 function HomePageContent() {
@@ -216,12 +207,12 @@ function HomePageContent() {
 
       setYtStatus(results);
     } catch {
-      // Hold last known for 90s
+      // Hold last known for 10 minutes (since we poll less frequently now)
       const now = Date.now();
       const held: Record<string, YTLiveResult> = {};
       for (const h of handles) {
         const heldEntry = lastGoodRef.current[h];
-        if (heldEntry && now - heldEntry.at < 90_000) {
+        if (heldEntry && now - heldEntry.at < 10 * 60_000) {
           held[h] = heldEntry.data;
         } else {
           held[h] = { handle: h, isLive: false, error: "request_failed" };
@@ -247,7 +238,10 @@ function HomePageContent() {
 
   useEffect(() => {
     pollYouTubeLive(ytHandles);
-    const t = setInterval(() => pollYouTubeLive(ytHandles), 20_000);
+
+    // IMPORTANT: was 20s; now we poll every 5 minutes (you dropped 30-sec idea).
+    const t = setInterval(() => pollYouTubeLive(ytHandles), 5 * 60_000);
+
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ytHandles.join(",")]);
@@ -287,7 +281,10 @@ function HomePageContent() {
 
   useEffect(() => {
     pollExternalStatus(liveRows);
-    const t = setInterval(() => pollExternalStatus(liveRows), 30_000);
+
+    // external can stay fairly frequent; it’s your backend, not YT quota
+    const t = setInterval(() => pollExternalStatus(liveRows), 60_000);
+
     return () => clearInterval(t);
   }, [liveRows]);
 
@@ -328,6 +325,23 @@ function HomePageContent() {
 
     return onlyLive.sort((a, b) => a.title.localeCompare(b.title));
   }, [liveRows, ytStatus, externalStatus]);
+
+  // ---- Build LiveSection items (YouTube only)
+  const liveYouTubeItems: LiveItem[] = useMemo(() => {
+    return liveCards
+      .filter((c) => c.isYouTube && !!c.videoId)
+      .map((c) => ({
+        // handle is best label; fall back to title
+        handle: (c.handle || c.title || c.PK).toString(),
+        videoId: c.videoId!,
+        watchUrl: youtubeWatchUrl(c.videoId!),
+      }));
+  }, [liveCards]);
+
+  // ---- External live cards (still shown, but they don’t “stream” inline)
+  const liveExternalCards = useMemo(() => {
+    return liveCards.filter((c) => !c.isYouTube);
+  }, [liveCards]);
 
   // external mini window opener
   const openMiniWindow = (url: string) => {
@@ -389,57 +403,54 @@ function HomePageContent() {
               <div className="text-white/70">No sources are live right now.</div>
             )}
 
-            <div className="flex gap-4 overflow-x-auto pb-2">
-              {liveCards.map((c) => (
-                <div
-                  key={c.PK}
-                  className="shrink-0 rounded-2xl border bg-black/45 border-white/15"
-                  style={{ width: "340px" }}
-                >
-                  <div className="p-3 flex items-center justify-between">
-                    <div className="font-semibold truncate pr-2">{c.title}</div>
+            {/* ✅ YouTube LIVE wall/focus logic (max 5 wall streams) */}
+            {!liveLoading && !liveError && liveYouTubeItems.length > 0 && (
+              <div className="mb-6">
+                <LiveSection liveItems={liveYouTubeItems} maxWall={5} title="LIVE" />
+              </div>
+            )}
 
-                    <span className="text-xs px-2 py-1 rounded-full border border-red-400/40 bg-red-500/20 text-red-100">
-                      LIVE
-                    </span>
-                  </div>
+            {/* External LIVE sources (not embedded) */}
+            {!liveLoading && !liveError && liveExternalCards.length > 0 && (
+              <div className="space-y-3">
+                <div className="text-sm font-semibold opacity-90">External LIVE</div>
+                <div className="flex gap-4 overflow-x-auto pb-2">
+                  {liveExternalCards.map((c) => (
+                    <div
+                      key={c.PK}
+                      className="shrink-0 rounded-2xl border bg-black/45 border-white/15"
+                      style={{ width: "340px" }}
+                    >
+                      <div className="p-3 flex items-center justify-between">
+                        <div className="font-semibold truncate pr-2">{c.title}</div>
 
-                  {/* Debug URL line (helps you verify active URL per frame) */}
-                  <div className="px-3 pb-2 text-[11px] text-white/60 break-all">
-                    {c.url}
-                  </div>
+                        <span className="text-xs px-2 py-1 rounded-full border border-red-400/40 bg-red-500/20 text-red-100">
+                          LIVE
+                        </span>
+                      </div>
 
-                  <div className="px-3 pb-3">
-                    <div className="rounded-xl overflow-hidden bg-black/40 border border-white/10 h-[190px]">
-                      {c.isYouTube ? (
-                        c.videoId ? (
-                          <YouTubeEmbed videoId={c.videoId} />
-                        ) : (
-                          <div className="h-full flex flex-col items-center justify-center text-white/70 text-sm">
-                            <div className="font-semibold mb-1">Unavailable</div>
-                            <div className="text-xs text-white/50">
-                              Live detected but no videoId found.
+                      <div className="px-3 pb-2 text-[11px] text-white/60 break-all">{c.url}</div>
+
+                      <div className="px-3 pb-3">
+                        <div className="rounded-xl overflow-hidden bg-black/40 border border-white/10 h-[190px]">
+                          <div className="h-full flex flex-col items-center justify-center text-white/80">
+                            <div className="text-sm mb-3 text-center px-6">
+                              External source opens in mini window (cannot be embedded).
                             </div>
+                            <button
+                              onClick={() => openMiniWindow(c.url)}
+                              className="px-4 py-2 rounded-lg bg-white/15 hover:bg-white/20 border border-white/15"
+                            >
+                              ▶ OPEN LIVE
+                            </button>
                           </div>
-                        )
-                      ) : (
-                        <div className="h-full flex flex-col items-center justify-center text-white/80">
-                          <div className="text-sm mb-3 text-center px-6">
-                            External source opens in mini window (cannot be embedded).
-                          </div>
-                          <button
-                            onClick={() => openMiniWindow(c.url)}
-                            className="px-4 py-2 rounded-lg bg-white/15 hover:bg-white/20 border border-white/15"
-                          >
-                            ▶ OPEN LIVE
-                          </button>
                         </div>
-                      )}
+                      </div>
                     </div>
-                  </div>
+                  ))}
                 </div>
-              ))}
-            </div>
+              </div>
+            )}
           </section>
 
           {/* Existing content */}
