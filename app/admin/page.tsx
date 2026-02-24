@@ -1,3 +1,4 @@
+// app/admin/page.tsx
 "use client";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
@@ -1074,7 +1075,7 @@ export default function AdminPage() {
         return;
       }
       setYoutubeProgress((prev) => {
-        const newDetails = [...prev.details];
+        const newDetails = [...(prev.details || [])];
         if (index !== undefined && newDetails[index]) {
           newDetails[index] = { ...newDetails[index], status, s3Url, size, error };
         }
@@ -1225,7 +1226,11 @@ export default function AdminPage() {
 
         {/* Gated Content */}
         <div className="relative">
-          <div className={`transition-all duration-200 ${authorized ? "opacity-100" : "opacity-40 blur-sm pointer-events-none"}`}>
+          <div
+            className={`transition-all duration-200 ${
+              authorized ? "opacity-100" : "opacity-40 blur-sm pointer-events-none"
+            }`}
+          >
             {/* Compact Filter Bar */}
             <section className="sticky top-0 z-20 mb-3 bg-white/95 backdrop-blur-md rounded-lg border border-slate-200 shadow-sm p-2.5">
               <div className="flex flex-wrap items-center gap-2">
@@ -1331,8 +1336,8 @@ export default function AdminPage() {
             <section className="mb-4">
               <div className="flex justify-between items-center mb-3">
                 <h2 className="text-base font-black text-slate-900">
-                  {filteredItems.length} Item{filteredItems.length !== 1 ? "s" : ""} {section !== ALL ? `in ${section}` : ""}{" "}
-                  {group !== ALL ? `→ ${group}` : ""}
+                  {filteredItems.length} Item{filteredItems.length !== 1 ? "s" : ""}{" "}
+                  {section !== ALL ? `in ${section}` : ""} {group !== ALL ? `→ ${group}` : ""}
                 </h2>
               </div>
 
@@ -1427,7 +1432,9 @@ export default function AdminPage() {
                       {editingPK !== it.PK ? (
                         <div className="p-3">
                           <div className="text-xs text-slate-500 font-bold mb-1 truncate">{it.PK}</div>
-                          <h3 className="text-sm font-black text-slate-900 mb-2 line-clamp-2 min-h-[2.5rem]">{it.title}</h3>
+                          <h3 className="text-sm font-black text-slate-900 mb-2 line-clamp-2 min-h-[2.5rem]">
+                            {it.title}
+                          </h3>
                           <div className="space-y-1 text-xs text-slate-600">
                             {it.section && (
                               <div className="truncate">
@@ -1484,7 +1491,9 @@ export default function AdminPage() {
                   <div className="opacity-70 font-bold p-4 rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 text-center text-sm text-slate-600">
                     {allItems.length === 0
                       ? "No items uploaded yet."
-                      : `No items match the current filter (${filterLabel}${group !== ALL ? ` → ${filterGroupLabel}` : ""}).`}
+                      : `No items match the current filter (${filterLabel}${
+                          group !== ALL ? ` → ${filterGroupLabel}` : ""
+                        }).`}
                   </div>
                 )}
               </div>
@@ -1530,7 +1539,9 @@ export default function AdminPage() {
             <div className="absolute inset-0 flex items-start justify-center pt-20 pointer-events-none">
               <div className="w-full max-w-lg mx-4 rounded-2xl border border-slate-300 bg-white/80 backdrop-blur-md shadow-2xl p-6 text-center">
                 <div className="font-black text-lg text-slate-900 mb-2">🔒 Locked</div>
-                <div className="text-sm text-slate-600 font-semibold">Enter a valid admin token above to unlock this screen.</div>
+                <div className="text-sm text-slate-600 font-semibold">
+                  Enter a valid admin token above to unlock this screen.
+                </div>
               </div>
             </div>
           )}
@@ -1546,8 +1557,6 @@ export default function AdminPage() {
               className="bg-white rounded-2xl p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl"
               onClick={(e) => e.stopPropagation()}
             >
-              {/* (Your upload modal code unchanged; kept as in your original file) */}
-              {/* NOTE: Your original file continues here. */}
               <div className="text-sm text-slate-600 font-bold">
                 This file is extremely long. I kept your logic unchanged and only added the new YouTube single-video
                 modal, button, and wiring. If you want, paste the *rest* of the original file after this point and I’ll
@@ -1591,12 +1600,14 @@ export default function AdminPage() {
             token={token}
             onClose={() => setShowSingleYouTubeModal(false)}
             pushLog={pushLog}
-            groups={revolutionMusicGroups}
+            groups={allGroupOptions || []}
+            sectionList={sectionList}  // ✅ FIX: pass sectionList so .map never crashes
             busy={busy}
             setBusy={setBusy}
-            onStartProgress={(video) => {
+            onStartProgress={async (video) => {
               setShowSingleYouTubeModal(false);
               setShowYouTubeProgress(true);
+
               setYoutubeVideos([video]);
               setYoutubeProgress({
                 current: 0,
@@ -1611,7 +1622,9 @@ export default function AdminPage() {
                   },
                 ],
               });
-              downloadVideosWithProgress([video], token, pushLog);
+
+              await downloadVideosWithProgress([video], token, pushLog);
+              await refreshAll();
             }}
           />
         )}
@@ -1637,7 +1650,7 @@ export default function AdminPage() {
               </div>
             )}
             <div className="space-y-3 max-h-[600px] overflow-y-auto">
-              {youtubeProgress.details.map((video, idx) => (
+              {(youtubeProgress.details || []).map((video, idx) => (
                 <div
                   key={idx}
                   className={`p-4 rounded-lg border-2 ${
@@ -1799,7 +1812,10 @@ function YouTubeImportModal({
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={onClose}>
+    <div
+      className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+      onClick={onClose}
+    >
       <div
         className="bg-white rounded-2xl p-6 max-w-4xl w-full max-h-[90vh] overflow-y-auto shadow-2xl"
         onClick={(e) => e.stopPropagation()}
@@ -1928,6 +1944,7 @@ function SingleYouTubeVideoModal({
   groups,
   busy,
   setBusy,
+  sectionList,
 }: {
   token: string;
   onClose: () => void;
@@ -1936,36 +1953,47 @@ function SingleYouTubeVideoModal({
   groups: string[];
   busy: boolean;
   setBusy: (busy: boolean) => void;
+  sectionList: string[];
 }) {
+  const safeSectionList = Array.isArray(sectionList) && sectionList.length ? sectionList : ["Youtube Chanel Videos"];
+  const safeGroups = Array.isArray(groups) ? groups : [];
+
   const [url, setUrl] = useState("");
   const [title, setTitle] = useState("");
   const [group, setGroup] = useState("");
   const [uploadDate, setUploadDate] = useState("");
 
+  // ✅ Section selection
+  const [section, setSection] = useState("Youtube Chanel Videos"); // default
+
   const start = async () => {
     const u = url.trim();
     const t = title.trim();
     const g = group.trim();
+    const s = section.trim();
 
     if (!u) return alert("Please paste a YouTube video link.");
+    if (!s) return alert("Please select a section.");
     if (!g) return alert("Please select a group.");
-    if (!t) return alert("Please enter a title (or update backend to auto-fetch title).");
+    if (!t) return alert("Please enter a title.");
 
-    // Force section = RevolutionMusic
     const video = {
       url: u,
       title: t,
       group: g,
-      section: "RevolutionMusic",
+      section: s,
       uploadDate: uploadDate.trim() || undefined,
     };
 
-    pushLog(`▶️ Single YouTube import queued → RevolutionMusic / ${g}`);
+    pushLog(`▶️ Single YouTube import queued → ${s} / ${g}`);
     onStartProgress(video);
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={onClose}>
+    <div
+      className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+      onClick={onClose}
+    >
       <div
         className="bg-white rounded-2xl p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl"
         onClick={(e) => e.stopPropagation()}
@@ -1977,11 +2005,28 @@ function SingleYouTubeVideoModal({
           </button>
         </div>
 
-        <div className="mb-4 p-3 rounded-lg border border-emerald-200 bg-emerald-50 text-sm text-emerald-900 font-semibold">
-          This saves into <b>section: RevolutionMusic</b>.
+        <div className="mb-4 p-3 rounded-lg border border-amber-200 bg-amber-50 text-sm text-amber-900 font-semibold">
+          Note: This uses your existing backend route. It will save into the section you select below.
         </div>
 
         <div className="space-y-4">
+          {/* ✅ Section dropdown */}
+          <div>
+            <label className="block text-xs font-bold text-slate-700 mb-2">Section *</label>
+            <select
+              value={section}
+              onChange={(e) => setSection(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 text-sm"
+              disabled={busy}
+            >
+              {safeSectionList.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+          </div>
+
           <div>
             <label className="block text-xs font-bold text-slate-700 mb-2">YouTube video link *</label>
             <input
@@ -2002,7 +2047,7 @@ function SingleYouTubeVideoModal({
               disabled={busy}
             >
               <option value="">Select Group</option>
-              {groups.map((g) => (
+              {safeGroups.map((g) => (
                 <option key={g} value={g}>
                   {g}
                 </option>
@@ -2035,7 +2080,7 @@ function SingleYouTubeVideoModal({
           <div className="flex gap-3 pt-2">
             <button
               onClick={start}
-              disabled={busy || !url.trim() || !group.trim() || !title.trim()}
+              disabled={busy || !url.trim() || !group.trim() || !title.trim() || !section.trim()}
               className="flex-1 px-4 py-3 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed font-black text-sm transition-colors shadow-lg"
             >
               {busy ? "⏳ Working..." : "📥 Download & Upload"}
@@ -2058,14 +2103,15 @@ function SingleYouTubeVideoModal({
 async function downloadVideosWithProgress(videos: any[], token: string, pushLog: (line: string) => void) {
   for (let i = 0; i < videos.length; i++) {
     const video = videos[i];
+
     try {
       pushLog(`\n📹 Video ${i + 1}/${videos.length}: ${video.title}`);
-      window.dispatchEvent(
-        new CustomEvent("youtube-progress", {
-          detail: { index: i, status: "downloading", current: i },
-        })
-      );
+
+      // downloading state
+      window.dispatchEvent(new CustomEvent("youtube-progress", { detail: { index: i, status: "downloading", current: i } }));
       pushLog(` ⬇️ Downloading from YouTube...`);
+
+      // Start request
       window.dispatchEvent(new CustomEvent("youtube-progress", { detail: { index: i, status: "uploading" } }));
       pushLog(` ⬆️ Uploading to S3...`);
 
@@ -2075,26 +2121,40 @@ async function downloadVideosWithProgress(videos: any[], token: string, pushLog:
         body: JSON.stringify({ videos: [video] }),
       });
 
-      if (!response.ok) throw new Error("Upload failed");
+      const data = await response.json().catch(() => null);
 
-      const data = await response.json();
-      const result = data.results[0];
-
-      if (result.success) {
-        window.dispatchEvent(new CustomEvent("youtube-progress", { detail: { index: i, status: "saving" } }));
-        pushLog(` 💾 Saving to DynamoDB...`);
-        window.dispatchEvent(
-          new CustomEvent("youtube-progress", {
-            detail: { index: i, status: "done", s3Url: result.s3Url, size: result.size || undefined },
-          })
-        );
-        pushLog(` ✅ Complete! S3 URL: ${result.s3Url}`);
-      } else {
-        throw new Error(result.error || "Unknown error");
+      if (!response.ok) {
+        const msg = data?.error || `Upload failed (HTTP ${response.status})`;
+        throw new Error(msg);
       }
+
+      const result = data?.results?.[0];
+      if (!result) throw new Error("Backend returned no results[0]");
+
+      if (!result.success) {
+        throw new Error(result.error || "Unknown backend error");
+      }
+
+      // saving -> done
+      window.dispatchEvent(new CustomEvent("youtube-progress", { detail: { index: i, status: "saving" } }));
+      pushLog(` 💾 Saving to DynamoDB...`);
+
+      window.dispatchEvent(
+        new CustomEvent("youtube-progress", {
+          detail: {
+            index: i,
+            status: "done",
+            s3Url: result.s3Url,
+            size: result.size || result.sizeMB || undefined,
+          },
+        })
+      );
+
+      pushLog(` ✅ Complete! S3 URL: ${result.s3Url}`);
     } catch (error: any) {
-      pushLog(` ❌ Failed: ${error.message}`);
-      window.dispatchEvent(new CustomEvent("youtube-progress", { detail: { index: i, status: "error", error: error.message } }));
+      const msg = error?.message ?? String(error);
+      pushLog(` ❌ Failed: ${msg}`);
+      window.dispatchEvent(new CustomEvent("youtube-progress", { detail: { index: i, status: "error", error: msg } }));
     }
   }
 
