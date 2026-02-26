@@ -611,6 +611,7 @@ export default function AdminPage() {
     try {
       const out = await apiJson(`/api/admin/presign-get?key=${encodeURIComponent(key)}`, {
         method: "GET",
+        headers: { "x-admin-token": token },
         cache: "no-store",
       });
       if (!out.ok || !out.data?.ok || !out.data?.url) {
