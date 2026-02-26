@@ -137,12 +137,16 @@ export default function AdminPage() {
   const [uploadNewGroup, setUploadNewGroup] = useState<string>("");
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const uploadPersonDropdownRef = useRef<HTMLDivElement | null>(null);
+  const [uploadPersonDropdownOpen, setUploadPersonDropdownOpen] = useState(false);
   const [editingPK, setEditingPK] = useState<string>("");
   const [editingFields, setEditingFields] = useState<Partial<MediaItem>>({});
   const [editNewSection, setEditNewSection] = useState<string>("");
   const [editNewGroup, setEditNewGroup] = useState<string>("");
   const [editFile, setEditFile] = useState<File | null>(null);
   const editFileInputRef = useRef<HTMLInputElement | null>(null);
+  const editPersonDropdownRef = useRef<HTMLDivElement | null>(null);
+  const [editPersonDropdownOpen, setEditPersonDropdownOpen] = useState(false);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [showDeleteSectionModal, setShowDeleteSectionModal] = useState(false);
   const [showDeleteGroupModal, setShowDeleteGroupModal] = useState(false);
@@ -239,6 +243,29 @@ export default function AdminPage() {
   useEffect(() => {
     setGroup(ALL);
   }, [section]);
+
+  // Close person dropdown when clicking outside
+  useEffect(() => {
+    if (!uploadPersonDropdownOpen) return;
+    const handleClick = (e: MouseEvent) => {
+      if (uploadPersonDropdownRef.current && !uploadPersonDropdownRef.current.contains(e.target as Node)) {
+        setUploadPersonDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [uploadPersonDropdownOpen]);
+
+  useEffect(() => {
+    if (!editPersonDropdownOpen) return;
+    const handleClick = (e: MouseEvent) => {
+      if (editPersonDropdownRef.current && !editPersonDropdownRef.current.contains(e.target as Node)) {
+        setEditPersonDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [editPersonDropdownOpen]);
 
   function pushLog(line: string) {
     setLog((prev) => [`${nowTime()} ${line}`, ...prev].slice(0, 400));
@@ -577,6 +604,7 @@ export default function AdminPage() {
     setUploadDescription("");
     setUploadNewSection("");
     setUploadNewGroup("");
+    setUploadPersonDropdownOpen(false);
     if (fileInputRef.current) fileInputRef.current.value = "";
     setShowUploadModal(false);
   }
@@ -881,6 +909,7 @@ export default function AdminPage() {
     setEditNewSection("");
     setEditNewGroup("");
     setEditFile(null);
+    setEditPersonDropdownOpen(false);
     if (editFileInputRef.current) editFileInputRef.current.value = "";
   }
 
@@ -1479,9 +1508,164 @@ export default function AdminPage() {
                           </div>
                         </div>
                       ) : (
-                        <div className="p-4 border-t border-slate-200 bg-slate-50">
-                          {/* (Editing UI unchanged; kept as in your original file) */}
-                          {/* NOTE: Your original file continues here. */}
+                        <div className="p-4 border-t border-slate-200 bg-slate-50 space-y-4">
+                          <div>
+                            <label className="block text-xs font-bold text-slate-700 mb-1">Title *</label>
+                            <input
+                              type="text"
+                              value={editingFields.title ?? ""}
+                              onChange={(e) => setEditingFields((prev) => ({ ...prev, title: e.target.value }))}
+                              placeholder="Title"
+                              className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                              disabled={busy}
+                            />
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                              <label className="block text-xs font-bold text-slate-700 mb-1">Section *</label>
+                              <select
+                                value={editingFields.section ?? ""}
+                                onChange={(e) => setEditingFields((prev) => ({ ...prev, section: e.target.value }))}
+                                className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                                disabled={busy}
+                              >
+                                <option value="">Select section</option>
+                                {sectionList.map((s) => (
+                                  <option key={s} value={s}>{s}</option>
+                                ))}
+                                <option value="__NEW__">➕ New section</option>
+                              </select>
+                              {editingFields.section === "__NEW__" && (
+                                <input
+                                  type="text"
+                                  value={editNewSection}
+                                  onChange={(e) => setEditNewSection(e.target.value)}
+                                  placeholder="New section name"
+                                  className="mt-2 w-full px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                                  disabled={busy}
+                                />
+                              )}
+                            </div>
+                            <div>
+                              <label className="block text-xs font-bold text-slate-700 mb-1">Group *</label>
+                              <select
+                                value={editingFields.group ?? ""}
+                                onChange={(e) => setEditingFields((prev) => ({ ...prev, group: e.target.value }))}
+                                className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                                disabled={busy}
+                              >
+                                <option value="">Select group</option>
+                                {(editingFields.section && editingFields.section !== "__NEW__" ? (sectionMap[editingFields.section] || []) : allGroupOptions).map((g) => (
+                                  <option key={g} value={g}>{g}</option>
+                                ))}
+                                <option value="__NEW__">➕ New group</option>
+                              </select>
+                              {editingFields.group === "__NEW__" && (
+                                <input
+                                  type="text"
+                                  value={editNewGroup}
+                                  onChange={(e) => setEditNewGroup(e.target.value)}
+                                  placeholder="New group name"
+                                  className="mt-2 w-full px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                                  disabled={busy}
+                                />
+                              )}
+                            </div>
+                          </div>
+                          <div>
+                            <label className="block text-xs font-bold text-slate-700 mb-1">Person {resolveEditSection() === "Youtube Chanel Videos" ? "*" : "(optional)"}</label>
+                            {resolveEditSection() === "Youtube Chanel Videos" && profilePictures.length > 0 ? (
+                              <div className="relative" ref={editPersonDropdownRef}>
+                                <button
+                                  type="button"
+                                  onClick={() => setEditPersonDropdownOpen((o) => !o)}
+                                  disabled={busy}
+                                  className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm text-left flex items-center gap-2 min-h-[40px]"
+                                >
+                                  {editingFields.person ? (
+                                    <>
+                                      {(() => {
+                                        const prof = profilePictures.find((p) => p.person?.trim() === editingFields.person?.trim());
+                                        return prof?.url ? (
+                                          <img src={prof.url} alt="" className="w-8 h-8 rounded-full object-cover shrink-0 bg-slate-200" />
+                                        ) : (
+                                          <span className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-slate-500 text-xs shrink-0">?</span>
+                                        );
+                                      })()}
+                                      <span className="truncate">{editingFields.person}</span>
+                                    </>
+                                  ) : (
+                                    <span className="text-slate-500">Select person (channel)</span>
+                                  )}
+                                  <span className="ml-auto text-slate-400">{editPersonDropdownOpen ? "▲" : "▼"}</span>
+                                </button>
+                                {editPersonDropdownOpen && (
+                                  <div className="absolute z-50 mt-1 w-full rounded-lg border border-slate-200 bg-white shadow-lg max-h-60 overflow-y-auto">
+                                    {profilePictures.map((item) => (
+                                      <button
+                                        key={item.PK}
+                                        type="button"
+                                        onClick={() => {
+                                          setEditingFields((prev) => ({ ...prev, person: item.person?.trim() ?? "" }));
+                                          setEditPersonDropdownOpen(false);
+                                        }}
+                                        className={`w-full px-3 py-2 flex items-center gap-2 hover:bg-slate-50 text-left text-sm ${editingFields.person === item.person ? "bg-blue-50" : ""}`}
+                                      >
+                                        {item.url ? (
+                                          <img src={item.url} alt="" className="w-8 h-8 rounded-full object-cover shrink-0 bg-slate-200" />
+                                        ) : (
+                                          <span className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-slate-500 text-xs shrink-0">?</span>
+                                        )}
+                                        <span className="truncate">{item.person || item.title || item.PK}</span>
+                                      </button>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <input
+                                type="text"
+                                value={editingFields.person ?? ""}
+                                onChange={(e) => setEditingFields((prev) => ({ ...prev, person: e.target.value }))}
+                                placeholder="Person or channel name"
+                                className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                                disabled={busy}
+                              />
+                            )}
+                          </div>
+                          <div>
+                            <label className="block text-xs font-bold text-slate-700 mb-1">Date (optional)</label>
+                            <input
+                              type="date"
+                              value={editingFields.date ?? ""}
+                              onChange={(e) => setEditingFields((prev) => ({ ...prev, date: e.target.value }))}
+                              className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                              disabled={busy}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-bold text-slate-700 mb-1">Description (optional)</label>
+                            <textarea
+                              value={editingFields.description ?? ""}
+                              onChange={(e) => setEditingFields((prev) => ({ ...prev, description: e.target.value }))}
+                              placeholder="Short description"
+                              rows={2}
+                              className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm resize-y"
+                              disabled={busy}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-bold text-slate-700 mb-1">Replace file (optional)</label>
+                            <input
+                              ref={editFileInputRef}
+                              type="file"
+                              accept="video/*,image/*,.mp4,.jpg,.jpeg,.png,.webp"
+                              onChange={(e) => setEditFile(e.target.files?.[0] ?? null)}
+                              className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm file:mr-3 file:py-1.5 file:px-3 file:rounded file:border-0 file:bg-blue-50 file:text-blue-700 file:font-semibold"
+                              disabled={busy}
+                            />
+                            {editFile && <p className="mt-1 text-xs text-slate-500">New file: {editFile.name}</p>}
+                          </div>
                         </div>
                       )}
                     </div>
@@ -1558,10 +1742,149 @@ export default function AdminPage() {
               className="bg-white rounded-2xl p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl"
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="text-sm text-slate-600 font-bold">
-                This file is extremely long. I kept your logic unchanged and only added the new YouTube single-video
-                modal, button, and wiring. If you want, paste the *rest* of the original file after this point and I’ll
-                return a truly 100% full replacement in one block.
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-xl font-black text-slate-900">➕ Add Media</h2>
+                <button
+                  onClick={clearUpload}
+                  className="p-2 rounded-lg hover:bg-slate-100 transition-colors text-slate-600"
+                  aria-label="Close"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="flex gap-2 mb-4">
+                <button
+                  type="button"
+                  onClick={() => setUploadMode("file")}
+                  className={`px-4 py-2 rounded-lg font-bold text-sm transition-colors ${uploadMode === "file" ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"}`}
+                >
+                  📁 Upload file(s)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setUploadMode("url")}
+                  className={`px-4 py-2 rounded-lg font-bold text-sm transition-colors ${uploadMode === "url" ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"}`}
+                >
+                  🔗 Import from URL
+                </button>
+              </div>
+              {uploadMode === "file" ? (
+                <>
+                  <div className="mb-4">
+                    <label className="block text-sm font-bold text-slate-700 mb-1">File(s)</label>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      multiple
+                      accept="video/*,image/*,.mp4,.jpg,.jpeg,.png,.webp"
+                      onChange={(e) => setUploadFiles(Array.from(e.target.files || []))}
+                      className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm file:mr-3 file:py-1.5 file:px-3 file:rounded file:border-0 file:bg-blue-50 file:text-blue-700 file:font-semibold"
+                      disabled={busy}
+                    />
+                    {uploadFiles.length > 0 && <p className="mt-1 text-xs text-slate-500">{uploadFiles.length} file(s) selected</p>}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="mb-4">
+                    <label className="block text-sm font-bold text-slate-700 mb-1">URL *</label>
+                    <input type="url" value={uploadUrl} onChange={(e) => setUploadUrl(e.target.value)} placeholder="https://..." className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm" disabled={busy} />
+                  </div>
+                  <div className="mb-4">
+                    <label className="block text-sm font-bold text-slate-700 mb-1">Title *</label>
+                    <input type="text" value={uploadTitle} onChange={(e) => setUploadTitle(e.target.value)} placeholder="Media title" className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm" disabled={busy} />
+                  </div>
+                </>
+              )}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-1">Section *</label>
+                  <select value={uploadSection} onChange={(e) => setUploadSection(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm" disabled={busy}>
+                    <option value="">Select section</option>
+                    {sectionList.map((s) => <option key={s} value={s}>{s}</option>)}
+                    <option value="__NEW__">➕ New section</option>
+                  </select>
+                  {uploadSection === "__NEW__" && <input type="text" value={uploadNewSection} onChange={(e) => setUploadNewSection(e.target.value)} placeholder="New section name" className="mt-2 w-full px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm" disabled={busy} />}
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-1">Group *</label>
+                  <select value={uploadGroup} onChange={(e) => setUploadGroup(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm" disabled={busy}>
+                    <option value="">Select group</option>
+                    {(uploadSection && uploadSection !== "__NEW__" ? (sectionMap[uploadSection] || []) : allGroupOptions).map((g) => <option key={g} value={g}>{g}</option>)}
+                    <option value="__NEW__">➕ New group</option>
+                  </select>
+                  {uploadGroup === "__NEW__" && <input type="text" value={uploadNewGroup} onChange={(e) => setUploadNewGroup(e.target.value)} placeholder="New group name" className="mt-2 w-full px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm" disabled={busy} />}
+                </div>
+              </div>
+              <div className="mb-4">
+                <label className="block text-sm font-bold text-slate-700 mb-1">Person {resolveUploadSection() === "Youtube Chanel Videos" ? "*" : "(optional)"}</label>
+                {resolveUploadSection() === "Youtube Chanel Videos" && profilePictures.length > 0 ? (
+                  <div className="relative" ref={uploadPersonDropdownRef}>
+                    <button
+                      type="button"
+                      onClick={() => setUploadPersonDropdownOpen((o) => !o)}
+                      disabled={busy}
+                      className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm text-left flex items-center gap-2 min-h-[40px]"
+                    >
+                      {uploadPerson ? (
+                        <>
+                          {(() => {
+                            const prof = profilePictures.find((p) => p.person?.trim() === uploadPerson.trim());
+                            return prof?.url ? (
+                              <img src={prof.url} alt="" className="w-8 h-8 rounded-full object-cover shrink-0 bg-slate-200" />
+                            ) : (
+                              <span className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-slate-500 text-xs shrink-0">?</span>
+                            );
+                          })()}
+                          <span className="truncate">{uploadPerson}</span>
+                        </>
+                      ) : (
+                        <span className="text-slate-500">Select person (channel)</span>
+                      )}
+                      <span className="ml-auto text-slate-400">{uploadPersonDropdownOpen ? "▲" : "▼"}</span>
+                    </button>
+                    {uploadPersonDropdownOpen && (
+                      <div className="absolute z-50 mt-1 w-full rounded-lg border border-slate-200 bg-white shadow-lg max-h-60 overflow-y-auto">
+                        {profilePictures.map((item) => (
+                          <button
+                            key={item.PK}
+                            type="button"
+                            onClick={() => {
+                              setUploadPerson(item.person?.trim() ?? "");
+                              setUploadPersonDropdownOpen(false);
+                            }}
+                            className={`w-full px-3 py-2 flex items-center gap-2 hover:bg-slate-50 text-left text-sm ${uploadPerson === item.person ? "bg-blue-50" : ""}`}
+                          >
+                            {item.url ? (
+                              <img src={item.url} alt="" className="w-8 h-8 rounded-full object-cover shrink-0 bg-slate-200" />
+                            ) : (
+                              <span className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-slate-500 text-xs shrink-0">?</span>
+                            )}
+                            <span className="truncate">{item.person || item.title || item.PK}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <input type="text" value={uploadPerson} onChange={(e) => setUploadPerson(e.target.value)} placeholder="Person or channel name" className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm" disabled={busy} />
+                )}
+              </div>
+              <div className="mb-4">
+                <label className="block text-sm font-bold text-slate-700 mb-1">Date (optional)</label>
+                <input type="date" value={uploadDate} onChange={(e) => setUploadDate(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm" disabled={busy} />
+              </div>
+              <div className="mb-6">
+                <label className="block text-sm font-bold text-slate-700 mb-1">Description (optional)</label>
+                <textarea value={uploadDescription} onChange={(e) => setUploadDescription(e.target.value)} placeholder="Short description" rows={3} className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm resize-y" disabled={busy} />
+              </div>
+              <div className="flex gap-3">
+                {uploadMode === "file" ? (
+                  <button onClick={uploadMedia} disabled={busy || uploadFiles.length === 0} className="flex-1 px-4 py-3 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed font-bold text-sm transition-colors">{busy ? "⏳ Uploading..." : "📤 Upload"}</button>
+                ) : (
+                  <button onClick={importFromUrl} disabled={busy} className="flex-1 px-4 py-3 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed font-bold text-sm transition-colors">{busy ? "⏳ Importing..." : "🔗 Import from URL"}</button>
+                )}
+                <button type="button" onClick={clearUpload} className="px-4 py-3 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 font-bold text-sm transition-colors">Cancel</button>
               </div>
             </div>
           </div>
