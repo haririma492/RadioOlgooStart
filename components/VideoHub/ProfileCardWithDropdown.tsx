@@ -47,7 +47,7 @@ export default function ProfileCardWithDropdown({
   const isPlayingOnCard = Boolean(playingVideo);
   const isKing = size === "king";
   const cardRef = useRef<HTMLDivElement>(null);
-  const [dropdownStyle, setDropdownStyle] = useState<{ top: number; left: number } | null>(null);
+  const [dropdownStyle, setDropdownStyle] = useState<{ top: number; left: number; width: number } | null>(null);
 
   const updatePosition = () => {
     if (!cardRef.current) return;
@@ -56,24 +56,23 @@ export default function ProfileCardWithDropdown({
     const scrollY = window.scrollY;
 
     // Position the bottom of the dropdown at the middle of the card
-    // rect.top is viewport relative, so we add scrollY to get page-relative pos
     const targetTop = rect.top + scrollY + (rect.height / 2);
 
-    // Dropdown is 480px wide
-    const dropdownWidth = 480;
+    // Mobile: max 250px so dropdown stays on screen; desktop: 480px
+    const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
+    const dropdownWidth = isMobile ? 250 : 480;
     let targetLeft = rect.left + scrollX;
     const viewportWidth = window.innerWidth;
 
-    // Boundary check for right side
     if (targetLeft + dropdownWidth > viewportWidth + scrollX - 16) {
       targetLeft = viewportWidth + scrollX - dropdownWidth - 16;
     }
-    // Boundary check for left side
     targetLeft = Math.max(scrollX + 16, targetLeft);
 
     setDropdownStyle({
       top: targetTop,
-      left: targetLeft
+      left: targetLeft,
+      width: dropdownWidth,
     });
   };
 
@@ -105,7 +104,7 @@ export default function ProfileCardWithDropdown({
   }, [isExpanded]);
 
   return (
-    <div ref={cardRef} className={`relative ${isKing ? "max-w-[450px] lg:max-w-[520px] xl:max-w-[600px] w-full h-full max-h-[calc(100%-50px)] min-h-0 flex flex-col" : ""}`}>
+    <div ref={cardRef} className={`relative ${isKing ? "max-w-[360px] lg:max-w-[440px] xl:max-w-[510px] w-full h-full max-h-[calc(100%-50px)] min-h-0 flex flex-col" : ""}`}>
       <button
         type="button"
         onClick={onToggle}
@@ -166,32 +165,34 @@ export default function ProfileCardWithDropdown({
                   <polyline points="6 9 12 15 18 9" />
                 </svg>
               </span>
-              {isKing && onSearchClick && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onSearchClick();
-                  }}
-                  className="px-2.5 py-1 rounded-full bg-black/60 hover:bg-black/70 text-white/95 text-sm font-medium border border-white/20 transition-colors"
-                >
-                  Search
-                </button>
-              )}
             </div>
           )}
         </div>
-        <div className={`text-white text-sm mt-2 text-center truncate ${isKing ? "flex-shrink-0" : ""}`}>
+        <div className={`text-white text-sm text-center truncate ${isKing ? "mt-2 flex-shrink-0" : "mt-1"}`}>
           {profile.person}
         </div>
       </button>
 
-      {/* Search button beneath name for non-king cards (Political, News) */}
+      {/* Search button beneath name – king card: taller, narrower, centered */}
+      {isKing && onSearchClick && (
+        <button
+          type="button"
+          onClick={onSearchClick}
+          className="w-auto min-w-[120px] max-w-[85%] mx-auto mt-1 py-2 px-4 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] backdrop-blur-sm text-white/90 text-sm font-medium border border-white/15 hover:border-white/25 transition-all duration-200 flex items-center justify-center gap-2 shadow-sm cursor-pointer"
+        >
+          <svg className="w-3.5 h-3.5 text-white/80 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <circle cx="11" cy="11" r="8" />
+            <path d="m21 21-4.35-4.35" />
+          </svg>
+          Search
+        </button>
+      )}
+      {/* Search button beneath name – non-king cards (Political, etc.): full width, original size */}
       {!isKing && onSearchClick && (
         <button
           type="button"
           onClick={onSearchClick}
-          className="w-full mt-1.5 py-1.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] backdrop-blur-sm text-white/90 text-sm font-medium border border-white/15 hover:border-white/25 transition-all duration-200 flex items-center justify-center gap-2 shadow-sm"
+          className="w-full mt-1 py-1 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] backdrop-blur-sm text-white/90 text-sm font-medium border border-white/15 hover:border-white/25 transition-all duration-200 flex items-center justify-center gap-2 shadow-sm cursor-pointer"
         >
           <svg className="w-3.5 h-3.5 text-white/80 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
             <circle cx="11" cy="11" r="8" />
@@ -210,7 +211,7 @@ export default function ProfileCardWithDropdown({
             style={{
               top: dropdownStyle.top,
               left: dropdownStyle.left,
-              width: "480px",
+              width: dropdownStyle.width,
               transform: "translateY(-100%)",
             }}
             onClick={(e) => e.stopPropagation()}

@@ -19,7 +19,14 @@ export default function LiveChannels({ channels = [] }: LiveChannelsProps) {
   const [currentPage, setCurrentPage] = React.useState(0);
   const [isTransitioning, setIsTransitioning] = React.useState(false);
   const [isMobile, setIsMobile] = React.useState(false);
-  const channelsPerPage = 5;
+
+  // One card height (card + gap) so we scroll one card per click; mobile image reduced so cards are shorter
+  const mobileImageHeight = 120;
+  const mobileCardHeight = mobileImageHeight + 24 + 6.16;
+  const desktopCardHeight = 116;
+  const gap = isMobile ? 6.16 : 16;
+  const oneCardHeight = isMobile ? mobileCardHeight : desktopCardHeight;
+  const containerHeight = isMobile ? 3 * mobileCardHeight + 2 * gap : 3 * 210.2 + 2 * 48;
 
   React.useEffect(() => {
     const checkMobile = () => setIsMobile(window.innerWidth < 768);
@@ -44,39 +51,28 @@ export default function LiveChannels({ channels = [] }: LiveChannelsProps) {
 
   const displayChannels = channels.length > 0 ? channels : mockChannels;
 
-  // Calculate pagination
-  const totalPages = Math.ceil(displayChannels.length / channelsPerPage);
-  const showDownArrow = currentPage < totalPages - 1;
+  // Scroll one card at a time: how many cards fit in view, then max steps = length - visible
+  const cardsVisible = Math.max(1, Math.floor(containerHeight / oneCardHeight));
+  const maxPage = Math.max(0, displayChannels.length - cardsVisible);
+  const showDownArrow = currentPage < maxPage;
   const showUpArrow = currentPage > 0;
 
   const handleNext = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    
-    if (isTransitioning || currentPage >= totalPages - 1) return;
-    
+    if (isTransitioning || currentPage >= maxPage) return;
     setIsTransitioning(true);
-    setCurrentPage(prev => prev + 1);
-    
-    // Reset transitioning after animation completes
-    setTimeout(() => {
-      setIsTransitioning(false);
-    }, 500);
+    setCurrentPage((prev) => prev + 1);
+    setTimeout(() => setIsTransitioning(false), 500);
   };
 
   const handlePrev = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    
     if (isTransitioning || currentPage <= 0) return;
-    
     setIsTransitioning(true);
-    setCurrentPage(prev => prev - 1);
-    
-    // Reset transitioning after animation completes
-    setTimeout(() => {
-      setIsTransitioning(false);
-    }, 500);
+    setCurrentPage((prev) => prev - 1);
+    setTimeout(() => setIsTransitioning(false), 500);
   };
 
 
@@ -89,7 +85,7 @@ export default function LiveChannels({ channels = [] }: LiveChannelsProps) {
           ref={contentRef}
           className="w-full rounded-lg p-4"
           style={{
-            height: 'calc(3 * 210.2px + 2 * 48px)',
+            height: isMobile ? `${containerHeight}px` : 'calc(3 * 210.2px + 2 * 48px)',
             background: '#FFFFFF29',
             backdropFilter: 'blur(36.974998474121094px)',
             overflow: 'hidden',
@@ -99,10 +95,10 @@ export default function LiveChannels({ channels = [] }: LiveChannelsProps) {
           <div
             style={{
               transition: 'transform 0.5s ease-in-out',
-              transform: `translateY(-${currentPage * (isMobile ? (5 * (182.68438720703125 + 24) + 4 * 6.16) : (5 * 116))}px)`,
+              transform: `translateY(-${currentPage * oneCardHeight}px)`,
               display: 'flex',
               flexDirection: 'column',
-              gap: isMobile ? '6.16px' : '16px',
+              gap: `${gap}px`,
             }}
           >
         {displayChannels.map((channel, index) => {
@@ -138,8 +134,8 @@ export default function LiveChannels({ channels = [] }: LiveChannelsProps) {
                     alt={channel.name}
                     className="rounded object-cover"
                     style={{
-                      height: isMobile ? '182.68438720703125px' : '84px',
-                      width: isMobile ? '322.59375px' : '191px'
+                      height: isMobile ? `${mobileImageHeight}px` : '84px',
+                      width: isMobile ? '280px' : '191px'
                     }}
                   />
                   {/* Play Button Overlay - Center of image */}
@@ -167,47 +163,21 @@ export default function LiveChannels({ channels = [] }: LiveChannelsProps) {
         })}
           </div>
         </div>
-        {/* Down Arrow Indicator - Bottom, half in/half out */}
-        {showDownArrow && (
-          <div 
-            className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-1/2 z-50 cursor-pointer"
-            onClick={handleNext}
-            onMouseDown={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-            }}
-            style={{ 
-              pointerEvents: 'auto', 
-              userSelect: 'none',
-              display: 'block',
-              visibility: 'visible',
-              touchAction: 'manipulation'
-            }}
-          >
-            <img
-              src="/svg/nexticon.svg"
-              alt="Scroll down"
-              className="w-6 h-6 md:w-8 md:h-8 rotate-90 opacity-90 hover:opacity-100 transition-opacity pointer-events-none"
-              draggable={false}
-              style={{ display: 'block' }}
-            />
-          </div>
-        )}
-        {/* Up Arrow Indicator - Bottom, half in/half out (when on page > 0) */}
+        {/* Up Arrow - Top (so it doesn't overlap the Down arrow; prevents click loop) */}
         {showUpArrow && (
-          <div 
-            className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-1/2 z-50 cursor-pointer"
+          <div
+            className="absolute top-0 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-50 cursor-pointer"
             onClick={handlePrev}
             onMouseDown={(e) => {
               e.preventDefault();
               e.stopPropagation();
             }}
-            style={{ 
-              pointerEvents: 'auto', 
-              userSelect: 'none',
-              display: 'block',
-              visibility: 'visible',
-              touchAction: 'manipulation'
+            style={{
+              pointerEvents: "auto",
+              userSelect: "none",
+              display: "block",
+              visibility: "visible",
+              touchAction: "manipulation",
             }}
           >
             <img
@@ -215,6 +185,32 @@ export default function LiveChannels({ channels = [] }: LiveChannelsProps) {
               alt="Scroll up"
               className="w-6 h-6 md:w-8 md:h-8 -rotate-90 opacity-90 hover:opacity-100 transition-opacity pointer-events-none"
               draggable={false}
+            />
+          </div>
+        )}
+        {/* Down Arrow - Bottom */}
+        {showDownArrow && (
+          <div
+            className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-1/2 z-50 cursor-pointer"
+            onClick={handleNext}
+            onMouseDown={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+            style={{
+              pointerEvents: "auto",
+              userSelect: "none",
+              display: "block",
+              visibility: "visible",
+              touchAction: "manipulation",
+            }}
+          >
+            <img
+              src="/svg/nexticon.svg"
+              alt="Scroll down"
+              className="w-6 h-6 md:w-8 md:h-8 rotate-90 opacity-90 hover:opacity-100 transition-opacity pointer-events-none"
+              draggable={false}
+              style={{ display: "block" }}
             />
           </div>
         )}

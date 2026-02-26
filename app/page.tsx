@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import Header from "@/components/Header/Header";
+import HeroSection from "@/components/HeroSection/HeroSection";
 import VideoHub from "@/components/VideoHub/VideoHub";
 import AudioHub from "@/components/AudioHub/AudioHub";
 import VideoSubmissionForm from "@/components/Forms/VideoSubmissionForm";
@@ -377,8 +378,13 @@ function HomePageContent() {
         <Header />
       </div>
 
+      {/* Hero section — full cinematic image display */}
       <div className="relative z-0">
-        <main className="container mx-auto px-4 py-8">
+        <HeroSection />
+      </div>
+
+      <div className="relative z-0">
+        <main className="   py-8" style={{ paddingLeft: "2%", paddingRight: "2%", margin: "auto" }}>
           {/* LIVE SECTION */}
           <section className="mb-10">
             <div className="flex items-center justify-between mb-4">
@@ -453,19 +459,25 @@ function HomePageContent() {
             )}
           </section>
 
-          {/* Existing content */}
-          <VideoHub
-            onVideoClick={(video) => {
-              handleVideoPlay({
-                url: video.url,
-                person: video.person || video.personName,
-                title: video.title,
-                timestamp: video.createdAt,
-              });
-            }}
-          />
-          <AudioHub />
-          <VideoSubmissionForm />
+          {/* Existing content - section ids for header nav smooth scroll */}
+          <section id="video-hub" className="scroll-mt-24">
+            <VideoHub
+              onVideoClick={(video) => {
+                handleVideoPlay({
+                  url: video.url,
+                  person: video.person || video.personName,
+                  title: video.title,
+                  timestamp: video.createdAt,
+                });
+              }}
+            />
+          </section>
+          <section id="revolutionary-music" className="scroll-mt-24">
+            <AudioHub />
+          </section>
+          <section id="video-submission" className="scroll-mt-24">
+            <VideoSubmissionForm />
+          </section>
           <SocialLinksForm />
         </main>
 
