@@ -108,7 +108,7 @@ export default function AudioHub() {
   return (
     <section className="w-full">
       <div className="w-full flex flex-col md:flex-row gap-6 md:gap-8 px-4 md:px-6 lg:px-8 pb-8 items-stretch">
-        <div className="flex-1 w-full flex flex-col order-2 md:order-1 min-w-0">
+        <div className="flex-1 w-full flex flex-col order-1 min-w-0">
           <h2 className="text-white text-[24.64px] font-semibold leading-[1.5] mb-6">
             Revolutionary Music
           </h2>
@@ -130,7 +130,7 @@ export default function AudioHub() {
             </div>
           )}
         </div>
-        <div className="w-full md:w-[300px] lg:w-[350px] flex-shrink-0 flex flex-col order-1 md:order-2">
+        <div className="w-full md:w-[300px] lg:w-[350px] flex-shrink-0 flex flex-col order-2">
           <LiveChannels />
         </div>
       </div>

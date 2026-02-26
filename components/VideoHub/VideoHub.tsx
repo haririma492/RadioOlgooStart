@@ -49,10 +49,11 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
   const [error, setError] = useState<string | null>(null);
   const [expandedPerson, setExpandedPerson] = useState<string | null>(null);
   const [selectedPerson, setSelectedPerson] = useState<string | null>(null);
+  const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
+  const [playingVideoOnCard, setPlayingVideoOnCard] = useState<{ cardKey: string; personName: string; video: VideoItem } | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [showSearchModal, setShowSearchModal] = useState(false);
   const [modalPlayingVideo, setModalPlayingVideo] = useState<VideoItem | null>(null);
-  const [playingVideoOnCard, setPlayingVideoOnCard] = useState<{ personName: string; video: VideoItem } | null>(null);
   const [today, setToday] = useState(() => new Date());
   const hubContentRef = useRef<HTMLDivElement>(null);
 
@@ -102,7 +103,7 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
   useEffect(() => {
     if (!activePlayback) return;
     const cardId = playingVideoOnCard
-      ? `${playingVideoOnCard.personName}-${playingVideoOnCard.video.id}`
+      ? `${playingVideoOnCard.cardKey}-${playingVideoOnCard.video.id}`
       : null;
     if (
       activePlayback.source !== "video-hub-card" ||
@@ -147,8 +148,10 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
     return sn === "youtube chanel videos" || sn === "youtube channel videos";
   };
 
-  // Get profiles from Youtube_Channel_Profile_Picture section, filtered by category
-  const getProfiles = (category?: string): Profile[] => {
+  const normalizeGroup = (group: string): string => (group ?? "").trim().toLowerCase();
+
+  // Get profiles from Youtube_Channel_Profile_Picture section, filtered by YouTube group
+  const getProfilesByGroup = (groupName: string): Profile[] => {
     const profilesMap = new Map<string, { person: string; pictureUrl: string; videoCount: number }>();
     
     // First, find all profile pictures (exclude "Reza Pahlavi" - he goes in "Your Favourite")
@@ -156,29 +159,19 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
       item => item.section === "Youtube_Channel_Profile_Picture"  && item.person.trim() !== "Reza Pahlavi"
     );
     
-    // Filter videos by category if specified
+    // Filter videos by selected group in "Youtube Chanel Videos" section (no "Other" – only real groups)
     let filteredVideos = mediaItems.filter(item => {
       const url = (item.url ?? "").toLowerCase();
-      // Check if it's a video file (.mp4 in path; presigned URLs may have query string)
       if (!url.includes(".mp4")) return false;
-      // Skip videos without person (they can't be associated with profiles)
       if (!item.person || item.person.trim() === "") return false;
-      // Exclude "Reza Pahlavi" - he goes in "Your Favourite"
       if (item.person.trim() === "Reza Pahlavi") return false;
       
-      if (!category) return true;
-      
-      const group = (item.group ?? "").trim();
       const isYoutubeVideos = isYoutubeVideoSection(item.section ?? "");
-      const isNews = group.toLowerCase() === "news";
-      const isPoliticalAnalysis = group === "Political Analysis";
-      if (category === "Political") {
-        return isYoutubeVideos && isPoliticalAnalysis;
-      } else if (category === "News") {
-        return isYoutubeVideos && isNews;
-      }
-      
-      return false;
+      if (!isYoutubeVideos) return false;
+
+      const currentGroup = (item.group ?? "").trim();
+      if (!currentGroup) return false;
+      return normalizeGroup(currentGroup) === normalizeGroup(groupName);
     });
     
     // Count videos per person (keyed by normalized name); keep one display name per normalized key
@@ -268,25 +261,24 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
       }));
   };
 
-  // Get videos for a specific person, optionally filtered by category (person matched by normalized name)
-  const getVideosByPerson = (personName: string, category?: string): VideoItem[] => {
+  // Get videos for a specific person, optionally filtered by YouTube group (person matched by normalized name)
+  const getVideosByPerson = (personName: string, groupName?: string): VideoItem[] => {
     const personKey = normalizePerson(personName);
     return mediaItems
       .filter(item => {
         const url = (item.url ?? "").toLowerCase();
         if (!url.includes(".mp4")) return false;
         if (normalizePerson(item.person ?? "") !== personKey) return false;
-        
-        if (category) {
-          const group = (item.group ?? "").trim();
-          const isYoutubeVideos = isYoutubeVideoSection(item.section ?? "");
-          if (category === "Political") {
-            return isYoutubeVideos && group === "Political Analysis";
-          } else if (category === "News") {
-            return isYoutubeVideos && group.toLowerCase() === "news";
-          }
+
+        if (groupName) {
+          const currentGroup = (item.group ?? "").trim();
+          if (!currentGroup) return false;
+          return (
+            isYoutubeVideoSection(item.section ?? "") &&
+            normalizeGroup(currentGroup) === normalizeGroup(groupName)
+          );
         }
-        
+
         return true;
       })
       .map(item => ({
@@ -302,16 +294,28 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
       }));
   };
 
-  const politicalProfiles = useMemo(() => getProfiles("Political"), [mediaItems]);
-  const newsProfiles = useMemo(() => getProfiles("News"), [mediaItems]);
+  const youtubeGroupNames = useMemo(() => {
+    const groups = new Set<string>();
+    mediaItems.forEach((item) => {
+      const isVideoFile = (item.url ?? "").toLowerCase().includes(".mp4");
+      const hasPerson = !!item.person?.trim();
+      const isRezaPahlavi = item.person?.trim() === "Reza Pahlavi";
+      if (!isVideoFile || !hasPerson || isRezaPahlavi) return;
+      if (!isYoutubeVideoSection(item.section ?? "")) return;
+      const groupName = (item.group ?? "").trim();
+      if (!groupName) return;
+      groups.add(groupName);
+    });
+    return Array.from(groups).sort((a, b) => a.localeCompare(b));
+  }, [mediaItems]);
 
   const handleCardClick = (personName: string) => {
     setExpandedPerson((prev) => (prev === personName ? null : personName));
   };
 
-  const handleVideoPlayOnCard = (personName: string, video: VideoItem) => {
-    setActivePlayback("video-hub-card", `${personName}-${video.id}`);
-    setPlayingVideoOnCard({ personName, video });
+  const handleVideoPlayOnCard = (cardKey: string, personName: string, video: VideoItem) => {
+    setActivePlayback("video-hub-card", `${cardKey}-${video.id}`);
+    setPlayingVideoOnCard({ cardKey, personName, video });
     setExpandedPerson(null);
   };
 
@@ -324,6 +328,7 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
     setActivePlayback(null);
     setShowModal(false);
     setSelectedPerson(null);
+    setSelectedGroup(null);
     setModalPlayingVideo(null);
   };
 
@@ -336,9 +341,10 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
     }
   };
 
-  const openModalForPerson = (personName: string) => {
+  const openModalForPerson = (personName: string, groupName?: string) => {
     setExpandedPerson(null);
     setSelectedPerson(personName);
+    setSelectedGroup(groupName ?? null);
     setShowModal(true);
     setModalPlayingVideo(null);
   };
@@ -366,19 +372,19 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
         {/* Mobile Navigation - Visible only on mobile */}
         <nav className="flex md:hidden items-center gap-4">
           <a
-            href="#"
+            href="#video-hub"
             className="text-white text-sm font-normal hover:opacity-80 transition-opacity underline decoration-white underline-offset-4"
           >
             Video Hub
           </a>
           <a
-            href="#"
+            href="#revolutionary-music"
             className="text-white text-sm font-normal hover:opacity-80 transition-opacity"
           >
             Revolutionary Music
           </a>
           <a
-            href="#"
+            href="#video-submission"
             className="text-white text-sm font-normal hover:opacity-80 transition-opacity"
           >
             Video Submission
@@ -396,7 +402,7 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
         {/* Your Favourite Section – stretches to match Video Hub column height */}
         <div className="w-full md:w-[400px] lg:w-[500px] xl:w-[560px] flex-shrink-0 flex flex-col order-1 md:order-2 md:min-h-0 min-w-0">
           <h2 className="text-white text-[24.64px] font-semibold leading-[1.5] mb-6 flex-shrink-0">Your Favourite</h2>
-          <div className="flex-1 min-h-0 flex flex-col w-full max-w-[450px] lg:max-w-[520px] xl:max-w-[600px] overflow-hidden">
+          <div className="flex-1 min-h-0 flex flex-col w-full max-w-[360px] lg:max-w-[440px] xl:max-w-[510px] overflow-hidden">
             <ProfileCardWithDropdown
               size="king"
               profile={{
@@ -404,7 +410,7 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
                 pictureUrl: getRezaPahlaviProfile() ?? "",
               }}
               videos={getRezaPahlaviVideos()}
-              onVideoClick={(video) => handleVideoPlayOnCard("Reza Pahlavi", video)}
+              onVideoClick={(video) => handleVideoPlayOnCard("Reza Pahlavi", "Reza Pahlavi", video)}
               isExpanded={expandedPerson === "Reza Pahlavi"}
               onToggle={() => handleCardClick("Reza Pahlavi")}
               onViewAllClick={
@@ -413,7 +419,7 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
                   : undefined
               }
               onSearchClick={() => setShowSearchModal(true)}
-              playingVideo={playingVideoOnCard?.personName === "Reza Pahlavi" ? playingVideoOnCard.video : null}
+              playingVideo={playingVideoOnCard?.cardKey === "Reza Pahlavi" ? playingVideoOnCard.video : null}
               onClearPlayingVideo={handleClearPlayingVideoOnCard}
             />
           </div>
@@ -423,68 +429,50 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
         <div className="flex-1 w-full flex flex-col order-2 md:order-1 min-w-0">
           <h2 className="text-white text-[24.64px] font-semibold leading-[1.5] mb-6">Recent Video Hub</h2>
           <div className="flex flex-col gap-8">
-            <ProfileRowWithNav
-              label="Political"
-              isEmpty={politicalProfiles.length === 0 && !loading}
-              emptyMessage="No profiles available for Political"
-            >
-              {politicalProfiles.map((profile) => {
-                const personVideos = getVideosByPerson(profile.person, "Political");
+            {youtubeGroupNames.length === 0 ? (
+              <div className="text-white/60 text-center py-8 w-full">
+                No profiles available for Youtube Chanel Videos
+              </div>
+            ) : (
+              youtubeGroupNames.map((groupName) => {
+                const groupProfiles = getProfilesByGroup(groupName);
                 return (
-                  <div key={`Political-${profile.person}`} className="flex-shrink-0 w-[140px] md:w-[152px]">
-                    <ProfileCardWithDropdown
-                      profile={{
-                        person: profile.person,
-                        pictureUrl: profile.pictureUrl,
-                      }}
-                      videos={personVideos}
-                      onVideoClick={(video) => handleVideoPlayOnCard(profile.person, video)}
-                      isExpanded={expandedPerson === profile.person}
-                      onToggle={() => handleCardClick(profile.person)}
-                      onViewAllClick={
-                        personVideos.length > 4
-                          ? () => openModalForPerson(profile.person)
-                          : undefined
-                      }
-                      onSearchClick={() => setShowSearchModal(true)}
-                      playingVideo={playingVideoOnCard?.personName === profile.person ? playingVideoOnCard.video : null}
-                      onClearPlayingVideo={handleClearPlayingVideoOnCard}
-                    />
-                  </div>
+                  <ProfileRowWithNav
+                    key={groupName}
+                    label={groupName}
+                    isEmpty={groupProfiles.length === 0 && !loading}
+                    emptyMessage={`No profiles available for ${groupName}`}
+                  >
+                    {groupProfiles.map((profile) => {
+                      const personVideos = getVideosByPerson(profile.person, groupName);
+                      const cardKey = `${groupName}-${profile.person}`;
+                      return (
+                        <div key={cardKey} className="flex-shrink-0 w-[140px] md:w-[152px]">
+                          <ProfileCardWithDropdown
+                            profile={{
+                              person: profile.person,
+                              pictureUrl: profile.pictureUrl,
+                            }}
+                            videos={personVideos}
+                            onVideoClick={(video) => handleVideoPlayOnCard(cardKey, profile.person, video)}
+                            isExpanded={expandedPerson === cardKey}
+                            onToggle={() => handleCardClick(cardKey)}
+                            onViewAllClick={
+                              personVideos.length > 4
+                                ? () => openModalForPerson(profile.person, groupName)
+                                : undefined
+                            }
+                            onSearchClick={() => setShowSearchModal(true)}
+                            playingVideo={playingVideoOnCard?.cardKey === cardKey ? playingVideoOnCard.video : null}
+                            onClearPlayingVideo={handleClearPlayingVideoOnCard}
+                          />
+                        </div>
+                      );
+                    })}
+                  </ProfileRowWithNav>
                 );
-              })}
-            </ProfileRowWithNav>
-            <ProfileRowWithNav
-              label="News"
-              isEmpty={newsProfiles.length === 0 && !loading}
-              emptyMessage="No profiles available for News"
-            >
-              {newsProfiles.map((profile) => {
-                const personVideos = getVideosByPerson(profile.person, "News");
-                return (
-                  <div key={`News-${profile.person}`} className="flex-shrink-0 w-[140px] md:w-[152px]">
-                    <ProfileCardWithDropdown
-                      profile={{
-                        person: profile.person,
-                        pictureUrl: profile.pictureUrl,
-                      }}
-                      videos={personVideos}
-                      onVideoClick={(video) => handleVideoPlayOnCard(profile.person, video)}
-                      isExpanded={expandedPerson === profile.person}
-                      onToggle={() => handleCardClick(profile.person)}
-                      onViewAllClick={
-                        personVideos.length > 4
-                          ? () => openModalForPerson(profile.person)
-                          : undefined
-                      }
-                      onSearchClick={() => setShowSearchModal(true)}
-                      playingVideo={playingVideoOnCard?.personName === profile.person ? playingVideoOnCard.video : null}
-                      onClearPlayingVideo={handleClearPlayingVideoOnCard}
-                    />
-                  </div>
-                );
-              })}
-            </ProfileRowWithNav>
+              })
+            )}
           </div>
         </div>
       </div>
@@ -507,7 +495,7 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
           videos={
             selectedPerson === "Reza Pahlavi"
               ? getRezaPahlaviVideos()
-              : getVideosByPerson(selectedPerson)
+              : getVideosByPerson(selectedPerson, selectedGroup ?? undefined)
           }
           onVideoClick={handleVideoClickInModal}
           playingVideo={modalPlayingVideo}
