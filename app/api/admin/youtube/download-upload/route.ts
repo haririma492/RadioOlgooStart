@@ -1,6 +1,6 @@
 // app/api/admin/youtube/download-upload/route.ts
-// Use yt-dlp via command line - same as Python version!
 export const runtime = "nodejs";
+
 import { NextRequest, NextResponse } from "next/server";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
@@ -12,14 +12,26 @@ import { join } from "path";
 import { v4 as uuidv4 } from "uuid";
 
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
+
 const AWS_REGION = process.env.AWS_REGION || "ca-central-1";
 const AWS_ACCESS_KEY_ID = process.env.AWS_ACCESS_KEY_ID;
 const AWS_SECRET_ACCESS_KEY = process.env.AWS_SECRET_ACCESS_KEY;
+
 const S3_BUCKET_VIDEOS = process.env.S3_VIDEO_BUCKET;
 const DDB_TABLE_NAME = process.env.DDB_TABLE_NAME;
-const YTDLP_PATH = process.env.YTDLP_PATH; // Path to yt-dlp executable
 
-// Initialize AWS clients
+const YTDLP_PATH = process.env.YTDLP_PATH; // optional explicit path
+
+function assertEnv() {
+  const missing: string[] = [];
+  if (!ADMIN_TOKEN) missing.push("ADMIN_TOKEN");
+  if (!AWS_ACCESS_KEY_ID) missing.push("AWS_ACCESS_KEY_ID");
+  if (!AWS_SECRET_ACCESS_KEY) missing.push("AWS_SECRET_ACCESS_KEY");
+  if (!S3_BUCKET_VIDEOS) missing.push("S3_VIDEO_BUCKET");
+  if (!DDB_TABLE_NAME) missing.push("DDB_TABLE_NAME");
+  if (missing.length) throw new Error(`Missing required env var(s): ${missing.join(", ")}`);
+}
+
 const s3Client = new S3Client({
   region: AWS_REGION,
   credentials: {
@@ -38,244 +50,309 @@ const ddbClient = new DynamoDBClient({
 
 const docClient = DynamoDBDocumentClient.from(ddbClient);
 
-// Helper to find yt-dlp
-function getYtDlpPath(): string {
-  // First, try the path from .env.local
-  if (YTDLP_PATH && existsSync(YTDLP_PATH)) {
-    console.log(`   Using yt-dlp from .env.local: ${YTDLP_PATH}`);
-    return YTDLP_PATH;
-  }
-  
-  // Try to find in PATH
+// ─────────────────────────────────────────────────────────────────────────────
+// yt-dlp discovery / provisioning
+// ─────────────────────────────────────────────────────────────────────────────
+
+const isWin = process.platform === "win32";
+
+function tryFindYtDlpInPath(): string | null {
   try {
-    const result = execSync("where yt-dlp", { encoding: "utf-8", windowsHide: true }).trim();
-    const path = result.split("\n")[0].trim();
-    console.log(`   Found yt-dlp in PATH: ${path}`);
-    return path;
+    const cmd = isWin ? "where yt-dlp" : "which yt-dlp";
+    const result = execSync(cmd, { encoding: "utf-8" }).trim();
+    const first = result.split(/\r?\n/)[0]?.trim();
+    return first || null;
   } catch {
-    // Fallback to just "yt-dlp" and hope it's in PATH
-    console.log(`   Using default: yt-dlp (hoping it's in PATH)`);
-    return "yt-dlp";
+    return null;
   }
 }
 
-// Helper to generate PK
+// IMPORTANT: avoid static require so Next doesn't try to resolve if not installed
+async function tryLoadYtDlpWrap(): Promise<any | null> {
+  try {
+    const mod: any = await import("yt-dlp-wrap");
+    return mod?.default || mod;
+  } catch {
+    return null;
+  }
+}
+
+let ytDlpWrapBinaryPromise: Promise<string> | null = null;
+
+async function getYtDlpPath(): Promise<string> {
+  // 1) explicit env
+  if (YTDLP_PATH && existsSync(YTDLP_PATH)) {
+    console.log(`   Using yt-dlp from YTDLP_PATH: ${YTDLP_PATH}`);
+    return YTDLP_PATH;
+  }
+
+  // 2) system PATH
+  const inPath = tryFindYtDlpInPath();
+  if (inPath && existsSync(inPath)) {
+    console.log(`   Found yt-dlp in PATH: ${inPath}`);
+    return inPath;
+  }
+
+  // 3) yt-dlp-wrap (optional)
+  const YTDlpWrap = await tryLoadYtDlpWrap();
+  if (YTDlpWrap) {
+    if (!ytDlpWrapBinaryPromise) {
+      ytDlpWrapBinaryPromise = (async () => {
+        const wrap = new YTDlpWrap();
+        const target = join(tmpdir(), isWin ? "yt-dlp.exe" : "yt-dlp");
+        const binPath: string = await wrap.getYtDlpBinary(target);
+        console.log(`   Provisioned yt-dlp via yt-dlp-wrap at: ${binPath}`);
+        return binPath;
+      })();
+    }
+    return ytDlpWrapBinaryPromise;
+  }
+
+  throw new Error(
+    [
+      "yt-dlp not found.",
+      "Fix options:",
+      "  A) Local Windows: install yt-dlp and ensure it's in PATH, or set YTDLP_PATH to full exe path.",
+      "  B) Vercel/Linux: install dependency `yt-dlp-wrap` (npm i yt-dlp-wrap) OR bundle yt-dlp and set YTDLP_PATH.",
+    ].join(" ")
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
 function generatePK(): string {
   return `MEDIA#${Date.now()}#${uuidv4()}`;
 }
 
-// Download video using yt-dlp with progress tracking
-function downloadVideoYtDlp(videoUrl: string, outputPath: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const ytdlpPath = getYtDlpPath();
-    
-    console.log(`   📥 Starting yt-dlp download...`);
-    
-    const quotedYtdlpPath = ytdlpPath.includes(' ') ? `"${ytdlpPath}"` : ytdlpPath;
-    const quotedOutputPath = outputPath.includes(' ') ? `"${outputPath}"` : outputPath;
-    
-    const command = `${quotedYtdlpPath} -f best -o ${quotedOutputPath} --newline "${videoUrl}"`;
-    
-    const ytdlp = spawn(command, [], {
-      windowsHide: true,
-      shell: true,
-    });
-
-    let lastProgress = "";
-
-    ytdlp.stdout.on("data", (data) => {
-      const line = data.toString().trim();
-      
-      // Show download progress
-      if (line.includes('[download]') && line.includes('%')) {
-        const match = line.match(/(\d+\.\d+)%/);
-        if (match) {
-          const progress = match[1];
-          if (progress !== lastProgress) {
-            process.stdout.write(`\r   ⬇️  Downloading: ${progress}%`);
-            lastProgress = progress;
-          }
-        }
-      } else if (line.includes('[download]') && line.includes('100%')) {
-        console.log(`\r   ✅ Download complete!                    `);
-      }
-    });
-
-    ytdlp.stderr.on("data", (data) => {
-      const line = data.toString().trim();
-      if (line && !line.includes('WARNING')) {
-        console.log(`   ${line}`);
-      }
-    });
-
-    ytdlp.on("close", (code) => {
-      if (code !== 0) {
-        reject(new Error(`yt-dlp failed (code ${code})`));
-        return;
-      }
-
-      const extensions = ["", ".mp4", ".webm", ".mkv"];
-      const basePath = outputPath.replace(/\.[^.]+$/, "");
-      
-      for (const ext of extensions) {
-        const path = ext ? basePath + ext : outputPath;
-        if (existsSync(path)) {
-          resolve(path);
-          return;
-        }
-      }
-
-      reject(new Error("File not found after download"));
-    });
-
-    ytdlp.on("error", (error) => {
-      reject(new Error(`Failed to run yt-dlp: ${error.message}`));
-    });
-  });
+function safeSlug(s: string, max = 80) {
+  return (s || "video")
+    .replace(/[/\\?%*:|"<>]/g, "_")
+    .replace(/\s+/g, "_")
+    .replace(/_+/g, "_")
+    .slice(0, max);
 }
 
-// Upload to S3
-async function uploadToS3(filePath: string, s3Key: string): Promise<string> {
+function contentTypeFromPath(p: string) {
+  const low = p.toLowerCase();
+  if (low.endsWith(".mp4")) return "video/mp4";
+  if (low.endsWith(".webm")) return "video/webm";
+  if (low.endsWith(".mkv")) return "video/x-matroska";
+  return "application/octet-stream";
+}
+
+async function downloadVideoYtDlp(videoUrl: string, outputPath: string): Promise<string> {
+  const ytdlpPath = await getYtDlpPath();
+
+  console.log(`   📥 Starting yt-dlp download...`);
+
+  const args = ["-f", "best", "-o", outputPath, "--newline", videoUrl];
+
+  const child = spawn(ytdlpPath, args, { windowsHide: true, shell: false });
+
+  let lastProgress = "";
+
+  child.stdout.on("data", (data) => {
+    const line = data.toString().trim();
+    if (line.includes("[download]") && line.includes("%")) {
+      const match = line.match(/(\d+(?:\.\d+)?)%/);
+      if (match) {
+        const progress = match[1];
+        if (progress !== lastProgress) {
+          process.stdout.write(`\r   ⬇️  Downloading: ${progress}%`);
+          lastProgress = progress;
+        }
+      }
+    }
+    if (line.includes("100%")) process.stdout.write(`\r   ✅ Download complete!                    \n`);
+  });
+
+  child.stderr.on("data", (data) => {
+    const line = data.toString().trim();
+    if (!line) return;
+    if (line.toLowerCase().includes("warning")) return;
+    console.log(`   ${line}`);
+  });
+
+  const exitCode: number = await new Promise((resolve, reject) => {
+    child.on("error", (err) => reject(err));
+    child.on("close", (code) => resolve(code ?? -1));
+  });
+
+  if (exitCode !== 0) throw new Error(`yt-dlp failed (code ${exitCode})`);
+
+  // Confirm output exists (yt-dlp may change extension)
+  const candidates = [
+    outputPath,
+    outputPath.replace(/\.mp4$/i, ".webm"),
+    outputPath.replace(/\.mp4$/i, ".mkv"),
+  ];
+  for (const p of candidates) if (existsSync(p)) return p;
+
+  const base = outputPath.replace(/\.[^.]+$/, "");
+  for (const p of [base + ".mp4", base + ".webm", base + ".mkv"]) if (existsSync(p)) return p;
+
+  throw new Error("File not found after download");
+}
+
+async function uploadToS3(filePath: string, s3Key: string): Promise<{ url: string; sizeMB: string; s3Key: string }> {
   const sizeMB = (statSync(filePath).size / (1024 * 1024)).toFixed(2);
-  
+
   console.log(`   ⬆️  Uploading ${sizeMB} MB to S3...`);
   const startTime = Date.now();
-  
-  const fileStream = createReadStream(filePath);
 
-  await s3Client.send(new PutObjectCommand({
-    Bucket: S3_BUCKET_VIDEOS,
-    Key: s3Key,
-    Body: fileStream,
-    ContentType: "video/mp4",
-    // Note: Bucket has ACLs disabled, so we rely on bucket policy for public access
-  }));
-
+  await s3Client.send(
+    new PutObjectCommand({
+      Bucket: S3_BUCKET_VIDEOS!,
+      Key: s3Key,
+      Body: createReadStream(filePath),
+      ContentType: contentTypeFromPath(filePath),
+    })
+  );
   const duration = ((Date.now() - startTime) / 1000).toFixed(1);
   const url = `https://${S3_BUCKET_VIDEOS}.s3.${AWS_REGION}.amazonaws.com/${s3Key}`;
-  
+
   console.log(`   ✅ Upload complete! (${sizeMB} MB in ${duration}s)`);
-  return url;
+console.log("UPLOAD TARGET =>", { bucket: S3_BUCKET_VIDEOS, key: s3Key });
+
+  return { url, sizeMB, s3Key };
 }
 
-// Helper to parse YouTube upload date to YYYY-MM-DD format
 function parseYouTubeDate(uploadDate: string): string {
   try {
-    // uploadDate is like "February 8, 2026" or similar
-    const date = new Date(uploadDate);
-    if (!isNaN(date.getTime())) {
-      return date.toISOString().split("T")[0]; // YYYY-MM-DD
-    }
-  } catch (error) {
-    console.log(`   ⚠️  Could not parse date: ${uploadDate}, using today`);
-  }
-  // Fallback to today if parsing fails
+    const d = new Date(uploadDate);
+    if (!isNaN(d.getTime())) return d.toISOString().split("T")[0];
+  } catch {}
   return new Date().toISOString().split("T")[0];
 }
 
-// Save to DynamoDB
 async function saveToDynamoDB(item: any): Promise<void> {
   console.log(`   💾 Saving to DynamoDB...`);
-  
-  await docClient.send(new PutCommand({
-    TableName: DDB_TABLE_NAME,
-    Item: {
-      ...item,
-      active: true,
-      updatedAt: new Date().toISOString(),
-    },
-  }));
-  
+
+  await docClient.send(
+    new PutCommand({
+      TableName: DDB_TABLE_NAME!,
+      Item: {
+        ...item,
+        active: true,
+        updatedAt: new Date().toISOString(),
+      },
+    })
+  );
+
   console.log(`   ✅ Saved to DynamoDB`);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// handler
+// ─────────────────────────────────────────────────────────────────────────────
+
 export async function POST(request: NextRequest) {
   try {
+    assertEnv();
+
     console.log("\n=== YouTube Download Started ===\n");
-    
+
     const adminToken = request.headers.get("x-admin-token");
     if (!ADMIN_TOKEN || adminToken !== ADMIN_TOKEN) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { videos } = await request.json();
-    if (!videos?.length) {
+    const body = await request.json().catch(() => null);
+    const videos = body?.videos;
+
+    if (!Array.isArray(videos) || videos.length === 0) {
       return NextResponse.json({ error: "No videos" }, { status: 400 });
     }
-    
+
     console.log(`📦 Processing ${videos.length} video(s)\n`);
 
-    const results = [];
+    const results: any[] = [];
     let successCount = 0;
 
     for (const video of videos) {
-      let tempFile: string | null = null;
+      let tempOutPath: string | null = null;
+      let downloadedPath: string | null = null;
 
       try {
         console.log(`\n${"━".repeat(80)}`);
-        console.log(`📹 ${video.title}`);
+        console.log(`📹 ${video?.title ?? "(no title)"}`);
         console.log(`━`.repeat(80));
 
-        // Download
-        const safeTitle = video.title.replace(/[^a-zA-Z0-9-_]/g, "_").substring(0, 50);
-        tempFile = join(tmpdir(), `${Date.now()}_${safeTitle}.mp4`);
-        
+        const title = String(video?.title ?? "video");
+        const url = String(video?.url ?? "");
+        if (!url.trim()) throw new Error("Missing video.url");
+
+        const safeTitle = safeSlug(title, 60);
+        tempOutPath = join(tmpdir(), `${Date.now()}_${safeTitle}.mp4`);
+
         console.log(`\n⬇️  Downloading with yt-dlp...`);
-        const downloaded = await downloadVideoYtDlp(video.url, tempFile);
+        downloadedPath = await downloadVideoYtDlp(url, tempOutPath);
 
-        // Upload to S3
-        const s3Key = `youtube-videos/${Date.now()}_${safeTitle}.mp4`;
-        const s3Url = await uploadToS3(downloaded, s3Key);
+        const s3Key = `youtube-videos/${Date.now()}_${safeTitle}${downloadedPath.toLowerCase().endsWith(".webm") ? ".webm" : downloadedPath.toLowerCase().endsWith(".mkv") ? ".mkv" : ".mp4"}`;
+        const { url: s3Url, sizeMB } = await uploadToS3(downloadedPath, s3Key);
 
-        // Clean up
-        if (existsSync(downloaded)) unlinkSync(downloaded);
+        // cleanup local temp
+        if (downloadedPath && existsSync(downloadedPath)) {
+          try {
+            unlinkSync(downloadedPath);
+          } catch {}
+        }
 
-        // Save to DB
         const pk = generatePK();
-        
-        // Parse YouTube upload date to use as createdAt
-        const youtubeUploadDate = parseYouTubeDate(video.uploadDate);
+        const youtubeUploadDate = parseYouTubeDate(String(video?.uploadDate ?? ""));
         const youtubeCreatedAt = new Date(youtubeUploadDate).toISOString();
-        
+
         console.log(`   📅 YouTube upload date: ${video.uploadDate} → ${youtubeUploadDate}`);
-        
+
+        // IMPORTANT: respect section passed from client (fallback to your legacy value)
+        const section = String(video?.section || "Youtube Chanel Videos");
+
         await saveToDynamoDB({
           PK: pk,
           url: s3Url,
-          section: "Youtube Chanel Videos",
-          title: video.title,
-          group: video.group,
-          person: video.channelTitle,
-          date: youtubeUploadDate, // Use YouTube upload date
-          description: `Views: ${video.viewCount?.toLocaleString() || "N/A"}`,
-          createdAt: youtubeCreatedAt, // Use YouTube upload date as creation timestamp
+          section,
+          title,
+          group: String(video?.group ?? ""),
+          person: String(video?.channelTitle ?? ""),
+          date: youtubeUploadDate,
+          description: `Views: ${video?.viewCount?.toLocaleString?.() ?? "N/A"}`,
+          createdAt: youtubeCreatedAt,
         });
 
         successCount++;
         results.push({
           success: true,
           videoId: video.videoId,
-          title: video.title,
+          title,
           s3Url,
+          size: `${sizeMB} MB`,
+          s3Key,
         });
 
         console.log(`\n✅ SUCCESS!\n`);
       } catch (error: any) {
-        console.error(`\n❌ FAILED: ${error.message}\n`);
-        
+        const msg = error?.message ?? String(error);
+        console.error(`\n❌ FAILED: ${msg}\n`);
+
+        for (const p of [downloadedPath, tempOutPath]) {
+          if (p && existsSync(p)) {
+            try {
+              unlinkSync(p);
+            } catch {}
+          }
+        }
+
         results.push({
           success: false,
-          videoId: video.videoId,
-          title: video.title,
-          error: error.message,
+          videoId: video?.videoId,
+          title: video?.title,
+          error: msg,
         });
-
-        if (tempFile && existsSync(tempFile)) {
-          try { unlinkSync(tempFile); } catch {}
-        }
       }
     }
-    
+
     console.log(`\n✅ Done: ${successCount}/${videos.length}\n`);
 
     return NextResponse.json({
@@ -286,7 +363,8 @@ export async function POST(request: NextRequest) {
       results,
     });
   } catch (error: any) {
-    console.error("\n❌ Error:", error.message);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    const msg = error?.message ?? String(error);
+    console.error("\n❌ Error:", msg);
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
