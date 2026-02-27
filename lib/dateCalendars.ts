@@ -37,10 +37,10 @@ function toFarsiDigits(n: number): string {
   return String(n).replace(/\d/g, (d) => farsi[Number(d)]);
 }
 
-/** Separator between day, month, year for instant readability */
-const DATE_PART_SEP = "  ·  ";
+/** Separator between day, month, year for instant readability (exported for layout split) */
+export const DATE_PART_SEP = "  ·  ";
 
-/** Shamsi (Solar Hijri): e.g. "۲۹  ·  بهمن  ·  ۱۴۰۴" */
+/** Shamsi (Solar Hijri): e.g. "۱۴۰۴  ·  بهمن  ·  ۳۰" */
 export function formatShamsi(date: Date): string {
   const month1Based = (date.getMonth() + 1) as MonthType;
   const day = date.getDate() as DayType;
@@ -50,18 +50,18 @@ export function formatShamsi(date: Date): string {
     day
   );
   const month = SHAMSI_MONTHS_FARSI[jm - 1];
-  return `${toFarsiDigits(jd)}${DATE_PART_SEP}${month}${DATE_PART_SEP}${toFarsiDigits(jy)}`;
+  return `${toFarsiDigits(jy)}${DATE_PART_SEP}${month}${DATE_PART_SEP}${toFarsiDigits(jd)}`;
 }
 
-/** Georgian with Farsi month names: e.g. "۳۰  ·  ژانویه  ·  ۲۰۲۶" */
+/** Georgian with Farsi month names: e.g. "۲۰۲۶  ·  ژانویه  ·  ۳۰" */
 export function formatGeorgianFarsi(date: Date): string {
   const day = date.getDate();
   const month = GREGORIAN_MONTHS_FARSI[date.getMonth()];
   const year = date.getFullYear();
-  return `${toFarsiDigits(day)}${DATE_PART_SEP}${month}${DATE_PART_SEP}${toFarsiDigits(year)}`;
+  return `${toFarsiDigits(year)}${DATE_PART_SEP}${month}${DATE_PART_SEP}${toFarsiDigits(day)}`;
 }
 
-/** Shahanshahi (Shamsi year + 1180): e.g. "۱۰  ·  بهمن  ·  ۲۵۸۴" */
+/** Shahanshahi (Shamsi year + 1180): e.g. "۲۵۸۴  ·  بهمن  ·  ۱۰" */
 export function formatShahanshahi(date: Date): string {
   const month1Based = (date.getMonth() + 1) as MonthType;
   const day = date.getDate() as DayType;
@@ -72,7 +72,7 @@ export function formatShahanshahi(date: Date): string {
   );
   const month = SHAMSI_MONTHS_FARSI[jm - 1];
   const shahanshahiYear = jy + 1180;
-  return `${toFarsiDigits(jd)}${DATE_PART_SEP}${month}${DATE_PART_SEP}${toFarsiDigits(shahanshahiYear)}`;
+  return `${toFarsiDigits(shahanshahiYear)}${DATE_PART_SEP}${month}${DATE_PART_SEP}${toFarsiDigits(jd)}`;
 }
 
 export interface ThreeCalendars {
