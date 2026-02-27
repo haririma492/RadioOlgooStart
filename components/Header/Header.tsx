@@ -31,19 +31,17 @@ export default function Header() {
 
       <div className="relative flex items-center justify-between px-4 md:px-8 lg:px-12" style={{ height: "72px" }}>
 
-        {/* Logo */}
-        <div className="flex-shrink-0 flex items-center">
+        {/* Logo — mobile only; desktop shows below header on banner */}
+        <div className="flex-shrink-0 flex items-center md:hidden">
           <img
             src="/images/newheaderlogo26feb.jpg"
             alt="Radio Olgoo – Echo of Iranian Civilization"
-            style={{
-              height: "56px",
-              width: "auto",
-              objectFit: "contain",
-              filter: "drop-shadow(0 0 8px rgba(197,155,65,0.4))",
-            }}
+            className="h-14 w-auto object-contain rounded-lg"
+            style={{ filter: "drop-shadow(0 0 8px rgba(197,155,65,0.4))" }}
           />
         </div>
+        {/* Spacer on desktop so Radio Station stays on the right (nav is absolute, logo hidden) */}
+        <div className="hidden md:block flex-1 min-w-0" aria-hidden />
 
         {/* Desktop Navigation — centered absolutely */}
         <nav className="hidden md:flex absolute left-1/2 -translate-x-1/2 items-center gap-8">

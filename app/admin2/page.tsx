@@ -118,6 +118,16 @@ function sortArray<T extends Record<string, any>>(arr: T[], sort: SortState): T[
   return [...arr].sort((x, y) => mul * compareValues(x?.[sort.key], y?.[sort.key], sort.key));
 }
 
+function filterBySearch<T extends Record<string, any>>(arr: T[], query: string): T[] {
+  if (!query.trim()) return arr;
+  const q = query.trim().toLowerCase();
+  return arr.filter((row) =>
+    Object.values(row).some((v) =>
+      v != null && String(v).toLowerCase().includes(q)
+    )
+  );
+}
+
 function SortButton({
   label,
   colKey,
@@ -135,9 +145,8 @@ function SortButton({
     <button
       type="button"
       onClick={() => onSort(colKey)}
-      className={`text-xs font-medium uppercase ${
-        active ? "text-gray-900" : "text-gray-500"
-      } hover:text-gray-900`}
+      className={`text-xs font-medium uppercase ${active ? "text-gray-900" : "text-gray-500"
+        } hover:text-gray-900`}
     >
       {label}
       {arrow}
@@ -592,6 +601,8 @@ export default function Admin2Page() {
   const [mediaSort, setMediaSort] = useState<SortState>({ key: "PK", dir: "desc" });
   const [contentSort, setContentSort] = useState<SortState>({ key: "PK", dir: "desc" });
 
+  const [globalSearch, setGlobalSearch] = useState("");
+
   const [error, setError] = useState("");
 
   const toggleMediaSort = (key: string) => {
@@ -610,6 +621,9 @@ export default function Admin2Page() {
 
   const mediaItemsSorted = useMemo(() => sortArray(mediaItems, mediaSort), [mediaItems, mediaSort]);
   const contentItemsSorted = useMemo(() => sortArray(contentItems, contentSort), [contentItems, contentSort]);
+
+  const mediaItemsFiltered = useMemo(() => filterBySearch(mediaItemsSorted, globalSearch), [mediaItemsSorted, globalSearch]);
+  const contentItemsFiltered = useMemo(() => filterBySearch(contentItemsSorted, globalSearch), [contentItemsSorted, globalSearch]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -843,27 +857,56 @@ export default function Admin2Page() {
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900 p-6">
+
+      {/* ── Global Search ── */}
+      <div className="mb-5">
+        <div className="relative max-w-xl">
+          <span className="absolute inset-y-0 left-3 flex items-center text-slate-400 pointer-events-none">
+            🔍
+          </span>
+          <input
+            type="text"
+            value={globalSearch}
+            onChange={(e) => setGlobalSearch(e.target.value)}
+            placeholder="Search all fields across both tables…"
+            className="w-full pl-9 pr-9 py-2.5 border border-slate-300 rounded-lg bg-white shadow-sm text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+          {globalSearch && (
+            <button
+              onClick={() => setGlobalSearch("")}
+              className="absolute inset-y-0 right-3 flex items-center text-slate-400 hover:text-slate-600"
+              title="Clear search"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+        {globalSearch && (
+          <p className="mt-1.5 text-xs text-slate-500">
+            Showing {mediaItemsFiltered.length}/{mediaItems.length} media &amp; {contentItemsFiltered.length}/{contentItems.length} content rows matching &ldquo;{globalSearch}&rdquo;
+          </p>
+        )}
+      </div>
+
       <div className="border-b border-slate-300 mb-6">
         <div className="flex space-x-1">
           <button
             onClick={() => setActiveTab("media")}
-            className={`px-6 py-3 font-medium text-sm transition-all ${
-              activeTab === "media"
+            className={`px-6 py-3 font-medium text-sm transition-all ${activeTab === "media"
                 ? "border-b-4 border-blue-600 text-blue-700 bg-blue-50"
                 : "text-slate-600 hover:text-slate-800 hover:bg-slate-100"
-            }`}
+              }`}
           >
-            Media Items Table – Region: {AWS_REGION} ({mediaItems.length})
+            Media Items – {AWS_REGION}{globalSearch ? ` (${mediaItemsFiltered.length}/${mediaItems.length})` : ` (${mediaItems.length})`}
           </button>
           <button
             onClick={() => setActiveTab("content")}
-            className={`px-6 py-3 font-medium text-sm transition-all ${
-              activeTab === "content"
+            className={`px-6 py-3 font-medium text-sm transition-all ${activeTab === "content"
                 ? "border-b-4 border-blue-600 text-blue-700 bg-blue-50"
                 : "text-slate-600 hover:text-slate-800 hover:bg-slate-100"
-            }`}
+              }`}
           >
-            Website Content Table – Region: {AWS_REGION} ({contentItems.length})
+            Website Content – {AWS_REGION}{globalSearch ? ` (${contentItemsFiltered.length}/${contentItems.length})` : ` (${contentItems.length})`}
           </button>
         </div>
       </div>
@@ -889,7 +932,7 @@ export default function Admin2Page() {
             />
           )}
           <MediaTable
-            items={mediaItemsSorted}
+            items={mediaItemsFiltered}
             loading={mediaLoading}
             selectedPKs={selectedMediaPKs}
             deleting={mediaDeleting}
@@ -913,7 +956,7 @@ export default function Admin2Page() {
 
       {activeTab === "content" && (
         <ContentTable
-          items={contentItemsSorted}
+          items={contentItemsFiltered}
           loading={contentLoading}
           selectedPKs={selectedContentPKs}
           deleting={contentDeleting}

@@ -378,6 +378,21 @@ function HomePageContent() {
         <Header />
       </div>
 
+      {/* Logo below header line, on top of banner — md+ only; mobile shows logo in header */}
+      <div
+        className="hidden md:block absolute left-8 lg:left-12 z-20 pointer-events-none"
+        style={{ top: "72px" }}
+      >
+        <img
+          src="/images/newheaderlogo26feb.jpg"
+          alt="Radio Olgoo – Echo of Iranian Civilization"
+          className="block h-[168px] w-auto object-contain rounded-lg"
+          style={{
+            filter: "drop-shadow(0 0 12px rgba(197,155,65,0.5))",
+          }}
+        />
+      </div>
+
       {/* Hero section — full cinematic image display */}
       <div className="relative z-0">
         <HeroSection />

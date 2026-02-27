@@ -104,12 +104,12 @@ html, body {
     transform: translateX(0);
   }
   to {
-    transform: translateX(-33.333%);
+    transform: translateX(-25%);
   }
 }
 
 .animate-date-strip {
-  animation: date-strip 25s linear infinite;
+  animation: date-strip 30s linear infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
