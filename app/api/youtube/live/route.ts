@@ -430,14 +430,59 @@ export async function GET(req: Request) {
       results[r.handle] = r;
     } catch (e: any) {
       const hh = normalizeHandle(h);
-      results[hh] = {
-        handle: hh,
-        isLive: false,
-        foundBy: "none",
-        candidatesChecked: 0,
-        error: e?.message || "unknown_error",
-        debug: { apiEnabled },
-      };
+      const errMsg = e?.message || "";
+
+      // When API quota is exceeded, fall back to HTML so 24/7 channels (e.g. Iran International) can still show as live
+      if (apiEnabled && (errMsg.includes("quota") || errMsg.includes("exceeded"))) {
+        try {
+          // #region agent log
+          fetch("http://127.0.0.1:7245/ingest/d5efc3aa-8cbf-4f94-9a4d-8b25d050894c", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              location: "app/api/youtube/live/route.ts:quota_fallback",
+              message: "API quota exceeded, using HTML fallback",
+              data: { handle: hh },
+              timestamp: Date.now(),
+              hypothesisId: "quota_fallback",
+            }),
+          }).catch(() => {});
+          // #endregion
+          const r = await resolveLiveHtmlFallback(h);
+          // #region agent log
+          fetch("http://127.0.0.1:7245/ingest/d5efc3aa-8cbf-4f94-9a4d-8b25d050894c", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              location: "app/api/youtube/live/route.ts:html_fallback_result",
+              message: "HTML fallback result",
+              data: { handle: r.handle, isLive: r.isLive, foundBy: r.foundBy },
+              timestamp: Date.now(),
+              hypothesisId: "quota_fallback",
+            }),
+          }).catch(() => {});
+          // #endregion
+          results[r.handle] = r;
+        } catch (fallbackErr: any) {
+          results[hh] = {
+            handle: hh,
+            isLive: false,
+            foundBy: "none",
+            candidatesChecked: 0,
+            error: fallbackErr?.message || "html_fallback_failed",
+            debug: { apiEnabled, quotaFallback: true },
+          };
+        }
+      } else {
+        results[hh] = {
+          handle: hh,
+          isLive: false,
+          foundBy: "none",
+          candidatesChecked: 0,
+          error: errMsg || "unknown_error",
+          debug: { apiEnabled },
+        };
+      }
     }
   }
 
