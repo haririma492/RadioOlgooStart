@@ -85,7 +85,7 @@ export default function AdminPage() {
   // ── Maintain Sections & Groups Modal States ─────────────────────────
   const logRef = useRef<HTMLPreElement>(null);
   const [showMaintainModal, setShowMaintainModal] = useState(false);
-  const [maintainTab, setMaintainTab] = useState<"section" | "group" | "move-group" | "rename" | "delete-group">(
+  const [maintainTab, setMaintainTab] = useState<"section" | "group" | "move-group" | "rename" | "delete-group" | "delete-section">(
     "section"
   );
   const [newSectionName, setNewSectionName] = useState("");
@@ -985,7 +985,7 @@ export default function AdminPage() {
     }
   }
 
-  async function handleDeleteSection() {
+  async function handleDeleteSection(onSuccess?: () => void) {
     if (!targetSection || targetSection === sectionToDelete) {
       pushLog("❌ Invalid target section");
       return;
@@ -1018,9 +1018,15 @@ export default function AdminPage() {
       }
       await refreshAll();
       await new Promise((r) => setTimeout(r, 600));
+      setKnownGroups((prev) => {
+        const next = { ...prev };
+        delete next[sectionToDelete];
+        return next;
+      });
       setShowDeleteSectionModal(false);
       setSection(ALL);
       pushLog(`Section delete operation completed`);
+      onSuccess?.();
     } catch (err: any) {
       pushLog(`Critical error: ${err.message}`);
       alert("Section delete failed: " + err.message);
@@ -1951,6 +1957,303 @@ export default function AdminPage() {
               await refreshAll();
             }}
           />
+        )}
+
+        {/* Maintain Sections & Groups Modal */}
+        {showMaintainModal && (
+          <div
+            className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+            onClick={() => setShowMaintainModal(false)}
+          >
+            <div
+              className="bg-white rounded-2xl p-6 max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex justify-between items-center mb-4 flex-shrink-0">
+                <h2 className="text-xl font-black text-slate-900">⚙️ Maintain Sections & Groups</h2>
+                <button
+                  type="button"
+                  onClick={() => setShowMaintainModal(false)}
+                  className="p-2 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-600 font-bold"
+                >
+                  ✕ Close
+                </button>
+              </div>
+
+              {/* Tabs */}
+              <div className="flex gap-2 mb-4 flex-wrap flex-shrink-0">
+                {(["section", "group", "move-group", "rename", "delete-group", "delete-section"] as const).map((tab) => (
+                  <button
+                    key={tab}
+                    type="button"
+                    onClick={() => setMaintainTab(tab)}
+                    className={`px-3 py-2 rounded-lg text-sm font-bold transition-colors ${
+                      maintainTab === tab
+                        ? "bg-purple-600 text-white"
+                        : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                    }`}
+                  >
+                    {tab === "section" && "Add section"}
+                    {tab === "group" && "Add group"}
+                    {tab === "move-group" && "Move group"}
+                    {tab === "rename" && "Rename"}
+                    {tab === "delete-group" && "Delete group"}
+                    {tab === "delete-section" && "Delete section"}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex-1 min-h-0 overflow-y-auto space-y-4">
+                {/* Tab: Add section */}
+                {maintainTab === "section" && (
+                  <div className="space-y-3">
+                    <label className="block text-sm font-bold text-slate-700">New section name</label>
+                    <input
+                      type="text"
+                      value={newSectionName}
+                      onChange={(e) => setNewSectionName(e.target.value)}
+                      placeholder="e.g. News"
+                      className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                      disabled={maintainBusy}
+                    />
+                    <button
+                      type="button"
+                      onClick={createNewSection}
+                      disabled={maintainBusy}
+                      className="px-4 py-2 rounded-lg bg-purple-600 text-white font-bold hover:bg-purple-700 disabled:opacity-50"
+                    >
+                      {maintainBusy ? "⏳ Creating..." : "Create section"}
+                    </button>
+                  </div>
+                )}
+
+                {/* Tab: Add group */}
+                {maintainTab === "group" && (
+                  <div className="space-y-3">
+                    <label className="block text-sm font-bold text-slate-700">Section</label>
+                    <select
+                      value={selectedSectionForGroup}
+                      onChange={(e) => setSelectedSectionForGroup(e.target.value)}
+                      className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-purple-500"
+                      disabled={maintainBusy}
+                    >
+                      <option value="">Select section</option>
+                      {sectionList.map((s) => (
+                        <option key={s} value={s}>{s}</option>
+                      ))}
+                    </select>
+                    <label className="block text-sm font-bold text-slate-700">New group name</label>
+                    <input
+                      type="text"
+                      value={newGroupName}
+                      onChange={(e) => setNewGroupName(e.target.value)}
+                      placeholder="e.g. Politics"
+                      className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                      disabled={maintainBusy}
+                    />
+                    <button
+                      type="button"
+                      onClick={createNewGroup}
+                      disabled={maintainBusy}
+                      className="px-4 py-2 rounded-lg bg-purple-600 text-white font-bold hover:bg-purple-700 disabled:opacity-50"
+                    >
+                      {maintainBusy ? "⏳ Creating..." : "Create group"}
+                    </button>
+                  </div>
+                )}
+
+                {/* Tab: Move group */}
+                {maintainTab === "move-group" && (
+                  <div className="space-y-3">
+                    <label className="block text-sm font-bold text-slate-700">Group name to move</label>
+                    <input
+                      type="text"
+                      value={groupToMove}
+                      onChange={(e) => setGroupToMove(e.target.value)}
+                      placeholder="Group name (same in both sections)"
+                      className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                      disabled={maintainBusy}
+                    />
+                    <label className="block text-sm font-bold text-slate-700">Target section</label>
+                    <select
+                      value={targetSectionForMove}
+                      onChange={(e) => setTargetSectionForMove(e.target.value)}
+                      className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-purple-500"
+                      disabled={maintainBusy}
+                    >
+                      <option value="">Select section</option>
+                      {sectionList.map((s) => (
+                        <option key={s} value={s}>{s}</option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={moveGroup}
+                      disabled={maintainBusy}
+                      className="px-4 py-2 rounded-lg bg-purple-600 text-white font-bold hover:bg-purple-700 disabled:opacity-50"
+                    >
+                      {maintainBusy ? "⏳ Moving..." : "Move group"}
+                    </button>
+                  </div>
+                )}
+
+                {/* Tab: Rename */}
+                {maintainTab === "rename" && (
+                  <div className="space-y-3">
+                    <div className="flex gap-4">
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="radio"
+                          checked={renameTarget === "section"}
+                          onChange={() => setRenameTarget("section")}
+                          disabled={maintainBusy}
+                        />
+                        <span className="font-bold text-slate-700">Section</span>
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="radio"
+                          checked={renameTarget === "group"}
+                          onChange={() => setRenameTarget("group")}
+                          disabled={maintainBusy}
+                        />
+                        <span className="font-bold text-slate-700">Group</span>
+                      </label>
+                    </div>
+                    <label className="block text-sm font-bold text-slate-700">Current name</label>
+                    <input
+                      type="text"
+                      value={renameOldName}
+                      onChange={(e) => setRenameOldName(e.target.value)}
+                      placeholder={renameTarget === "section" ? "Section name" : "Group name"}
+                      className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                      disabled={maintainBusy}
+                    />
+                    <label className="block text-sm font-bold text-slate-700">New name</label>
+                    <input
+                      type="text"
+                      value={renameNewName}
+                      onChange={(e) => setRenameNewName(e.target.value)}
+                      placeholder="New name"
+                      className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                      disabled={maintainBusy}
+                    />
+                    <button
+                      type="button"
+                      onClick={renameItem}
+                      disabled={maintainBusy}
+                      className="px-4 py-2 rounded-lg bg-purple-600 text-white font-bold hover:bg-purple-700 disabled:opacity-50"
+                    >
+                      {maintainBusy ? "⏳ Renaming..." : "Rename"}
+                    </button>
+                  </div>
+                )}
+
+                {/* Tab: Delete group */}
+                {maintainTab === "delete-group" && (
+                  <div className="space-y-3">
+                    <p className="text-sm text-slate-600">Move all items from a group to another group, then remove the empty group.</p>
+                    <label className="block text-sm font-bold text-slate-700">Section</label>
+                    <select
+                      value={deleteGroupSection}
+                      onChange={(e) => { setDeleteGroupSection(e.target.value); setGroupToDelete(""); }}
+                      className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-purple-500"
+                      disabled={maintainBusy}
+                    >
+                      <option value="">Select section</option>
+                      {sectionList.map((s) => (
+                        <option key={s} value={s}>{s}</option>
+                      ))}
+                    </select>
+                    <label className="block text-sm font-bold text-slate-700">Group to delete</label>
+                    <select
+                      value={groupToDelete}
+                      onChange={(e) => setGroupToDelete(e.target.value)}
+                      className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-purple-500"
+                      disabled={maintainBusy || !deleteGroupSection}
+                    >
+                      <option value="">Select group</option>
+                      {(sectionMap[deleteGroupSection] || []).map((g) => (
+                        <option key={g} value={g}>{g}</option>
+                      ))}
+                    </select>
+                    <label className="block text-sm font-bold text-slate-700">Move items to group (optional)</label>
+                    <input
+                      type="text"
+                      value={moveToGroupAfterDelete}
+                      onChange={(e) => setMoveToGroupAfterDelete(e.target.value)}
+                      placeholder="Leave empty to clear group on items"
+                      className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                      disabled={maintainBusy}
+                    />
+                    <button
+                      type="button"
+                      onClick={deleteGroupAndMove}
+                      disabled={maintainBusy}
+                      className="px-4 py-2 rounded-lg bg-red-600 text-white font-bold hover:bg-red-700 disabled:opacity-50"
+                    >
+                      {maintainBusy ? "⏳ Processing..." : "Delete group & move items"}
+                    </button>
+                  </div>
+                )}
+
+                {/* Tab: Delete section */}
+                {maintainTab === "delete-section" && (
+                  <div className="space-y-3">
+                    <p className="text-sm text-slate-600">Move all items from a section to another section. The section will effectively be empty/removed from use.</p>
+                    <label className="block text-sm font-bold text-slate-700">Section to delete</label>
+                    <select
+                      value={sectionToDelete}
+                      onChange={(e) => setSectionToDelete(e.target.value)}
+                      className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-purple-500"
+                      disabled={deleteBusy}
+                    >
+                      <option value="">Select section</option>
+                      {sectionList.map((s) => (
+                        <option key={s} value={s}>{s}</option>
+                      ))}
+                    </select>
+                    <label className="block text-sm font-bold text-slate-700">Move items to section</label>
+                    <select
+                      value={targetSection}
+                      onChange={(e) => { setTargetSection(e.target.value); setTargetGroup(ALL); }}
+                      className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-purple-500"
+                      disabled={deleteBusy}
+                    >
+                      <option value="">Select target section</option>
+                      {sectionList.filter((s) => s !== sectionToDelete).map((s) => (
+                        <option key={s} value={s}>{s}</option>
+                      ))}
+                    </select>
+                    {targetSection && (
+                      <>
+                        <label className="block text-sm font-bold text-slate-700">Target group (optional)</label>
+                        <select
+                          value={targetGroup}
+                          onChange={(e) => setTargetGroup(e.target.value)}
+                          className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-purple-500"
+                          disabled={deleteBusy}
+                        >
+                          <option value={ALL}>— Any / no group —</option>
+                          {(sectionMap[targetSection] || []).map((g) => (
+                            <option key={g} value={g}>{g}</option>
+                          ))}
+                        </select>
+                      </>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteSection(() => setShowMaintainModal(false))}
+                      disabled={deleteBusy || !sectionToDelete || !targetSection}
+                      className="px-4 py-2 rounded-lg bg-red-600 text-white font-bold hover:bg-red-700 disabled:opacity-50"
+                    >
+                      {deleteBusy ? "⏳ Moving items..." : "Delete section & move items"}
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
         )}
 
         {/* YouTube Progress View */}
