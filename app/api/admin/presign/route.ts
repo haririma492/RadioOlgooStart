@@ -119,7 +119,7 @@ export async function GET(req: Request) {
       CacheControl: "public, max-age=31536000, immutable",
     });
 
-    const uploadUrl = await getSignedUrl(s3, cmd, { expiresIn: 300 });
+    const uploadUrl = await getSignedUrl(s3 as unknown as Parameters<typeof getSignedUrl>[0], cmd, { expiresIn: 300 });
     const publicUrl = `https://${bucket}.s3.${region}.amazonaws.com/${encodeS3KeyForUrl(key)}`;
 
     return new NextResponse(
