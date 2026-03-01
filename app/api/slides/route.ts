@@ -97,7 +97,7 @@ export async function GET(req: Request) {
 
           if (key) {
             urlStr = await getSignedUrl(
-              s3,
+              s3 as unknown as Parameters<typeof getSignedUrl>[0],
               new GetObjectCommand({ Bucket: bucket, Key: key }),
               { expiresIn: 60 * 60 } // 1 hour
             );

@@ -65,7 +65,7 @@ export async function GET(req: NextRequest) {
     });
 
     // 10 minutes is plenty for "Open"
-    const url = await getSignedUrl(s3, command, { expiresIn: 60 * 10 });
+    const url = await getSignedUrl(s3 as unknown as Parameters<typeof getSignedUrl>[0], command, { expiresIn: 60 * 10 });
 
     return json({ ok: true, bucket, key, url });
   } catch (e: any) {
