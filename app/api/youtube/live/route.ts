@@ -75,9 +75,22 @@ async function fetchHtml(url: string, init: RequestInit = {}) {
     headers: {
       ...(init.headers || {}),
       "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122 Safari/537.36",
-      Accept: "text/html,application/xhtml+xml",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      Accept:
+        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
       "Accept-Language": "en-US,en;q=0.9",
+      "Accept-Encoding": "gzip, deflate, br",
+      "Cache-Control": "no-cache",
+      Pragma: "no-cache",
+      "Sec-Ch-Ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+      "Sec-Ch-Ua-Mobile": "?0",
+      "Sec-Ch-Ua-Platform": '"Windows"',
+      "Sec-Fetch-Dest": "document",
+      "Sec-Fetch-Mode": "navigate",
+      "Sec-Fetch-Site": "none",
+      "Sec-Fetch-User": "?1",
+      "Upgrade-Insecure-Requests": "1",
+      Referer: "https://www.youtube.com/",
     },
   });
 
@@ -105,16 +118,16 @@ function looksLikeConsentOrInterstitial(finalUrl: string, html: string): boolean
 }
 
 /**
- * Extract ytInitialPlayerResponse JSON object from YouTube HTML.
+ * Extract a JSON object from HTML by key (e.g. ytInitialPlayerResponse or ytInitialData).
  * Balanced-brace extraction (safe, no regex-dotall).
  */
-function extractPlayerResponse(html: string): any | null {
+function extractJsonByKey(html: string, key: string, keyQuoted?: string): any | null {
   if (!html) return null;
 
-  const keys = ["ytInitialPlayerResponse", '"ytInitialPlayerResponse"'];
+  const keys = keyQuoted ? [key, keyQuoted] : [key, `"${key}"`];
 
-  for (const key of keys) {
-    const idx = html.indexOf(key);
+  for (const k of keys) {
+    const idx = html.indexOf(k);
     if (idx < 0) continue;
 
     const braceStart = html.indexOf("{", idx);
@@ -157,6 +170,30 @@ function extractPlayerResponse(html: string): any | null {
     }
   }
 
+  return null;
+}
+
+function extractPlayerResponse(html: string): any | null {
+  return extractJsonByKey(html, "ytInitialPlayerResponse", '"ytInitialPlayerResponse"');
+}
+
+/**
+ * Fallback: try to get current live videoId from ytInitialData when player response is missing/empty.
+ * Used when deployed env gets different HTML (e.g. no ytInitialPlayerResponse).
+ */
+function extractLiveVideoIdFromInitialData(html: string): string | null {
+  const data = extractJsonByKey(html, "ytInitialData", '"ytInitialData"');
+  if (!data?.contents?.twoColumnBrowseResultsRenderer?.tabs) return null;
+
+  const tabs = data.contents.twoColumnBrowseResultsRenderer.tabs as any[];
+  for (const tab of tabs) {
+    const grid = tab?.tabRenderer?.content?.richGridRenderer?.contents;
+    if (!Array.isArray(grid)) continue;
+    for (const item of grid) {
+      const vid = item?.richItemRenderer?.content?.videoRenderer?.videoId;
+      if (typeof vid === "string" && isValidVideoId(vid)) return vid;
+    }
+  }
   return null;
 }
 
@@ -222,7 +259,16 @@ async function checkCandidate(url: string, candidateName: CandidateName): Promis
     hasLiveStreamingDetails: !!pr?.liveStreamingDetails,
   };
 
-  const live = isLiveNowFromPlayerResponse(pr);
+  let live = isLiveNowFromPlayerResponse(pr);
+
+  // 2b) Fallback when deploy gets different HTML: try ytInitialData for first video (often live tab)
+  if (!live.isLive && page.text) {
+    const fallbackVideoId = extractLiveVideoIdFromInitialData(page.text);
+    if (fallbackVideoId) {
+      live = { isLive: true, videoId: fallbackVideoId, reason: "live" };
+      debugEntry.playerResponseFallback = "ytInitialData";
+    }
+  }
 
   if (live.isLive && live.videoId) {
     return {
