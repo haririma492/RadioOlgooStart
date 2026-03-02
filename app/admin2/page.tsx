@@ -202,6 +202,19 @@ function MediaTable({
           >
             + Add New
           </button>
+          {selectedPKs.size === 1 && (() => {
+            const pk = Array.from(selectedPKs)[0];
+            const selectedItem = items.find((i) => i.PK === pk);
+            return selectedItem ? (
+              <button
+                type="button"
+                onClick={() => onEdit(selectedItem)}
+                className="px-4 py-2 bg-amber-600 text-white rounded hover:bg-amber-700"
+              >
+                Edit
+              </button>
+            ) : null;
+          })()}
           {selectedPKs.size > 0 && (
             <button
               onClick={onDelete}
@@ -331,7 +344,9 @@ function MediaEditor({
     for (const it of existingItems) {
       if (it.section) s.add(it.section);
     }
-    return Array.from(s).sort((a, b) => a.localeCompare(b));
+    return Array.from(s)
+      .filter((sec) => sec !== "Test")
+      .sort((a, b) => a.localeCompare(b));
   }, [existingItems]);
 
   const existingGroups = useMemo(() => {
@@ -438,51 +453,67 @@ function MediaEditor({
           <div>
             <label className="block text-sm font-medium mb-1">Section *</label>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-              <select
-                value={formData.section || ""}
-                onChange={(e) => setFormData({ ...formData, section: e.target.value })}
-                className="w-full border rounded px-3 py-2"
-              >
-                {existingSections.length === 0 ? (
-                  <option value="Live Videos">Live Videos</option>
-                ) : (
-                  existingSections.map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  ))
-                )}
-              </select>
-              <input
-                placeholder="Or type a new section..."
-                value={formData.section || ""}
-                onChange={(e) => setFormData({ ...formData, section: e.target.value })}
-                className="w-full border rounded px-3 py-2"
-              />
+              <div>
+                <span className="block text-xs text-slate-500 mb-0.5">Choose existing</span>
+                <select
+                  value={formData.section || ""}
+                  onChange={(e) => setFormData({ ...formData, section: e.target.value })}
+                  className="w-full border rounded px-3 py-2"
+                >
+                  {existingSections.length === 0 ? (
+                    <option value="Live Videos">Live Videos</option>
+                  ) : (
+                    existingSections.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </div>
+              <div>
+                <span className="block text-xs text-slate-500 mb-0.5">Or type new section</span>
+                <input
+                  type="text"
+                  placeholder="Type a new section name..."
+                  value={formData.section || ""}
+                  onChange={(e) => setFormData({ ...formData, section: e.target.value })}
+                  className="w-full border rounded px-3 py-2"
+                  aria-label="Section (type new)"
+                />
+              </div>
             </div>
           </div>
           {/* Group */}
           <div>
             <label className="block text-sm font-medium mb-1">Group</label>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-              <select
-                value={formData.group || ""}
-                onChange={(e) => setFormData({ ...formData, group: e.target.value })}
-                className="w-full border rounded px-3 py-2"
-              >
-                <option value="">(none)</option>
-                {existingGroups.map((g) => (
-                  <option key={g} value={g}>
-                    {g}
-                  </option>
-                ))}
-              </select>
-              <input
-                placeholder="Or type a new group..."
-                value={formData.group || ""}
-                onChange={(e) => setFormData({ ...formData, group: e.target.value })}
-                className="w-full border rounded px-3 py-2"
-              />
+              <div>
+                <span className="block text-xs text-slate-500 mb-0.5">Choose existing</span>
+                <select
+                  value={formData.group || ""}
+                  onChange={(e) => setFormData({ ...formData, group: e.target.value })}
+                  className="w-full border rounded px-3 py-2"
+                >
+                  <option value="">(none)</option>
+                  {existingGroups.map((g) => (
+                    <option key={g} value={g}>
+                      {g}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <span className="block text-xs text-slate-500 mb-0.5">Or type new group</span>
+                <input
+                  type="text"
+                  placeholder="Type a new group name..."
+                  value={formData.group || ""}
+                  onChange={(e) => setFormData({ ...formData, group: e.target.value })}
+                  className="w-full border rounded px-3 py-2"
+                  aria-label="Group (type new)"
+                />
+              </div>
             </div>
           </div>
           {/* URL */}
@@ -1031,6 +1062,19 @@ function ContentTable({
           >
             + Add New
           </button>
+          {selectedPKs.size === 1 && (() => {
+            const pk = Array.from(selectedPKs)[0];
+            const selectedItem = items.find((i) => i.PK === pk);
+            return selectedItem ? (
+              <button
+                type="button"
+                onClick={() => onEdit(selectedItem)}
+                className="px-4 py-2 bg-amber-600 text-white rounded hover:bg-amber-700"
+              >
+                Edit
+              </button>
+            ) : null;
+          })()}
           {selectedPKs.size > 0 && (
             <button
               onClick={onDelete}
@@ -1166,9 +1210,19 @@ function ContentEditor({
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-xl p-6 max-w-lg w-full max-h-[90vh] overflow-y-auto">
-        <h3 className="text-lg font-bold mb-4">
-          {item ? "Edit Content" : "Add New Content"}
-        </h3>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-bold">
+            {item ? "Edit Content" : "Add New Content"}
+          </h3>
+          <button
+            type="button"
+            onClick={onCancel}
+            className="text-slate-500 hover:text-slate-800"
+            title="Close"
+          >
+            ✕
+          </button>
+        </div>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-sm font-medium mb-1">
