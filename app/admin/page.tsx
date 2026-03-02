@@ -890,6 +890,7 @@ export default function AdminPage() {
   function startEditing(it: MediaItem) {
     setEditingPK(it.PK);
     setEditingFields({
+      url: it.url || "",
       title: it.title,
       description: it.description || "",
       person: it.person || "",
@@ -952,6 +953,8 @@ export default function AdminPage() {
         if (!putRes.ok) throw new Error(`S3 upload failed (HTTP ${putRes.status}) ${editFile.name}`);
         newUrl = pres.publicUrl;
         pushLog(`✅ New file uploaded`);
+      } else {
+        newUrl = (editingFields.url ?? it.url ?? "").trim() || it.url;
       }
       const payload: any = {
         PK: it.PK,
@@ -1525,6 +1528,18 @@ export default function AdminPage() {
                               className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                               disabled={busy}
                             />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-bold text-slate-700 mb-1">URL</label>
+                            <input
+                              type="text"
+                              value={editingFields.url ?? ""}
+                              onChange={(e) => setEditingFields((prev) => ({ ...prev, url: e.target.value }))}
+                              placeholder="https://... or S3 public URL"
+                              className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm font-mono text-xs"
+                              disabled={busy}
+                            />
+                            <p className="mt-0.5 text-xs text-slate-500">Media link (S3 or external). Leave unchanged or paste a new URL.</p>
                           </div>
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                             <div>
