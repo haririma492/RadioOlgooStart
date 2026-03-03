@@ -177,39 +177,16 @@ function extractPlayerResponse(html: string): any | null {
   return extractJsonByKey(html, "ytInitialPlayerResponse", '"ytInitialPlayerResponse"');
 }
 
-/**
- * Fallback: try to get current live videoId from ytInitialData when player response is missing/empty.
- * Used when deployed env gets different HTML (e.g. no ytInitialPlayerResponse).
- */
-function extractLiveVideoIdFromInitialData(html: string): string | null {
-  const data = extractJsonByKey(html, "ytInitialData", '"ytInitialData"');
-  if (!data?.contents?.twoColumnBrowseResultsRenderer?.tabs) return null;
-
-  const tabs = data.contents.twoColumnBrowseResultsRenderer.tabs as any[];
-  for (const tab of tabs) {
-    const grid = tab?.tabRenderer?.content?.richGridRenderer?.contents;
-    if (!Array.isArray(grid)) continue;
-    for (const item of grid) {
-      const vid = item?.richItemRenderer?.content?.videoRenderer?.videoId;
-      if (typeof vid === "string" && isValidVideoId(vid)) return vid;
-    }
-  }
-  return null;
-}
-
 function isLiveNowFromPlayerResponse(pr: any): { isLive: boolean; videoId?: string; reason?: string } {
   if (!pr) return { isLive: false, reason: "no_player_response" };
 
   const videoId = pr.videoDetails?.videoId;
   if (!videoId || !isValidVideoId(videoId)) return { isLive: false, reason: "no_valid_videoId" };
 
-  const isLiveContent = pr.videoDetails?.isLiveContent === true;
   const isLiveNow = pr.microformat?.playerMicroformatRenderer?.liveBroadcastDetails?.isLiveNow === true;
-  const hasLiveStreamingDetails = !!pr.liveStreamingDetails;
+  if (!isLiveNow) return { isLive: false, videoId: undefined, reason: "not_live_now" };
 
-  const isLive = isLiveNow || (isLiveContent && hasLiveStreamingDetails);
-
-  return { isLive, videoId: isLive ? videoId : undefined, reason: isLive ? "live" : "not_live" };
+  return { isLive: true, videoId, reason: "live" };
 }
 
 async function checkCandidate(url: string, candidateName: CandidateName): Promise<CandidateCheck> {
@@ -259,16 +236,7 @@ async function checkCandidate(url: string, candidateName: CandidateName): Promis
     hasLiveStreamingDetails: !!pr?.liveStreamingDetails,
   };
 
-  let live = isLiveNowFromPlayerResponse(pr);
-
-  // 2b) Fallback when deploy gets different HTML: try ytInitialData for first video (often live tab)
-  if (!live.isLive && page.text) {
-    const fallbackVideoId = extractLiveVideoIdFromInitialData(page.text);
-    if (fallbackVideoId) {
-      live = { isLive: true, videoId: fallbackVideoId, reason: "live" };
-      debugEntry.playerResponseFallback = "ytInitialData";
-    }
-  }
+  const live = isLiveNowFromPlayerResponse(pr);
 
   if (live.isLive && live.videoId) {
     return {
@@ -290,11 +258,9 @@ async function checkCandidate(url: string, candidateName: CandidateName): Promis
 async function resolveLiveHtmlFallback(handle: string): Promise<Result> {
   const h = normalizeHandle(handle);
   const debug: any = { handle: h, mode: "html_fallback" };
-  let candidatesChecked = 0;
 
   const liveUrl = `https://www.youtube.com/@${encodeURIComponent(h)}/live?hl=en&gl=US&persist_app=1&app=desktop`;
   const liveResult = await checkCandidate(liveUrl, "live");
-  candidatesChecked++;
   debug.live = liveResult.debug;
 
   if (liveResult.isLive) {
@@ -304,24 +270,7 @@ async function resolveLiveHtmlFallback(handle: string): Promise<Result> {
       videoId: liveResult.videoId,
       watchUrl: liveResult.watchUrl,
       foundBy: (liveResult.foundBy as FoundBy) || "none",
-      candidatesChecked,
-      debug,
-    };
-  }
-
-  const streamsUrl = `https://www.youtube.com/@${encodeURIComponent(h)}/streams?hl=en&gl=US&persist_app=1&app=desktop`;
-  const streamsResult = await checkCandidate(streamsUrl, "streams");
-  candidatesChecked++;
-  debug.streams = streamsResult.debug;
-
-  if (streamsResult.isLive) {
-    return {
-      handle: h,
-      isLive: true,
-      videoId: streamsResult.videoId,
-      watchUrl: streamsResult.watchUrl,
-      foundBy: (streamsResult.foundBy as FoundBy) || "none",
-      candidatesChecked,
+      candidatesChecked: 1,
       debug,
     };
   }
@@ -330,7 +279,7 @@ async function resolveLiveHtmlFallback(handle: string): Promise<Result> {
     handle: h,
     isLive: false,
     foundBy: "none",
-    candidatesChecked,
+    candidatesChecked: 1,
     debug,
   };
 }
