@@ -5,6 +5,17 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
+/** In-memory cache to reduce YouTube API quota: one full check per cache key per TTL. */
+const LIVE_CACHE_TTL_MS = 90 * 1000; // 90 seconds
+const liveCache = new Map<
+  string,
+  { results: Record<string, Result>; apiEnabled: boolean; ts: number }
+>();
+
+function getLiveCacheKey(handles: string[]): string {
+  return [...handles].sort().join(",");
+}
+
 type FoundBy = "yt_api_live" | "yt_api_no_live" | "live_redirect" | "live_html_signals" | "streams_html_signals" | "none";
 type Result = {
   handle: string;
@@ -410,10 +421,25 @@ export async function GET(req: Request) {
     .filter((x): x is string => !!x);
 
   const unique = Array.from(new Set(handles));
-  const results: Record<string, Result> = {};
-
   const apiKey = process.env.YOUTUBE_API_KEY || "";
   const apiEnabled = apiKey.length > 0;
+
+  const cacheKey = getLiveCacheKey(unique);
+  const cached = liveCache.get(cacheKey);
+  const now = Date.now();
+  if (cached && now - cached.ts < LIVE_CACHE_TTL_MS) {
+    return NextResponse.json(
+      { ok: true, results: cached.results, apiEnabled: cached.apiEnabled },
+      {
+        status: 200,
+        headers: {
+          "Cache-Control": "private, max-age=90, s-maxage=0",
+        },
+      }
+    );
+  }
+
+  const results: Record<string, Result> = {};
 
   for (const h of unique) {
     try {
@@ -430,33 +456,7 @@ export async function GET(req: Request) {
       // When API quota is exceeded, fall back to HTML so 24/7 channels (e.g. Iran International) can still show as live
       if (apiEnabled && (errMsg.includes("quota") || errMsg.includes("exceeded"))) {
         try {
-          // #region agent log
-          fetch("http://127.0.0.1:7245/ingest/d5efc3aa-8cbf-4f94-9a4d-8b25d050894c", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              location: "app/api/youtube/live/route.ts:quota_fallback",
-              message: "API quota exceeded, using HTML fallback",
-              data: { handle: hh },
-              timestamp: Date.now(),
-              hypothesisId: "quota_fallback",
-            }),
-          }).catch(() => {});
-          // #endregion
           const r = await resolveLiveHtmlFallback(h);
-          // #region agent log
-          fetch("http://127.0.0.1:7245/ingest/d5efc3aa-8cbf-4f94-9a4d-8b25d050894c", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              location: "app/api/youtube/live/route.ts:html_fallback_result",
-              message: "HTML fallback result",
-              data: { handle: r.handle, isLive: r.isLive, foundBy: r.foundBy },
-              timestamp: Date.now(),
-              hypothesisId: "quota_fallback",
-            }),
-          }).catch(() => {});
-          // #endregion
           results[r.handle] = r;
         } catch (fallbackErr: any) {
           results[hh] = {
@@ -481,8 +481,15 @@ export async function GET(req: Request) {
     }
   }
 
+  liveCache.set(cacheKey, { results, apiEnabled, ts: Date.now() });
+
   return NextResponse.json(
     { ok: true, results, apiEnabled },
-    { status: 200, headers: { "Cache-Control": "no-store, max-age=0" } }
+    {
+      status: 200,
+      headers: {
+        "Cache-Control": "private, max-age=90, s-maxage=0",
+      },
+    }
   );
 }
