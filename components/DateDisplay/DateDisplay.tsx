@@ -96,23 +96,22 @@ function DateSegmentDayMonthYear({
     );
   }
 
-  const displayText = `${day} · ${month} · ${year}`;
-
   return (
     <span
-      dir="ltr"
-      className="date-strip-segment font-farsi relative inline-block px-5 py-1.5 cursor-default text-white"
+      className="date-strip-segment font-farsi relative inline-flex items-center gap-2 px-5 py-1.5 cursor-default text-white"
       onMouseEnter={handleEnter}
       onMouseMove={handleMove}
       onMouseLeave={handleLeave}
       style={{
         fontSize: "1.125rem",
         lineHeight: 1.5,
-        direction: "ltr",
-        unicodeBidi: "isolate",
       }}
     >
-      {displayText}
+      <span className="inline-block">{year}</span>
+      <span className="inline-block text-gray-400 font-sans mx-[-1px]">-</span>
+      <span className="inline-block">{month}</span>
+      <span className="inline-block text-gray-400 font-sans mx-[-1px]">-</span>
+      <span className="inline-block">{day}</span>
     </span>
   );
 }

@@ -38,7 +38,7 @@ function toFarsiDigits(n: number): string {
 }
 
 /** Separator between day, month, year for instant readability (exported for layout split) */
-export const DATE_PART_SEP = "  ·  ";
+export const DATE_PART_SEP = " - ";
 
 /** Shamsi (Solar Hijri): e.g. "۱۴۰۴  ·  بهمن  ·  ۳۰" */
 export function formatShamsi(date: Date): string {
@@ -50,7 +50,7 @@ export function formatShamsi(date: Date): string {
     day
   );
   const month = SHAMSI_MONTHS_FARSI[jm - 1];
-  return `${toFarsiDigits(jy)}${DATE_PART_SEP}${month}${DATE_PART_SEP}${toFarsiDigits(jd)}`;
+  return `${toFarsiDigits(jd)}${DATE_PART_SEP}${month}${DATE_PART_SEP}${toFarsiDigits(jy)}`;
 }
 
 /** Georgian with Farsi month names: e.g. "۲۰۲۶  ·  ژانویه  ·  ۳۰" */
@@ -58,7 +58,7 @@ export function formatGeorgianFarsi(date: Date): string {
   const day = date.getDate();
   const month = GREGORIAN_MONTHS_FARSI[date.getMonth()];
   const year = date.getFullYear();
-  return `${toFarsiDigits(year)}${DATE_PART_SEP}${month}${DATE_PART_SEP}${toFarsiDigits(day)}`;
+  return `${toFarsiDigits(day)}${DATE_PART_SEP}${month}${DATE_PART_SEP}${toFarsiDigits(year)}`;
 }
 
 /** Shahanshahi (Shamsi year + 1180): e.g. "۲۵۸۴  ·  بهمن  ·  ۱۰" */
@@ -72,7 +72,7 @@ export function formatShahanshahi(date: Date): string {
   );
   const month = SHAMSI_MONTHS_FARSI[jm - 1];
   const shahanshahiYear = jy + 1180;
-  return `${toFarsiDigits(shahanshahiYear)}${DATE_PART_SEP}${month}${DATE_PART_SEP}${toFarsiDigits(jd)}`;
+  return `${toFarsiDigits(jd)}${DATE_PART_SEP}${month}${DATE_PART_SEP}${toFarsiDigits(shahanshahiYear)}`;
 }
 
 export interface ThreeCalendars {
