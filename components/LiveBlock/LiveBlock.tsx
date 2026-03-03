@@ -190,7 +190,7 @@ export default function LiveBlock() {
     setYtLiveLoading(true);
     pollYouTubeLive(ytHandles);
 
-    const t = setInterval(() => pollYouTubeLive(ytHandles), 5 * 60_000);
+    const t = setInterval(() => pollYouTubeLive(ytHandles), 10 * 60_000);
     return () => clearInterval(t);
   }, [ytHandles.join(",")]);
 
