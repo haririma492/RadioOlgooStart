@@ -1,27 +1,31 @@
 // app/api/youtube/live/route.ts
-
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
-export const preferredRegion = 'fra1';   // Frankfurt
+// Optional (only works on Pro/Enterprise typically; harmless on Hobby)
+export const preferredRegion = "fra1"; // Frankfurt
 
 /**
  * STRICT LIVE DETECTION (NO GUESSING):
- * - We NEVER use YouTube Data API => 0 quota usage.
- * - We ONLY mark a channel as live if:
+ * - Default: NO YouTube Data API calls (0 quota).
+ * - We ONLY mark a channel LIVE if:
  *   A) /@handle/live redirects to watch?v=...
  *   OR
  *   B) ytInitialPlayerResponse says isLiveNow === true AND has a valid videoId
- * - Otherwise isLive=false.
+ * - Optional extra safety: verify the watch page also shows isLiveNow === true.
  *
- * Optional: verify the found videoId by fetching the watch page and re-checking isLiveNow.
+ * Debug visibility on Vercel:
+ * - Logs MUST be inside GET() to show per-request.
+ * - We also return x-ytlive-key-len header so you can confirm env is present.
  */
 
-console.log("[yt-live] hasKey=", !!process.env.YOUTUBE_API_KEY, "len=", (process.env.YOUTUBE_API_KEY || "").length);
 const CDN_TTL_SECONDS = 60;
 const STALE_SECONDS = 240;
 
+// keep short to reduce load
 const MEM_TTL_MS = 90 * 1000;
 const memCache = new Map<string, { ts: number; results: Record<string, Result> }>();
 
@@ -45,8 +49,10 @@ function extractHandleFromUrlOrHandle(input: string): string | null {
   const s = (input || "").trim();
   if (!s) return null;
 
+  // direct handle: IRANINTL or @IRANINTL
   if (/^@?[A-Za-z0-9._-]+$/.test(s)) return normalizeHandle(s);
 
+  // youtube handle url: https://www.youtube.com/@IRANINTL or /@IRANINTL/streams
   const m = s.match(/youtube\.com\/@([A-Za-z0-9._-]+)/i);
   if (m?.[1]) return normalizeHandle(m[1]);
 
@@ -112,6 +118,7 @@ function looksLikeConsentOrInterstitial(finalUrl: string, html: string): boolean
 
 /**
  * Balanced-brace JSON extraction by key (ytInitialPlayerResponse).
+ * No regex-dotall needed; avoids TS "red underline" complaints.
  */
 function extractJsonByKey(html: string, key: string): any | null {
   if (!html) return null;
@@ -174,9 +181,7 @@ function readIsLiveNowFromPlayerResponse(pr: any): { isLive: boolean; videoId?: 
   const videoId = pr?.videoDetails?.videoId;
   if (!videoId || !isValidVideoId(videoId)) return { isLive: false, reason: "no_valid_videoId" };
 
-  const isLiveNow =
-    pr?.microformat?.playerMicroformatRenderer?.liveBroadcastDetails?.isLiveNow === true;
-
+  const isLiveNow = pr?.microformat?.playerMicroformatRenderer?.liveBroadcastDetails?.isLiveNow === true;
   if (!isLiveNow) return { isLive: false, reason: "not_live_now" };
 
   return { isLive: true, videoId, reason: "isLiveNow_true" };
@@ -184,7 +189,7 @@ function readIsLiveNowFromPlayerResponse(pr: any): { isLive: boolean; videoId?: 
 
 /**
  * Optional: verify the videoId by fetching watch page and checking isLiveNow there too.
- * This prevents false positives if /live shows a placeholder.
+ * Helps prevent false positives.
  */
 async function verifyWatchIsLive(videoId: string) {
   const watchUrl = `https://www.youtube.com/watch?v=${videoId}&hl=en&gl=US`;
@@ -214,10 +219,7 @@ async function verifyWatchIsLive(videoId: string) {
 async function resolveLiveStrict(handle: string): Promise<Result> {
   const h = normalizeHandle(handle);
 
-  const liveUrl = `https://www.youtube.com/@${encodeURIComponent(
-    h
-  )}/live?hl=en&gl=US&persist_app=1&app=desktop`;
-
+  const liveUrl = `https://www.youtube.com/@${encodeURIComponent(h)}/live?hl=en&gl=US&persist_app=1&app=desktop`;
   const page = await fetchHtml(liveUrl);
 
   const debug: any = {
@@ -241,7 +243,6 @@ async function resolveLiveStrict(handle: string): Promise<Result> {
   // 1) Redirect-based detection (best)
   const redirectedId = extractVideoIdFromUrl(page.finalUrl);
   if (redirectedId) {
-    // Verify on watch page (extra safety)
     const verify = await verifyWatchIsLive(redirectedId);
     debug.watchVerify = verify.debug;
 
@@ -256,7 +257,7 @@ async function resolveLiveStrict(handle: string): Promise<Result> {
       };
     }
 
-    // If verify fails due to consent, still accept redirect as strong hint:
+    // If verify fails due to consent/interstitial, accept redirect as strong hint.
     if (!verify.ok && verify.debug?.blockedOrConsent) {
       return {
         handle: h,
@@ -268,7 +269,7 @@ async function resolveLiveStrict(handle: string): Promise<Result> {
       };
     }
 
-    // Redirect happened but not actually live => treat as not live
+    // Redirect happened but verification says not live => not live
     return {
       handle: h,
       isLive: false,
@@ -289,7 +290,6 @@ async function resolveLiveStrict(handle: string): Promise<Result> {
   };
 
   if (live.isLive && live.videoId) {
-    // Verify again on watch page
     const verify = await verifyWatchIsLive(live.videoId);
     debug.watchVerify = verify.debug;
 
@@ -316,7 +316,6 @@ async function resolveLiveStrict(handle: string): Promise<Result> {
       };
     }
 
-    // Not live when verified => not live
     return {
       handle: h,
       isLive: false,
@@ -338,6 +337,14 @@ function cacheKeyFor(handles: string[]) {
 }
 
 export async function GET(req: Request) {
+  // ✅ MUST be inside GET() to show per-request on Vercel
+  console.log(
+    "[yt-live][GET] hasKey=",
+    !!process.env.YOUTUBE_API_KEY,
+    "len=",
+    (process.env.YOUTUBE_API_KEY || "").length
+  );
+
   const { searchParams } = new URL(req.url);
 
   const handlesParam = searchParams.get("handles") || "";
@@ -363,6 +370,7 @@ export async function GET(req: Request) {
       {
         status: 200,
         headers: {
+          "x-ytlive-key-len": String((process.env.YOUTUBE_API_KEY || "").length),
           "Cache-Control": `public, s-maxage=${CDN_TTL_SECONDS}, stale-while-revalidate=${STALE_SECONDS}`,
         },
       }
@@ -393,6 +401,7 @@ export async function GET(req: Request) {
     {
       status: 200,
       headers: {
+        "x-ytlive-key-len": String((process.env.YOUTUBE_API_KEY || "").length),
         "Cache-Control": `public, s-maxage=${CDN_TTL_SECONDS}, stale-while-revalidate=${STALE_SECONDS}`,
       },
     }
