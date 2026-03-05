@@ -1,7 +1,10 @@
 // app/api/youtube/live/route.ts
+
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
+
+export const preferredRegion = 'fra1';   // Frankfurt
 
 /**
  * STRICT LIVE DETECTION (NO GUESSING):
