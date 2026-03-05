@@ -18,6 +18,7 @@ export const preferredRegion = 'fra1';   // Frankfurt
  * Optional: verify the found videoId by fetching the watch page and re-checking isLiveNow.
  */
 
+console.log("[yt-live] hasKey=", !!process.env.YOUTUBE_API_KEY, "len=", (process.env.YOUTUBE_API_KEY || "").length);
 const CDN_TTL_SECONDS = 60;
 const STALE_SECONDS = 240;
 
