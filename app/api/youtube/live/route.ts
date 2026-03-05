@@ -5,8 +5,10 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-// Optional (only works on Pro/Enterprise typically; harmless on Hobby)
-export const preferredRegion = "fra1"; // Frankfurt
+
+export const preferredRegion = ["iad1"]; // or your chosen one
+
+
 
 /**
  * STRICT LIVE DETECTION (NO GUESSING):
@@ -221,7 +223,8 @@ async function resolveLiveStrict(handle: string): Promise<Result> {
 
   const liveUrl = `https://www.youtube.com/@${encodeURIComponent(h)}/live?hl=en&gl=US&persist_app=1&app=desktop`;
   const page = await fetchHtml(liveUrl);
-
+console.log("[yt-live]", h, "status", page.status, "len", page.text.length, "final", page.finalUrl);
+console.log("[yt-live]", h, "hasPlayerResponse", page.text.includes("ytInitialPlayerResponse"));
   const debug: any = {
     handle: h,
     liveUrl,
