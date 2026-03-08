@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import type { LiveItem } from "@/lib/youtubeLive";
 import { appendEmbedParams, youtubeEmbedUrl } from "@/lib/youtubeLive";
 
@@ -32,6 +32,15 @@ export default function LiveSection({ liveItems, maxWall: _maxWall, title = "LIV
 
   const inFocus = !!activeVideoId;
 
+  useEffect(() => {
+    if (!inFocus) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setActiveVideoId(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [inFocus]);
+
   return (
     <section className="w-full">
       <div className="flex items-center justify-between mb-3">
@@ -52,11 +61,20 @@ export default function LiveSection({ liveItems, maxWall: _maxWall, title = "LIV
         )}
       </div>
 
-      {/* Focus mode: only ONE player (with sound); constrained width so it doesn't dominate the page */}
+      {/* Focus mode: inline player (X or Back to Wall or Escape to return) */}
       {inFocus && activeItem ? (
         <div className="max-w-2xl mx-auto mb-4">
-          <div className="rounded-2xl overflow-hidden border border-white/10 bg-black">
-            <div className="aspect-video w-full">
+          <div className="rounded-2xl overflow-hidden border border-white/10 bg-black relative">
+            <div className="aspect-video w-full relative">
+              <button
+                type="button"
+                onClick={() => setActiveVideoId(null)}
+                className="absolute top-2 right-2 z-10 w-8 h-8 rounded-full bg-black/70 hover:bg-black/90 text-white flex items-center justify-center text-lg leading-none border border-white/20 hover:border-white/40 transition"
+                title="Back to wall"
+                aria-label="Back to wall"
+              >
+                ×
+              </button>
               <iframe
                 key={`focus-${activeItem.videoId}`}
                 src={getEmbedSrc(activeItem, { autoplay: true, mute: false })}
@@ -96,11 +114,15 @@ export default function LiveSection({ liveItems, maxWall: _maxWall, title = "LIV
                     key={`card-${item.videoId}`}
                     className="flex-shrink-0 w-[300px] sm:w-[340px] rounded-xl overflow-hidden border border-white/10 bg-black hover:border-white/25 transition"
                   >
-                    <div className="relative w-full aspect-video">
+                    <div className="relative w-full aspect-video cursor-pointer">
                       <div className="absolute z-10 top-2 left-2 px-2 py-1 rounded text-xs font-bold bg-red-600">
                         LIVE
                       </div>
-
+                      <div
+                        className="absolute inset-0 z-[5]"
+                        aria-hidden
+                        onClick={() => setActiveVideoId(item.videoId)}
+                      />
                       <iframe
                         key={`muted-${item.videoId}`}
                         src={getEmbedSrc(item, { autoplay: true, mute: true })}
