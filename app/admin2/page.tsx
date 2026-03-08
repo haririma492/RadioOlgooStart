@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 // ──────────────────────────────────────────────────────────────────────
 // TYPES
@@ -332,12 +332,14 @@ function MediaEditor({
   onCancel,
   saving,
   existingItems,
+  adminToken,
 }: {
   item: DynamoItem | null;
   onSave: (item: DynamoItem) => void;
   onCancel: () => void;
   saving: boolean;
   existingItems: DynamoItem[];
+  adminToken: string;
 }) {
   const existingSections = useMemo(() => {
     const s = new Set<string>();
@@ -375,10 +377,42 @@ function MediaEditor({
     };
   });
 
+  const [channelIdResolving, setChannelIdResolving] = useState(false);
+  const [channelIdStatus, setChannelIdStatus] = useState<"idle" | "resolved" | "failed">("idle");
+
   useEffect(() => {
     if (!item) return;
     setFormData({ ...item });
+    // If editing and channelId already exists, mark resolved
+    if (item.channelId) setChannelIdStatus("resolved");
   }, [item]);
+
+  const isYouTubeUrl = (url: string) => /youtube\.com|youtu\.be/i.test(url || "");
+
+  const resolveChannelId = useCallback(async (url: string) => {
+    if (!url || !isYouTubeUrl(url)) return;
+    setChannelIdResolving(true);
+    setChannelIdStatus("idle");
+    try {
+      const res = await fetch("/api/admin/resolve-youtube-channel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-admin-token": adminToken },
+        body: JSON.stringify({ url }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (data?.channelId) {
+        setFormData((p) => ({ ...p, channelId: data.channelId }));
+        setChannelIdStatus("resolved");
+      } else {
+        setChannelIdStatus("failed");
+        console.warn("channelId not resolved:", data?.error);
+      }
+    } catch {
+      setChannelIdStatus("failed");
+    } finally {
+      setChannelIdResolving(false);
+    }
+  }, [adminToken]);
 
   const regeneratePK = () => {
     if (item) return;
@@ -402,6 +436,7 @@ function MediaEditor({
       person: String(formData.person || "").trim() || undefined,
       date: String(formData.date || "").trim() || undefined,
       description: String(formData.description || "").trim() || undefined,
+      channelId: String(formData.channelId || "").trim() || undefined,
       active: !!formData.active,
       updatedAt: now,
       createdAt: item?.createdAt || formData.createdAt || now,
@@ -516,15 +551,55 @@ function MediaEditor({
               </div>
             </div>
           </div>
-          {/* URL */}
+          {/* URL + channelId resolver */}
           <div>
             <label className="block text-sm font-medium mb-1">URL</label>
-            <input
-              value={formData.url || ""}
-              onChange={(e) => setFormData({ ...formData, url: e.target.value })}
-              className="w-full border rounded px-3 py-2"
-              placeholder="https://..."
-            />
+            <div className="flex gap-2">
+              <input
+                value={formData.url || ""}
+                onChange={(e) => {
+                  setFormData({ ...formData, url: e.target.value, channelId: undefined });
+                  setChannelIdStatus("idle");
+                }}
+                onBlur={(e) => {
+                  if (isYouTubeUrl(e.target.value) && !formData.channelId) {
+                    resolveChannelId(e.target.value);
+                  }
+                }}
+                className="flex-1 border rounded px-3 py-2"
+                placeholder="https://..."
+              />
+              {isYouTubeUrl(formData.url || "") && (
+                <button
+                  type="button"
+                  onClick={() => resolveChannelId(formData.url || "")}
+                  disabled={channelIdResolving}
+                  className="px-3 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-60 text-sm whitespace-nowrap"
+                  title="Look up YouTube channelId"
+                >
+                  {channelIdResolving ? "⏳" : "🔍 Get ID"}
+                </button>
+              )}
+            </div>
+            {/* channelId status pill */}
+            {isYouTubeUrl(formData.url || "") && (
+              <div className="mt-1.5 flex items-center gap-2">
+                <span className="text-xs text-slate-500">Channel ID:</span>
+                {formData.channelId ? (
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-mono">
+                    ✅ {formData.channelId}
+                  </span>
+                ) : channelIdStatus === "failed" ? (
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-600">
+                    ⚠️ Not resolved — click 🔍 Get ID to retry
+                  </span>
+                ) : (
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">
+                    {channelIdResolving ? "Resolving…" : "Not yet resolved — will auto-resolve on blur or click 🔍 Get ID"}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
           {/* Title / Person / Date */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -596,7 +671,7 @@ function MediaEditor({
             </button>
           </div>
           <div className="text-xs text-slate-500">
-            Saved fields: PK, section, group, url, title, person, date, description, active, createdAt, updatedAt.
+            Saved fields: PK, section, group, url, channelId, title, person, date, description, active, createdAt, updatedAt.
           </div>
         </form>
       </div>
@@ -924,8 +999,8 @@ export default function Admin2Page() {
           <button
             onClick={() => setActiveTab("media")}
             className={`px-6 py-3 font-medium text-sm transition-all ${activeTab === "media"
-                ? "border-b-4 border-blue-600 text-blue-700 bg-blue-50"
-                : "text-slate-600 hover:text-slate-800 hover:bg-slate-100"
+              ? "border-b-4 border-blue-600 text-blue-700 bg-blue-50"
+              : "text-slate-600 hover:text-slate-800 hover:bg-slate-100"
               }`}
           >
             Media Items – {AWS_REGION}{globalSearch ? ` (${mediaItemsFiltered.length}/${mediaItems.length})` : ` (${mediaItems.length})`}
@@ -933,8 +1008,8 @@ export default function Admin2Page() {
           <button
             onClick={() => setActiveTab("content")}
             className={`px-6 py-3 font-medium text-sm transition-all ${activeTab === "content"
-                ? "border-b-4 border-blue-600 text-blue-700 bg-blue-50"
-                : "text-slate-600 hover:text-slate-800 hover:bg-slate-100"
+              ? "border-b-4 border-blue-600 text-blue-700 bg-blue-50"
+              : "text-slate-600 hover:text-slate-800 hover:bg-slate-100"
               }`}
           >
             Website Content – {AWS_REGION}{globalSearch ? ` (${contentItemsFiltered.length}/${contentItems.length})` : ` (${contentItems.length})`}
@@ -955,6 +1030,7 @@ export default function Admin2Page() {
               existingItems={mediaItems}
               item={editingMedia}
               saving={mediaSaving}
+              adminToken={token}
               onCancel={() => {
                 setShowAddMediaForm(false);
                 setEditingMedia(null);
