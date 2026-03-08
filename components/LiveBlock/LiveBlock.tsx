@@ -8,6 +8,7 @@ import { youtubeWatchUrl } from "@/lib/youtubeLive";
 type LiveRow = {
   PK: string;
   url: string;
+  channelId?: string;
   title?: string;
   section?: string;
   group?: string;
@@ -18,13 +19,9 @@ type YTLiveResult = {
   handle: string;
   isLive: boolean;
   videoId?: string;
+  embedUrl?: string;
+  watchUrl?: string;
   title?: string;
-  error?: string;
-};
-
-type ExternalStatusResult = {
-  id: string;
-  state: "LIVE" | "OFFLINE" | "UNKNOWN";
   error?: string;
 };
 
@@ -60,18 +57,6 @@ function extractVideoIdFromYouTubeUrl(url: string): string | null {
   }
 }
 
-function openMiniWindow(url: string): void {
-  const w = 520;
-  const h = 360;
-  const left = Math.max(0, window.screenX + window.outerWidth - w - 30);
-  const top = Math.max(0, window.screenY + 80);
-  window.open(
-    url,
-    "olgoo_live_mini",
-    `popup=yes,width=${w},height=${h},left=${left},top=${top},resizable=yes,scrollbars=yes`
-  );
-}
-
 export default function LiveBlock() {
   const [liveRows, setLiveRows] = useState<LiveRow[]>([]);
   const [liveLoading, setLiveLoading] = useState(false);
@@ -80,8 +65,6 @@ export default function LiveBlock() {
   const lastGoodRef = useRef<Record<string, { at: number; data: YTLiveResult }>>({});
   const [ytStatus, setYtStatus] = useState<Record<string, YTLiveResult>>({});
   const [ytLiveLoading, setYtLiveLoading] = useState(false);
-
-  const [externalStatus, setExternalStatus] = useState<Record<string, ExternalStatusResult>>({});
 
   async function loadLiveRows() {
     setLiveLoading(true);
@@ -115,7 +98,7 @@ export default function LiveBlock() {
         it?.url || it?.URL || it?.link || "";
 
       const cleaned: LiveRow[] = items
-        .map((x: { url?: string; URL?: string; link?: string; active?: boolean; [k: string]: unknown }) => ({ ...x, url: getUrl(x) }))
+        .map((x: { url?: string; URL?: string; link?: string; channelId?: string; active?: boolean;[k: string]: unknown }) => ({ ...x, url: getUrl(x) }))
         .filter((x): x is LiveRow & { url: string } => !!x?.url)
         .filter((x) => (x?.active ?? true) === true)
         .filter((x) => isLiveSection(x?.section))
@@ -133,11 +116,35 @@ export default function LiveBlock() {
     loadLiveRows();
   }, []);
 
-  async function pollYouTubeLive(handles: string[]) {
-    if (handles.length === 0) return;
+  async function pollYouTubeLive(rows: LiveRow[]) {
+    const ytRows = rows.filter((r) => isYouTubeUrl(r.url) && !extractVideoIdFromYouTubeUrl(r.url));
+    if (ytRows.length === 0) {
+      setYtLiveLoading(false);
+      return;
+    }
 
-    const q = encodeURIComponent(handles.join(","));
-    const url = `/api/youtube/live?handles=${q}`;
+    // Prefer channelId param (RSS path, zero quota) — fallback to handle
+    const withChannelId = ytRows.filter((r) => r.channelId);
+    const withoutChannelId = ytRows.filter((r) => !r.channelId);
+
+    const params = new URLSearchParams();
+    if (withChannelId.length > 0) {
+      // format: UCxxx:handle,UCyyy:handle2
+      params.set(
+        "channelIds",
+        withChannelId
+          .map((r) => `${r.channelId}${r.url ? ":" + (extractHandle(r.url) || "") : ""}`)
+          .join(",")
+      );
+    }
+    if (withoutChannelId.length > 0) {
+      const handles = withoutChannelId
+        .map((r) => extractHandle(r.url))
+        .filter((h): h is string => !!h);
+      if (handles.length > 0) params.set("handles", handles.join(","));
+    }
+
+    const url = `/api/youtube/live?${params.toString()}`;
 
     try {
       const res = await fetch(url, { cache: "no-store" });
@@ -147,20 +154,21 @@ export default function LiveBlock() {
       const results: Record<string, YTLiveResult> = json.results || {};
       const now = Date.now();
 
-      Object.entries(results).forEach(([handle, r]) => {
-        lastGoodRef.current[handle] = { at: now, data: r };
+      Object.entries(results).forEach(([key, r]) => {
+        lastGoodRef.current[key] = { at: now, data: r };
       });
 
       setYtStatus(results);
     } catch {
       const now = Date.now();
       const held: Record<string, YTLiveResult> = {};
-      for (const h of handles) {
-        const heldEntry = lastGoodRef.current[h];
+      for (const row of ytRows) {
+        const key = extractHandle(row.url) || row.channelId || row.url;
+        const heldEntry = lastGoodRef.current[key];
         if (heldEntry && now - heldEntry.at < 10 * 60_000) {
-          held[h] = heldEntry.data;
+          held[key] = heldEntry.data;
         } else {
-          held[h] = { handle: h, isLive: false, error: "request_failed" };
+          held[key] = { handle: key, isLive: false, error: "request_failed" };
         }
       }
       setYtStatus(held);
@@ -169,78 +177,44 @@ export default function LiveBlock() {
     }
   }
 
-  const ytHandles = useMemo(() => {
-    const handles = liveRows
-      .map((r) => {
-        if (!isYouTubeUrl(r.url)) return null;
-        const direct = extractVideoIdFromYouTubeUrl(r.url);
-        if (direct) return null;
-        return extractHandle(r.url);
-      })
-      .filter((h): h is string => !!h);
-
-    return Array.from(new Set(handles));
+  const ytRows = useMemo(() => {
+    return liveRows.filter(
+      (r) => isYouTubeUrl(r.url) && !extractVideoIdFromYouTubeUrl(r.url)
+    );
   }, [liveRows]);
 
+  // Legacy handle list (for dep array / backward compat)
+  const ytHandles = useMemo(() => {
+    return ytRows
+      .map((r) => r.channelId || extractHandle(r.url))
+      .filter((h): h is string => !!h);
+  }, [ytRows]);
+
   useEffect(() => {
-    if (ytHandles.length === 0) {
+    if (ytRows.length === 0) {
       setYtLiveLoading(false);
       return;
     }
     setYtLiveLoading(true);
-    pollYouTubeLive(ytHandles);
+    pollYouTubeLive(ytRows);
 
-    const t = setInterval(() => pollYouTubeLive(ytHandles), 10 * 60_000);
+    // Poll every 10 minutes to stay within ~3000 quota/day (RSS + batch videos.list only)
+    const t = setInterval(() => pollYouTubeLive(ytRows), 10 * 60_000);
     return () => clearInterval(t);
   }, [ytHandles.join(",")]);
-
-  async function pollExternalStatus(rows: LiveRow[]) {
-    const externals = rows.filter((r) => r.url && !isYouTubeUrl(r.url));
-    if (externals.length === 0) return;
-
-    try {
-      const payload = {
-        items: externals.map((r) => ({ id: r.PK, url: r.url })),
-      };
-
-      const res = await fetch("/api/external/status", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        cache: "no-store",
-        body: JSON.stringify(payload),
-      });
-
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json?.error || "external status failed");
-
-      const arr: ExternalStatusResult[] = json?.results || json?.data || [];
-      if (Array.isArray(arr)) {
-        const map: Record<string, ExternalStatusResult> = {};
-        for (const r of arr) map[r.id] = r;
-        setExternalStatus(map);
-      }
-    } catch {
-      // keep previous status on failure
-    }
-  }
-
-  useEffect(() => {
-    pollExternalStatus(liveRows);
-    const t = setInterval(() => pollExternalStatus(liveRows), 60_000);
-    return () => clearInterval(t);
-  }, [liveRows]);
 
   const liveCards = useMemo(() => {
     const cards = liveRows.map((row) => {
       const isYT = isYouTubeUrl(row.url);
       const directVideoId = isYT ? extractVideoIdFromYouTubeUrl(row.url) : null;
       const handle = isYT && !directVideoId ? extractHandle(row.url) : null;
-      const status = handle ? ytStatus[handle] : undefined;
+      // Match API key: API uses entry.handle || entry.channelId, so look up by handle first
+      const statusKey = handle || row.channelId;
+      const status = statusKey ? ytStatus[statusKey] : undefined;
       const videoId = directVideoId || status?.videoId;
-
-      const ext = !isYT ? externalStatus[row.PK] : undefined;
-      const externalIsLive = !isYT ? ext?.state === "LIVE" : false;
-      const isLive = isYT ? !!videoId : externalIsLive;
+      const embedUrl = status?.embedUrl;
+      // Consider live if we have videoId OR channel embedUrl (API may return embedUrl only on Vercel when discovery fails)
+      const isLive = isYT && (!!videoId || !!embedUrl);
 
       return {
         PK: row.PK,
@@ -248,30 +222,28 @@ export default function LiveBlock() {
         url: row.url,
         isYouTube: isYT,
         handle,
+        channelId: row.channelId,
         isLive,
         videoId,
+        embedUrl,
+        watchUrl: status?.watchUrl,
         statusError: status?.error,
-        externalState: ext?.state,
-        externalError: ext?.error,
       };
     });
 
     const onlyLive = cards.filter((c) => c.isLive);
     return onlyLive.sort((a, b) => String(a.title).localeCompare(String(b.title)));
-  }, [liveRows, ytStatus, externalStatus]);
+  }, [liveRows, ytStatus]);
 
   const liveYouTubeItems: LiveItem[] = useMemo(() => {
     return liveCards
-      .filter((c) => c.isYouTube && !!c.videoId)
+      .filter((c) => c.isYouTube && (c.videoId || c.embedUrl))
       .map((c) => ({
         handle: (c.handle || c.title || c.PK).toString(),
-        videoId: c.videoId!,
-        watchUrl: youtubeWatchUrl(c.videoId!),
+        videoId: c.videoId || `channel-${c.channelId || c.PK}`,
+        watchUrl: c.watchUrl || (c.videoId ? youtubeWatchUrl(c.videoId) : c.url),
+        embedUrl: c.embedUrl,
       }));
-  }, [liveCards]);
-
-  const liveExternalCards = useMemo(() => {
-    return liveCards.filter((c) => !c.isYouTube);
   }, [liveCards]);
 
   return (
@@ -305,44 +277,6 @@ export default function LiveBlock() {
       {!liveLoading && !liveError && !ytLiveLoading && liveYouTubeItems.length > 0 && (
         <div className="mb-6">
           <LiveSection liveItems={liveYouTubeItems} maxWall={5} title="LIVE" />
-        </div>
-      )}
-
-      {!liveLoading && !liveError && liveExternalCards.length > 0 && (
-        <div className="space-y-3">
-          <div className="text-sm font-semibold opacity-90">External LIVE</div>
-          <div className="flex gap-4 overflow-x-auto pb-2">
-            {liveExternalCards.map((c) => (
-              <div
-                key={c.PK}
-                className="shrink-0 rounded-2xl border bg-black/45 border-white/15"
-                style={{ width: "340px" }}
-              >
-                <div className="p-3 flex items-center justify-between">
-                  <div className="font-semibold truncate pr-2">{c.title}</div>
-                  <span className="text-xs px-2 py-1 rounded-full border border-red-400/40 bg-red-500/20 text-red-100">
-                    LIVE
-                  </span>
-                </div>
-                <div className="px-3 pb-2 text-[11px] text-white/60 break-all">{c.url}</div>
-                <div className="px-3 pb-3">
-                  <div className="rounded-xl overflow-hidden bg-black/40 border border-white/10 h-[190px]">
-                    <div className="h-full flex flex-col items-center justify-center text-white/80">
-                      <div className="text-sm mb-3 text-center px-6">
-                        External source opens in mini window (cannot be embedded).
-                      </div>
-                      <button
-                        onClick={() => openMiniWindow(c.url)}
-                        className="px-4 py-2 rounded-lg bg-white/15 hover:bg-white/20 border border-white/15"
-                      >
-                        ▶ OPEN LIVE
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
         </div>
       )}
     </section>

@@ -2,7 +2,18 @@
 
 import React, { useMemo, useState } from "react";
 import type { LiveItem } from "@/lib/youtubeLive";
-import { youtubeEmbedUrl } from "@/lib/youtubeLive";
+import { appendEmbedParams, youtubeEmbedUrl } from "@/lib/youtubeLive";
+
+const VALID_VIDEO_ID = /^[a-zA-Z0-9_-]{11}$/;
+
+function getEmbedSrc(
+  item: LiveItem,
+  opts: { autoplay: boolean; mute: boolean }
+): string {
+  if (item.embedUrl) return appendEmbedParams(item.embedUrl, opts);
+  if (VALID_VIDEO_ID.test(item.videoId)) return youtubeEmbedUrl(item.videoId, opts);
+  return "";
+}
 
 type Props = {
   liveItems: LiveItem[]; // already filtered to only live channels
@@ -48,7 +59,7 @@ export default function LiveSection({ liveItems, maxWall: _maxWall, title = "LIV
             <div className="aspect-video w-full">
               <iframe
                 key={`focus-${activeItem.videoId}`}
-                src={youtubeEmbedUrl(activeItem.videoId, { autoplay: true, mute: false })}
+                src={getEmbedSrc(activeItem, { autoplay: true, mute: false })}
                 className="w-full h-full"
                 allow="autoplay; encrypted-media; picture-in-picture"
                 allowFullScreen
@@ -92,7 +103,7 @@ export default function LiveSection({ liveItems, maxWall: _maxWall, title = "LIV
 
                       <iframe
                         key={`muted-${item.videoId}`}
-                        src={youtubeEmbedUrl(item.videoId, { autoplay: true, mute: true })}
+                        src={getEmbedSrc(item, { autoplay: true, mute: true })}
                         className="w-full h-full"
                         allow="autoplay; encrypted-media; picture-in-picture"
                         allowFullScreen

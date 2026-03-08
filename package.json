@@ -28,6 +28,7 @@
     "react": "18.2.0",
     "react-beautiful-dnd": "^13.1.1",
     "react-dom": "18.2.0",
+    "redis": "^5.11.0",
     "shamsi": "^1.1.6",
     "tailwind-merge": "^3.4.1",
     "tailwindcss-animate": "^1.0.7",

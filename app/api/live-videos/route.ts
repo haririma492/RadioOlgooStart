@@ -95,6 +95,7 @@ export async function GET(req: Request) {
     const items = filtered.map((it) => ({
       PK: it.PK,
       url: it.url,
+      channelId: it.channelId,
       title: it.title || it.person || it.PK,
       person: it.person,
       group: it.group,
