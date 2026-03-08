@@ -277,6 +277,14 @@ async function batchCheckLiveness(videoIds: string[], apiKey: string): Promise<V
 // Quota design: 0 channels.list, 0 search.list. Only videos.list (1 unit per 50 IDs).
 // Channel IDs must be provided via ?channelIds= (from DynamoDB). Target: ~3000 units/day for 9 channels.
 export async function GET(req: Request) {
+  // ✅ MUST be inside GET() to show per-request on Vercel
+  console.log(
+    "[yt-live][GET] hasKey=",
+    !!process.env.YOUTUBE_API_KEY,
+    "len=",
+    (process.env.YOUTUBE_API_KEY || "").length
+  );
+
   const { searchParams } = new URL(req.url);
 
   // Accept channelIds directly (preferred, zero quota) or handles (fallback, 1 unit each)
