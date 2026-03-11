@@ -11,7 +11,6 @@ import BreakingNewsBanner from "@/components/BreakingNews/BreakingNewsBanner";
 import Footer from "@/components/Footer/Footer";
 import FloatingVideoPlayer from "@/components/FloatingVideoPlayer/FloatingVideoPlayer";
 import { PlaybackProvider, usePlayback } from "@/context/PlaybackContext";
-
 import LiveBlock from "@/components/LiveBlock/LiveBlock";
 
 type PlayingVideo = {
@@ -41,12 +40,14 @@ function HomePageContent() {
     setPlayingVideo(null);
   };
 
-
   return (
-    <div className="relative min-h-screen text-white">
-      {/* Background Image */}
+    <div id="user-page" className="relative min-h-screen overflow-x-hidden bg-black text-white">
+      {/* Hard black base behind everything */}
+      <div className="fixed inset-0 -z-20 bg-black" />
+
+      {/* Background image */}
       <div
-        className="fixed inset-0 -z-10"
+        className="fixed inset-0 -z-10 bg-black"
         style={{
           backgroundImage: "url('/images/full-site-background.webp')",
           backgroundSize: "cover",
@@ -54,41 +55,29 @@ function HomePageContent() {
           backgroundRepeat: "no-repeat",
         }}
       />
+
+      {/* Light dark overlay */}
       <div
         className="fixed inset-0 -z-[9]"
         style={{ backgroundColor: "rgba(22, 28, 36, 0.05)" }}
       />
 
-      <div className="relative z-10">
+      <div className="relative z-10 bg-transparent">
         <Header />
       </div>
 
-      {/* Logo below header line, on top of banner — md+ only; mobile shows logo in header */}
-      <div
-        className="hidden md:block absolute left-8 lg:left-12 z-20 pointer-events-none"
-        style={{ top: "72px" }}
-      >
-        <img
-          src="/images/newheaderlogo26feb.jpg"
-          alt="Radio Olgoo – Echo of Iranian Civilization"
-          className="block h-[168px] w-auto object-contain rounded-lg"
-          style={{
-            filter: "drop-shadow(0 0 12px rgba(197,155,65,0.5))",
-          }}
-        />
-      </div>
-
-      {/* Hero section — full cinematic image display */}
-      <div className="relative z-0">
+      <div className="relative z-0 bg-transparent">
         <HeroSection />
       </div>
 
-      <div className="relative z-0">
-        <main className="   py-8" style={{ paddingLeft: "2%", paddingRight: "2%", margin: "auto" }}>
+      <div className="relative z-0 bg-transparent">
+        <main
+          className="py-8 bg-transparent"
+          style={{ paddingLeft: "2%", paddingRight: "2%", margin: "auto" }}
+        >
           <LiveBlock />
 
-          {/* Existing content - section ids for header nav smooth scroll */}
-          <section id="video-hub" className="scroll-mt-24">
+          <section id="video-hub" className="scroll-mt-24 bg-transparent">
             <VideoHub
               onVideoClick={(video) => {
                 handleVideoPlay({
@@ -100,17 +89,27 @@ function HomePageContent() {
               }}
             />
           </section>
-          <section id="revolutionary-music" className="scroll-mt-24">
+
+          <section id="revolutionary-music" className="scroll-mt-24 bg-transparent">
             <AudioHub />
           </section>
-          <section id="video-submission" className="scroll-mt-24">
+
+          <section id="video-submission" className="scroll-mt-24 bg-transparent">
             <VideoSubmissionForm />
           </section>
-          <SocialLinksForm />
+
+          <div className="bg-transparent">
+            <SocialLinksForm />
+          </div>
         </main>
 
-        <BreakingNewsBanner />
-        <Footer />
+        <div className="bg-transparent">
+          <BreakingNewsBanner />
+        </div>
+
+        <div className="bg-transparent">
+          <Footer />
+        </div>
       </div>
 
       <FloatingVideoPlayer

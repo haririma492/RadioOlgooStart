@@ -70,7 +70,7 @@ export default function LiveBlock() {
     setLiveLoading(true);
     setLiveError("");
     try {
-      const res = await fetch("/api/live-videos", { cache: "no-store" });
+      const res = await fetch(`/api/live-videos?t=${Date.now()}`, { cache: "no-store" });
       const json = await res.json().catch(() => ({}));
 
       if (!res.ok) {
@@ -98,7 +98,16 @@ export default function LiveBlock() {
         it?.url || it?.URL || it?.link || "";
 
       const cleaned: LiveRow[] = items
-        .map((x: { url?: string; URL?: string; link?: string; channelId?: string; active?: boolean;[k: string]: unknown }) => ({ ...x, url: getUrl(x) }))
+        .map(
+          (x: {
+            url?: string;
+            URL?: string;
+            link?: string;
+            channelId?: string;
+            active?: boolean;
+            [k: string]: unknown;
+          }) => ({ ...x, url: getUrl(x) })
+        )
         .filter((x): x is LiveRow & { url: string } => !!x?.url)
         .filter((x) => (x?.active ?? true) === true)
         .filter((x) => isLiveSection(x?.section))
@@ -117,19 +126,19 @@ export default function LiveBlock() {
   }, []);
 
   async function pollYouTubeLive(rows: LiveRow[]) {
-    const ytRows = rows.filter((r) => isYouTubeUrl(r.url) && !extractVideoIdFromYouTubeUrl(r.url));
+    const ytRows = rows.filter(
+      (r) => isYouTubeUrl(r.url) && !extractVideoIdFromYouTubeUrl(r.url)
+    );
     if (ytRows.length === 0) {
       setYtLiveLoading(false);
       return;
     }
 
-    // Prefer channelId param (RSS path, zero quota) — fallback to handle
     const withChannelId = ytRows.filter((r) => r.channelId);
     const withoutChannelId = ytRows.filter((r) => !r.channelId);
 
     const params = new URLSearchParams();
     if (withChannelId.length > 0) {
-      // format: UCxxx:handle,UCyyy:handle2
       params.set(
         "channelIds",
         withChannelId
@@ -144,7 +153,7 @@ export default function LiveBlock() {
       if (handles.length > 0) params.set("handles", handles.join(","));
     }
 
-    const url = `/api/youtube/live?${params.toString()}`;
+    const url = `/api/youtube/live?${params.toString()}&t=${Date.now()}`;
 
     try {
       const res = await fetch(url, { cache: "no-store" });
@@ -165,7 +174,7 @@ export default function LiveBlock() {
       for (const row of ytRows) {
         const key = extractHandle(row.url) || row.channelId || row.url;
         const heldEntry = lastGoodRef.current[key];
-        if (heldEntry && now - heldEntry.at < 10 * 60_000) {
+        if (heldEntry && now - heldEntry.at < 2 * 60_000) {
           held[key] = heldEntry.data;
         } else {
           held[key] = { handle: key, isLive: false, error: "request_failed" };
@@ -183,7 +192,6 @@ export default function LiveBlock() {
     );
   }, [liveRows]);
 
-  // Legacy handle list (for dep array / backward compat)
   const ytHandles = useMemo(() => {
     return ytRows
       .map((r) => r.channelId || extractHandle(r.url))
@@ -198,8 +206,8 @@ export default function LiveBlock() {
     setYtLiveLoading(true);
     pollYouTubeLive(ytRows);
 
-    // Poll every 10 minutes to stay within ~3000 quota/day (RSS + batch videos.list only)
-    const t = setInterval(() => pollYouTubeLive(ytRows), 10 * 60_000);
+    // Poll every 7 minutes
+    const t = setInterval(() => pollYouTubeLive(ytRows), 7 * 60_000);
     return () => clearInterval(t);
   }, [ytHandles.join(",")]);
 
@@ -208,12 +216,10 @@ export default function LiveBlock() {
       const isYT = isYouTubeUrl(row.url);
       const directVideoId = isYT ? extractVideoIdFromYouTubeUrl(row.url) : null;
       const handle = isYT && !directVideoId ? extractHandle(row.url) : null;
-      // Match API key: API uses entry.handle || entry.channelId, so look up by handle first
       const statusKey = handle || row.channelId;
       const status = statusKey ? ytStatus[statusKey] : undefined;
       const videoId = directVideoId || status?.videoId;
       const embedUrl = status?.embedUrl;
-      // Consider live if we have videoId OR channel embedUrl (API may return embedUrl only on Vercel when discovery fails)
       const isLive = isYT && (!!videoId || !!embedUrl);
 
       return {
@@ -248,11 +254,11 @@ export default function LiveBlock() {
 
   return (
     <section className="mb-10">
-      <div className="flex items-center justify-between mb-4">
+      <div className="mb-4 flex items-center justify-between">
         <h2 className="text-3xl font-bold tracking-wide">LIVE</h2>
         <button
           onClick={loadLiveRows}
-          className="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10"
+          className="rounded-lg border border-white/10 bg-white/10 px-4 py-2 hover:bg-white/15"
         >
           Refresh
         </button>
@@ -261,7 +267,7 @@ export default function LiveBlock() {
       {liveLoading && <div className="text-white/70">Loading live sources…</div>}
 
       {liveError && (
-        <div className="text-red-200 bg-red-950/30 border border-red-900/40 p-3 rounded-lg">
+        <div className="rounded-lg border border-red-900/40 bg-red-950/30 p-3 text-red-200">
           {liveError}
         </div>
       )}
