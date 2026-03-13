@@ -1,31 +1,270 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import Header from "@/components/Header/Header";
 import HeroSection from "@/components/HeroSection/HeroSection";
 import VideoHub from "@/components/VideoHub/VideoHub";
 import AudioHub from "@/components/AudioHub/AudioHub";
-import VideoSubmissionForm from "@/components/Forms/VideoSubmissionForm";
-import SocialLinksForm from "@/components/Forms/SocialLinksForm";
 import BreakingNewsBanner from "@/components/BreakingNews/BreakingNewsBanner";
 import Footer from "@/components/Footer/Footer";
 import FloatingVideoPlayer from "@/components/FloatingVideoPlayer/FloatingVideoPlayer";
 import { PlaybackProvider, usePlayback } from "@/context/PlaybackContext";
 import LiveBlock from "@/components/LiveBlock/LiveBlock";
+import type { OlgooLivePlayerType } from "@/components/OlgooLive/types";
+
+type Lang = "fa" | "en";
+
+const translations = {
+  fa: {
+    videoHub: "آرشیو ویدئو",
+    music: "موسیقی میهنی",
+    breakingNews: "خبر فوری",
+    english: "English",
+    farsi: "فارسی",
+    tehranTime: "ساعت در تهران",
+    morning: "صبح",
+    afternoon: "بعدازظهر",
+    evening: "شب",
+    olgooLiveUnavailable: "پخش اُلگو لایو اکنون در دسترس نیست.",
+  },
+  en: {
+    videoHub: "Video Archive",
+    music: "Revolutionary Music",
+    breakingNews: "Breaking News",
+    english: "English",
+    farsi: "فارسی",
+    tehranTime: "Time in Tehran",
+    morning: "Morning",
+    afternoon: "Afternoon",
+    evening: "Evening",
+    olgooLiveUnavailable: "Olgoo Live is not available right now.",
+  },
+};
 
 type PlayingVideo = {
   url: string;
   person?: string;
   title?: string;
   timestamp?: string;
+  playerType?: OlgooLivePlayerType;
+  sourceLabel?: string;
+  isLive?: boolean;
 };
+
+function toPersianDigits(value: string | number): string {
+  return String(value).replace(/\d/g, (d) => "۰۱۲۳۴۵۶۷۸۹"[Number(d)]);
+}
+
+function stripLeadingZeroHour(timeText: string): string {
+  return String(timeText)
+    .replace(/^0(\d:)/, "$1")
+    .replace(/^۰([۰-۹]:)/, "$1");
+}
+
+function useLiveNow() {
+  const [now, setNow] = useState<Date>(() => new Date());
+
+  useEffect(() => {
+    const tick = () => setNow(new Date());
+    tick();
+
+    const interval = window.setInterval(tick, 60_000);
+    const delay =
+      (60 - new Date().getSeconds()) * 1000 - new Date().getMilliseconds();
+
+    const timeout = window.setTimeout(tick, Math.max(0, delay));
+
+    return () => {
+      window.clearInterval(interval);
+      window.clearTimeout(timeout);
+    };
+  }, []);
+
+  return now;
+}
+
+function useLiveCalendarSegments(lang: Lang) {
+  const now = useLiveNow();
+
+  return useMemo(() => {
+    const weekdayFa = new Intl.DateTimeFormat("fa-IR-u-ca-persian", {
+      weekday: "long",
+      timeZone: "Asia/Tehran",
+    }).format(now);
+
+    const jalaliPartsFa = new Intl.DateTimeFormat("fa-IR-u-ca-persian", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      timeZone: "Asia/Tehran",
+    }).formatToParts(now);
+
+    const jalaliDayFa = jalaliPartsFa.find((p) => p.type === "day")?.value ?? "";
+    const jalaliMonthFa = jalaliPartsFa.find((p) => p.type === "month")?.value ?? "";
+    const jalaliYearFa = jalaliPartsFa.find((p) => p.type === "year")?.value ?? "";
+
+    const gregorianPartsFa = new Intl.DateTimeFormat("fa-IR", {
+      calendar: "gregory",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      timeZone: "Asia/Tehran",
+    }).formatToParts(now);
+
+    const gregorianDayFa = gregorianPartsFa.find((p) => p.type === "day")?.value ?? "";
+    const gregorianMonthFa = gregorianPartsFa.find((p) => p.type === "month")?.value ?? "";
+    const gregorianYearFa = gregorianPartsFa.find((p) => p.type === "year")?.value ?? "";
+
+    const shahanshahiYear = 2584;
+    const shahanshahiFa = `${toPersianDigits(shahanshahiYear)} (${jalaliYearFa})`;
+
+    let tehranHourFa = new Intl.DateTimeFormat("fa-IR", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+      timeZone: "Asia/Tehran",
+    }).format(now);
+    tehranHourFa = stripLeadingZeroHour(tehranHourFa);
+
+    const hour24 = Number(
+      new Intl.DateTimeFormat("en-GB", {
+        hour: "2-digit",
+        hour12: false,
+        timeZone: "Asia/Tehran",
+      }).format(now)
+    );
+
+    let periodFa = translations.fa.morning;
+    if (hour24 >= 12 && hour24 < 18) periodFa = translations.fa.afternoon;
+    if (hour24 >= 18 || hour24 < 5) periodFa = translations.fa.evening;
+
+    const weekdayEn = new Intl.DateTimeFormat("en-US", {
+      weekday: "long",
+      timeZone: "Asia/Tehran",
+    }).format(now);
+
+    const jalaliPartsEn = new Intl.DateTimeFormat("en-US-u-ca-persian", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      timeZone: "Asia/Tehran",
+    }).formatToParts(now);
+
+    const jalaliDayEn = jalaliPartsEn.find((p) => p.type === "day")?.value ?? "";
+    const jalaliMonthEn = jalaliPartsEn.find((p) => p.type === "month")?.value ?? "";
+    const jalaliYearEn = jalaliPartsEn.find((p) => p.type === "year")?.value ?? "";
+
+    const gregorianPartsEn = new Intl.DateTimeFormat("en-US", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      timeZone: "Asia/Tehran",
+    }).formatToParts(now);
+
+    const gregorianDayEn = gregorianPartsEn.find((p) => p.type === "day")?.value ?? "";
+    const gregorianMonthEn = gregorianPartsEn.find((p) => p.type === "month")?.value ?? "";
+    const gregorianYearEn = gregorianPartsEn.find((p) => p.type === "year")?.value ?? "";
+
+    const shahanshahiEn = `${shahanshahiYear} (${jalaliYearEn})`;
+
+    let tehranTimeEn = new Intl.DateTimeFormat("en-GB", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+      timeZone: "Asia/Tehran",
+    }).format(now);
+    tehranTimeEn = stripLeadingZeroHour(tehranTimeEn);
+
+    let periodEn = translations.en.morning;
+    if (hour24 >= 12 && hour24 < 18) periodEn = translations.en.afternoon;
+    if (hour24 >= 18 || hour24 < 5) periodEn = translations.en.evening;
+
+    if (lang === "fa") {
+      return {
+        dateLine: `${weekdayFa} ${jalaliDayFa} - ${jalaliMonthFa} - ${shahanshahiFa}   ${gregorianDayFa} - ${gregorianMonthFa} - ${gregorianYearFa}`,
+        tehranTime: `${tehranHourFa} ${periodFa}`,
+      };
+    }
+
+    return {
+      dateLine: `${weekdayEn} ${jalaliDayEn} - ${jalaliMonthEn} - ${shahanshahiEn}   ${gregorianDayEn} - ${gregorianMonthEn} - ${gregorianYearEn}`,
+      tehranTime: `${tehranTimeEn} ${periodEn}`,
+    };
+  }, [lang, now]);
+}
+
+function TopCalendarBar({ lang }: { lang: Lang }) {
+  const isFa = lang === "fa";
+  const t = translations[lang];
+  const segments = useLiveCalendarSegments(lang);
+
+  return (
+    <div className="mx-auto mb-6 w-full max-w-[1500px] px-4">
+      <div className="rounded-2xl border border-white/10 bg-black/80 px-5 py-4 shadow-[0_8px_30px_rgba(0,0,0,0.28)]">
+        <div
+          className={[
+            "flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between",
+            isFa ? "lg:flex-row-reverse" : "",
+          ].join(" ")}
+        >
+          <div className="flex shrink-0 items-center justify-center lg:justify-start">
+            <img
+              src="/images/banner1.png"
+              alt="Olgoo logo"
+              className="h-20 w-20 rounded-full object-contain md:h-24 md:w-24"
+              onError={(e) => {
+                const target = e.currentTarget;
+                if (!target.dataset.fallbackTried) {
+                  target.dataset.fallbackTried = "1";
+                  target.src = "/images/banner1.webp";
+                }
+              }}
+            />
+          </div>
+
+          <div className="min-w-0 flex-1">
+            <div
+              className="mb-3 flex w-full items-center border-b border-white/10 pb-3"
+              style={{ direction: "ltr", justifyContent: "flex-end" }}
+            >
+              <div className="flex items-center gap-4">
+                <div className={isFa ? "text-lg font-bold md:text-xl" : "text-base font-bold md:text-lg"}>
+                  {t.tehranTime}
+                </div>
+                <div className="rounded-full border border-white/15 bg-white/5 px-4 py-2 text-xl font-semibold md:text-2xl">
+                  {segments.tehranTime}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex w-full justify-end">
+              <div
+                className={
+                  isFa
+                    ? "w-full text-right text-lg font-semibold md:text-xl lg:text-2xl"
+                    : "w-full text-right text-base font-semibold md:text-lg lg:text-xl"
+                }
+              >
+                {segments.dateLine}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function HomePageContent() {
   const [playingVideo, setPlayingVideo] = useState<PlayingVideo | null>(null);
   const { activePlayback, setActivePlayback } = usePlayback();
+  const [lang, setLang] = useState<Lang>("fa");
+
+  const t = translations[lang];
+  const isFa = lang === "fa";
 
   useEffect(() => {
-    if (activePlayback && activePlayback.source !== "floating") {
+    if (activePlayback && !["floating", "olgoo-live"].includes(activePlayback.source)) {
       setPlayingVideo(null);
     }
   }, [activePlayback]);
@@ -40,14 +279,59 @@ function HomePageContent() {
     setPlayingVideo(null);
   };
 
-  return (
-    <div id="user-page" className="relative min-h-screen overflow-x-hidden bg-black text-white">
-      {/* Hard black base behind everything */}
-      <div className="fixed inset-0 -z-20 bg-black" />
+  const handleOlgooLivePhotoClick = async () => {
+    try {
+      const response = await fetch(`/api/olgoo-live/state?t=${Date.now()}`, {
+        cache: "no-store",
+      });
 
-      {/* Background image */}
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(data?.error || `HTTP ${response.status}`);
+      }
+
+      const mediaUrl =
+        data?.mediaUrl || data?.url || data?.streamUrl || data?.playbackUrl || "";
+
+      if (!mediaUrl) {
+        throw new Error(t.olgooLiveUnavailable);
+      }
+
+      setActivePlayback("olgoo-live", mediaUrl);
+      setPlayingVideo({
+        url: mediaUrl,
+        title: data?.title || "Olgoo Live",
+        person: "Olgoo Live",
+        timestamp: data?.updatedAt || data?.startedAt,
+        playerType: data?.playerType || "video",
+        sourceLabel: "Olgoo Live",
+        isLive: true,
+      });
+    } catch (error) {
+      console.error("Olgoo Live photo click failed", error);
+      alert(t.olgooLiveUnavailable);
+    }
+  };
+
+  const sectionTitleClass = isFa
+    ? "mb-3 text-2xl font-bold tracking-normal"
+    : "mb-3 text-xl font-bold tracking-normal";
+
+  const panelClass =
+    "mb-6 rounded-2xl bg-black/90 shadow-[0_8px_30px_rgba(0,0,0,0.35)]";
+
+  return (
+    <div
+      id="user-page"
+      dir={isFa ? "rtl" : "ltr"}
+      className="relative min-h-screen overflow-x-hidden text-white"
+      style={{ backgroundColor: "#434343" }}
+    >
+      <div className="fixed inset-0 -z-20" style={{ backgroundColor: "#434343" }} />
+
       <div
-        className="fixed inset-0 -z-10 bg-black"
+        className="fixed inset-0 -z-10"
         style={{
           backgroundImage: "url('/images/full-site-background.webp')",
           backgroundSize: "cover",
@@ -56,10 +340,9 @@ function HomePageContent() {
         }}
       />
 
-      {/* Light dark overlay */}
       <div
         className="fixed inset-0 -z-[9]"
-        style={{ backgroundColor: "rgba(22, 28, 36, 0.05)" }}
+        style={{ backgroundColor: "rgba(22, 28, 36, 0.18)" }}
       />
 
       <div className="relative z-10 bg-transparent">
@@ -67,17 +350,57 @@ function HomePageContent() {
       </div>
 
       <div className="relative z-0 bg-transparent">
-        <HeroSection />
+        <TopCalendarBar lang={lang} />
       </div>
 
       <div className="relative z-0 bg-transparent">
-        <main
-          className="py-8 bg-transparent"
-          style={{ paddingLeft: "2%", paddingRight: "2%", margin: "auto" }}
-        >
-          <LiveBlock />
+        <main className="mx-auto w-full max-w-[1500px] px-4 py-2 bg-transparent">
+          <section className={`${panelClass} p-3`}>
+            <HeroSection onLivePhotoClick={handleOlgooLivePhotoClick} />
+          </section>
 
-          <section id="video-hub" className="scroll-mt-24 bg-transparent">
+          <div className="mb-4 flex items-center justify-end">
+            <div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-black/70 p-1">
+              <button
+                type="button"
+                onClick={() => setLang("fa")}
+                className={[
+                  "rounded-full px-5 py-2 font-semibold transition",
+                  isFa
+                    ? "bg-white text-black shadow"
+                    : "bg-transparent text-white/80 hover:bg-white/10",
+                  "text-base md:text-lg",
+                ].join(" ")}
+              >
+                {t.farsi}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setLang("en")}
+                className={[
+                  "rounded-full px-5 py-2 font-semibold transition",
+                  !isFa
+                    ? "bg-white text-black shadow"
+                    : "bg-transparent text-white/80 hover:bg-white/10",
+                  "text-base md:text-lg",
+                ].join(" ")}
+              >
+                {t.english}
+              </button>
+            </div>
+          </div>
+
+          <section className={`${panelClass} border border-white/10 p-4`}>
+            <LiveBlock />
+          </section>
+
+          <section
+            id="video-hub"
+            className={`${panelClass} scroll-mt-24 border border-white/10 p-4`}
+          >
+            <h2 className={sectionTitleClass}>{t.videoHub}</h2>
+
             <VideoHub
               onVideoClick={(video) => {
                 handleVideoPlay({
@@ -85,27 +408,27 @@ function HomePageContent() {
                   person: video.person || video.personName,
                   title: video.title,
                   timestamp: video.createdAt,
+                  playerType: "video",
+                  sourceLabel: t.videoHub,
+                  isLive: false,
                 });
               }}
             />
           </section>
 
-          <section id="revolutionary-music" className="scroll-mt-24 bg-transparent">
+          <section
+            id="revolutionary-music"
+            className={`${panelClass} scroll-mt-24 border border-white/10 p-4`}
+          >
+            <h2 className={sectionTitleClass}>{t.music}</h2>
             <AudioHub />
           </section>
 
-          <section id="video-submission" className="scroll-mt-24 bg-transparent">
-            <VideoSubmissionForm />
+          <section className={`${panelClass} p-3`}>
+            <h2 className={`${sectionTitleClass} text-red-400`}>{t.breakingNews}</h2>
+            <BreakingNewsBanner />
           </section>
-
-          <div className="bg-transparent">
-            <SocialLinksForm />
-          </div>
         </main>
-
-        <div className="bg-transparent">
-          <BreakingNewsBanner />
-        </div>
 
         <div className="bg-transparent">
           <Footer />
@@ -119,6 +442,9 @@ function HomePageContent() {
         person={playingVideo?.person}
         title={playingVideo?.title}
         timestamp={playingVideo?.timestamp}
+        playerType={playingVideo?.playerType}
+        sourceLabel={playingVideo?.sourceLabel}
+        isLive={playingVideo?.isLive}
       />
     </div>
   );

@@ -57,6 +57,10 @@ function extractVideoIdFromYouTubeUrl(url: string): string | null {
   }
 }
 
+function toPersianDigits(value: number): string {
+  return String(value).replace(/\d/g, (d) => "۰۱۲۳۴۵۶۷۸۹"[Number(d)]);
+}
+
 export default function LiveBlock() {
   const [liveRows, setLiveRows] = useState<LiveRow[]>([]);
   const [liveLoading, setLiveLoading] = useState(false);
@@ -65,6 +69,13 @@ export default function LiveBlock() {
   const lastGoodRef = useRef<Record<string, { at: number; data: YTLiveResult }>>({});
   const [ytStatus, setYtStatus] = useState<Record<string, YTLiveResult>>({});
   const [ytLiveLoading, setYtLiveLoading] = useState(false);
+  const [isFa, setIsFa] = useState(true);
+
+  useEffect(() => {
+    const root = document.getElementById("user-page");
+    const dir = root?.getAttribute("dir");
+    setIsFa(dir === "rtl");
+  }, []);
 
   async function loadLiveRows() {
     setLiveLoading(true);
@@ -206,7 +217,6 @@ export default function LiveBlock() {
     setYtLiveLoading(true);
     pollYouTubeLive(ytRows);
 
-    // Poll every 7 minutes
     const t = setInterval(() => pollYouTubeLive(ytRows), 7 * 60_000);
     return () => clearInterval(t);
   }, [ytHandles.join(",")]);
@@ -252,19 +262,32 @@ export default function LiveBlock() {
       }));
   }, [liveCards]);
 
+  const liveCount = liveYouTubeItems.length;
+  const headerLabel = isFa ? "" : "";
+  const countText = isFa
+  const loadingSourcesText = isFa ? "در حال بارگذاری منابع زنده..." : "Loading live sources...";
+  const loadingChannelsText = isFa ? "در حال بارگذاری کانال‌های زنده..." : "Loading live channels...";
+  const noneLiveText = isFa ? "اکنون کانال زنده‌ای وجود ندارد." : "No channels are live right now.";
+  const refreshText = isFa ? "بازخوانی" : "Refresh";
+
   return (
     <section className="mb-10">
-      <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-3xl font-bold tracking-wide">LIVE</h2>
+      <div className="mb-4 flex items-center justify-between gap-4">
+        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-2">
+          <span className={isFa ? "text-2xl font-bold tracking-normal" : "text-3xl font-bold tracking-wide"}>
+            {headerLabel}
+          </span>
+        </div>
+
         <button
           onClick={loadLiveRows}
           className="rounded-lg border border-white/10 bg-white/10 px-4 py-2 hover:bg-white/15"
         >
-          Refresh
+          {refreshText}
         </button>
       </div>
 
-      {liveLoading && <div className="text-white/70">Loading live sources…</div>}
+      {liveLoading && <div className="text-white/70">{loadingSourcesText}</div>}
 
       {liveError && (
         <div className="rounded-lg border border-red-900/40 bg-red-950/30 p-3 text-red-200">
@@ -273,16 +296,16 @@ export default function LiveBlock() {
       )}
 
       {!liveLoading && !liveError && ytLiveLoading && ytHandles.length > 0 && (
-        <div className="text-white/70">Loading live channels…</div>
+        <div className="text-white/70">{loadingChannelsText}</div>
       )}
 
       {!liveLoading && !liveError && !ytLiveLoading && liveCards.length === 0 && (
-        <div className="text-white/70">No sources are live right now.</div>
+        <div className="text-white/70">{noneLiveText}</div>
       )}
 
       {!liveLoading && !liveError && !ytLiveLoading && liveYouTubeItems.length > 0 && (
         <div className="mb-6">
-          <LiveSection liveItems={liveYouTubeItems} maxWall={5} title="LIVE" />
+          <LiveSection liveItems={liveYouTubeItems} maxWall={5} title="" />
         </div>
       )}
     </section>
