@@ -5,7 +5,6 @@ import ProfileCardWithDropdown from "./ProfileCardWithDropdown";
 import PersonProfileModal from "./PersonProfileModal";
 import SearchModal from "./SearchModal";
 import ProfileRowWithNav from "./ProfileRowWithNav";
-import DateDisplay from "@/components/DateDisplay/DateDisplay";
 import { usePlayback } from "@/context/PlaybackContext";
 
 type VideoItem = {
@@ -54,19 +53,7 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
   const [showModal, setShowModal] = useState(false);
   const [showSearchModal, setShowSearchModal] = useState(false);
   const [modalPlayingVideo, setModalPlayingVideo] = useState<VideoItem | null>(null);
-  const [today, setToday] = useState(() => new Date());
   const hubContentRef = useRef<HTMLDivElement>(null);
-
-  // Keep "today" in sync (mount + midnight)
-  useEffect(() => {
-    setToday(new Date());
-    const now = new Date();
-    const nextMidnight = new Date(now);
-    nextMidnight.setHours(24, 0, 0, 0);
-    const msUntilMidnight = nextMidnight.getTime() - now.getTime();
-    const t = setTimeout(() => setToday(new Date()), msUntilMidnight);
-    return () => clearTimeout(t);
-  }, []);
 
   // Fetch media from API on mount
   useEffect(() => {
@@ -75,11 +62,11 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
         setLoading(true);
         setError(null);
         const response = await fetch("/api/media");
-        
+
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
         }
-        
+
         const data = await response.json();
 
         if (data.ok && Array.isArray(data.items)) {
@@ -153,19 +140,19 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
   // Get profiles from Youtube_Channel_Profile_Picture section, filtered by YouTube group
   const getProfilesByGroup = (groupName: string): Profile[] => {
     const profilesMap = new Map<string, { person: string; pictureUrl: string; videoCount: number }>();
-    
+
     // First, find all profile pictures (exclude "Reza Pahlavi" - he goes in "Your Favourite")
     const profilePictures = mediaItems.filter(
-      item => item.section === "Youtube_Channel_Profile_Picture"  && item.person.trim() !== "Reza Pahlavi"
+      item => item.section === "Youtube_Channel_Profile_Picture" && item.person.trim() !== "Reza Pahlavi"
     );
-    
+
     // Filter videos by selected group in "Youtube Chanel Videos" section (no "Other" – only real groups)
-    let filteredVideos = mediaItems.filter(item => {
+    const filteredVideos = mediaItems.filter(item => {
       const url = (item.url ?? "").toLowerCase();
       if (!url.includes(".mp4")) return false;
       if (!item.person || item.person.trim() === "") return false;
       if (item.person.trim() === "Reza Pahlavi") return false;
-      
+
       const isYoutubeVideos = isYoutubeVideoSection(item.section ?? "");
       if (!isYoutubeVideos) return false;
 
@@ -173,7 +160,7 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
       if (!currentGroup) return false;
       return normalizeGroup(currentGroup) === normalizeGroup(groupName);
     });
-    
+
     // Count videos per person (keyed by normalized name); keep one display name per normalized key
     const videoCountsByNormalized = new Map<string, { count: number; displayName: string }>();
     filteredVideos.forEach(item => {
@@ -187,7 +174,7 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
         videoCountsByNormalized.set(key, { count: 1, displayName: personName });
       }
     });
-    
+
     // Build profiles: match profile pictures by normalized person name so "manototv" matches "Manoto Tv" videos
     profilePictures.forEach(item => {
       const personName = item.person?.trim();
@@ -203,7 +190,7 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
         });
       }
     });
-    
+
     // Include persons who have videos in category but no profile picture (key by normalized to avoid duplicates)
     videoCountsByNormalized.forEach((entry, key) => {
       if (normalizePerson(entry.displayName) === "rezapahlavi") return; // Reza Pahlavi is in Favourite
@@ -215,9 +202,9 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
         });
       }
     });
-    
-    return Array.from(profilesMap.values()).sort((a, b) => 
-      b.videoCount - a.videoCount // Sort by video count descending
+
+    return Array.from(profilesMap.values()).sort((a, b) =>
+      b.videoCount - a.videoCount
     );
   };
 
@@ -367,7 +354,7 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
 
   return (
     <section className="w-full">
-      {/* Dates and Mobile Navigation Section */}
+      {/* Mobile Navigation Section */}
       <div className="w-full flex flex-col md:flex-row items-center justify-between px-4 md:px-6 lg:px-8 py-4 md:py-6 gap-4 md:gap-0">
         {/* Mobile Navigation - Visible only on mobile */}
         <nav className="flex md:hidden items-center gap-4">
@@ -390,18 +377,13 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
             Video Submission
           </a>
         </nav>
-
-        {/* Dates Display - sliding strip: Shamsi, Georgian (Farsi months), Shahanshahi */}
-        <div className="flex flex-col items-end md:items-end text-right w-full md:w-auto" style={{ width: "100%" }}>
-          <DateDisplay date={today} />
-        </div>
       </div>
 
       {/* Video Hub Main Content – md:items-stretch so both columns always have the same height on large screens */}
       <div ref={hubContentRef} className="w-full flex flex-col md:flex-row gap-6 md:gap-8 px-4 md:px-6 lg:px-8 pb-8 md:items-stretch">
         {/* Your Favourite Section – stretches to match Video Hub column height */}
         <div className="w-full md:w-[400px] lg:w-[500px] xl:w-[560px] flex-shrink-0 flex flex-col order-1 md:order-2 md:min-h-0 min-w-0">
-          <h2 className="text-white text-[24.64px] font-semibold leading-[1.5] mb-6 flex-shrink-0">Your Favourite</h2>
+          <h2 className="text-white text-[24.64px] font-semibold leading-[1.5] mb-6">Your Favourite</h2>
           <div className="flex-1 min-h-0 flex flex-col w-full max-w-[360px] lg:max-w-[440px] xl:max-w-[510px] overflow-hidden">
             <ProfileCardWithDropdown
               size="king"

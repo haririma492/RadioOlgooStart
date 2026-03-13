@@ -21,10 +21,12 @@ const translations = {
     breakingNews: "خبر فوری",
     english: "English",
     farsi: "فارسی",
-    tehranTime: "ساعت در تهران",
-    morning: "صبح",
-    afternoon: "بعدازظهر",
-    evening: "شب",
+    tehranTime: " در تهران زمان",
+    morning: "بامداد",
+    afternoon: "نیمروز",
+    evening: "شام",
+    timeWord: "زمان",
+    inTehran: "در تهران",
     olgooLiveUnavailable: "پخش اُلگو لایو اکنون در دسترس نیست.",
   },
   en: {
@@ -36,7 +38,9 @@ const translations = {
     tehranTime: "Time in Tehran",
     morning: "Morning",
     afternoon: "Afternoon",
-    evening: "Evening",
+    evening: "Night",
+    timeWord: "Time",
+    inTehran: "in Tehran",
     olgooLiveUnavailable: "Olgoo Live is not available right now.",
   },
 };
@@ -55,14 +59,8 @@ function toPersianDigits(value: string | number): string {
   return String(value).replace(/\d/g, (d) => "۰۱۲۳۴۵۶۷۸۹"[Number(d)]);
 }
 
-function stripLeadingZeroHour(timeText: string): string {
-  return String(timeText)
-    .replace(/^0(\d:)/, "$1")
-    .replace(/^۰([۰-۹]:)/, "$1");
-}
-
 function useLiveNow() {
-  const [now, setNow] = useState<Date>(() => new Date());
+  const [now, setNow] = useState<Date | null>(null);
 
   useEffect(() => {
     const tick = () => setNow(new Date());
@@ -72,7 +70,9 @@ function useLiveNow() {
     const delay =
       (60 - new Date().getSeconds()) * 1000 - new Date().getMilliseconds();
 
-    const timeout = window.setTimeout(tick, Math.max(0, delay));
+    const timeout = window.setTimeout(() => {
+      tick();
+    }, Math.max(0, delay));
 
     return () => {
       window.clearInterval(interval);
@@ -87,6 +87,15 @@ function useLiveCalendarSegments(lang: Lang) {
   const now = useLiveNow();
 
   return useMemo(() => {
+    if (!now) {
+      return {
+        dateLine: "",
+        timeOnly: "",
+        periodOnly: "",
+        isReady: false,
+      };
+    }
+
     const weekdayFa = new Intl.DateTimeFormat("fa-IR-u-ca-persian", {
       weekday: "long",
       timeZone: "Asia/Tehran",
@@ -118,13 +127,12 @@ function useLiveCalendarSegments(lang: Lang) {
     const shahanshahiYear = 2584;
     const shahanshahiFa = `${toPersianDigits(shahanshahiYear)} (${jalaliYearFa})`;
 
-    let tehranHourFa = new Intl.DateTimeFormat("fa-IR", {
-      hour: "2-digit",
+    const tehranHourFa = new Intl.DateTimeFormat("fa-IR", {
+      hour: "numeric",
       minute: "2-digit",
-      hour12: false,
+      hour12: true,
       timeZone: "Asia/Tehran",
     }).format(now);
-    tehranHourFa = stripLeadingZeroHour(tehranHourFa);
 
     const hour24 = Number(
       new Intl.DateTimeFormat("en-GB", {
@@ -167,13 +175,12 @@ function useLiveCalendarSegments(lang: Lang) {
 
     const shahanshahiEn = `${shahanshahiYear} (${jalaliYearEn})`;
 
-    let tehranTimeEn = new Intl.DateTimeFormat("en-GB", {
-      hour: "2-digit",
+    const tehranTimeEn = new Intl.DateTimeFormat("en-US", {
+      hour: "numeric",
       minute: "2-digit",
-      hour12: false,
+      hour12: true,
       timeZone: "Asia/Tehran",
     }).format(now);
-    tehranTimeEn = stripLeadingZeroHour(tehranTimeEn);
 
     let periodEn = translations.en.morning;
     if (hour24 >= 12 && hour24 < 18) periodEn = translations.en.afternoon;
@@ -182,15 +189,56 @@ function useLiveCalendarSegments(lang: Lang) {
     if (lang === "fa") {
       return {
         dateLine: `${weekdayFa} ${jalaliDayFa} - ${jalaliMonthFa} - ${shahanshahiFa}   ${gregorianDayFa} - ${gregorianMonthFa} - ${gregorianYearFa}`,
-        tehranTime: `${tehranHourFa} ${periodFa}`,
+        timeOnly: tehranHourFa,
+        periodOnly: periodFa,
+        isReady: true,
       };
     }
 
     return {
       dateLine: `${weekdayEn} ${jalaliDayEn} - ${jalaliMonthEn} - ${shahanshahiEn}   ${gregorianDayEn} - ${gregorianMonthEn} - ${gregorianYearEn}`,
-      tehranTime: `${tehranTimeEn} ${periodEn}`,
+      timeOnly: tehranTimeEn,
+      periodOnly: periodEn,
+      isReady: true,
     };
   }, [lang, now]);
+}
+
+function TimePill({ value, invisible = false }: { value: string; invisible?: boolean }) {
+  return (
+    <div
+      className="text-xl font-semibold md:text-2xl"
+      style={{
+        display: "inline-flex",
+        direction: "ltr",
+        alignItems: "center",
+        justifyContent: "flex-end",
+        padding: 0,
+        margin: 0,
+        width: "auto",
+        minWidth: 0,
+        background: "transparent",
+        border: "none",
+        borderRadius: 0,
+        boxShadow: "none",
+      }}
+    >
+      <span
+        className={invisible ? "invisible" : ""}
+        style={{
+          display: "inline-block",
+          direction: "ltr",
+          textAlign: "right",
+          unicodeBidi: "embed",
+          fontVariantNumeric: "tabular-nums",
+          whiteSpace: "nowrap",
+          lineHeight: 1,
+        }}
+      >
+        {value}
+      </span>
+    </div>
+  );
 }
 
 function TopCalendarBar({ lang }: { lang: Lang }) {
@@ -225,27 +273,71 @@ function TopCalendarBar({ lang }: { lang: Lang }) {
           <div className="min-w-0 flex-1">
             <div
               className="mb-3 flex w-full items-center border-b border-white/10 pb-3"
-              style={{ direction: "ltr", justifyContent: "flex-end" }}
+              style={{
+                direction: isFa ? "rtl" : "ltr",
+                justifyContent: "flex-end",
+              }}
             >
-              <div className="flex items-center gap-4">
-                <div className={isFa ? "text-lg font-bold md:text-xl" : "text-base font-bold md:text-lg"}>
-                  {t.tehranTime}
-                </div>
-                <div className="rounded-full border border-white/15 bg-white/5 px-4 py-2 text-xl font-semibold md:text-2xl">
-                  {segments.tehranTime}
-                </div>
-              </div>
+              {segments.isReady ? (
+                isFa ? (
+                  <div
+                    className="flex items-center justify-end flex-nowrap"
+                    style={{ gap: "18px", width: "100%" }}
+                  >
+                    <div className="text-lg font-bold md:text-xl">{t.timeWord}</div>
+                    <div className="text-lg font-bold md:text-xl">{t.inTehran}</div>
+                    <TimePill value={segments.timeOnly} />
+                    <div className="text-lg font-bold md:text-xl">{segments.periodOnly}</div>
+                  </div>
+                ) : (
+                  <div
+                    className="flex items-center justify-end flex-nowrap"
+                    style={{ gap: "18px", width: "100%" }}
+                  >
+                    <div className="text-base font-bold md:text-lg">{t.timeWord}</div>
+                    <TimePill value={segments.timeOnly} />
+                    <div className="text-base font-bold md:text-lg">{segments.periodOnly}</div>
+                    <div className="text-base font-bold md:text-lg">{t.inTehran}</div>
+                  </div>
+                )
+              ) : (
+                isFa ? (
+                  <div
+                    className="flex items-center justify-end flex-nowrap"
+                    style={{ gap: "18px", width: "100%" }}
+                  >
+                    <div className="text-lg font-bold md:text-xl invisible">{t.timeWord}</div>
+                    <div className="text-lg font-bold md:text-xl invisible">{t.inTehran}</div>
+                    <TimePill value="00:00" invisible />
+                    <div className="text-lg font-bold md:text-xl invisible">{translations.fa.afternoon}</div>
+                  </div>
+                ) : (
+                  <div
+                    className="flex items-center justify-end flex-nowrap"
+                    style={{ gap: "18px", width: "100%" }}
+                  >
+                    <div className="text-base font-bold md:text-lg invisible">{t.timeWord}</div>
+                    <TimePill value="00:00" invisible />
+                    <div className="text-base font-bold md:text-lg invisible">{translations.en.afternoon}</div>
+                    <div className="text-base font-bold md:text-lg invisible">{t.inTehran}</div>
+                  </div>
+                )
+              )}
             </div>
 
             <div className="flex w-full justify-end">
               <div
                 className={
                   isFa
-                    ? "w-full text-right text-lg font-semibold md:text-xl lg:text-2xl"
-                    : "w-full text-right text-base font-semibold md:text-lg lg:text-xl"
+                    ? "w-full text-right text-lg font-semibold md:text-xl lg:text-2xl min-h-[2.25rem]"
+                    : "w-full text-right text-base font-semibold md:text-lg lg:text-xl min-h-[2.25rem]"
                 }
               >
-                {segments.dateLine}
+                {segments.isReady ? (
+                  segments.dateLine
+                ) : (
+                  <span className="invisible">loading date line</span>
+                )}
               </div>
             </div>
           </div>
@@ -277,41 +369,6 @@ function HomePageContent() {
   const handleClosePlayer = () => {
     setActivePlayback(null);
     setPlayingVideo(null);
-  };
-
-  const handleOlgooLivePhotoClick = async () => {
-    try {
-      const response = await fetch(`/api/olgoo-live/state?t=${Date.now()}`, {
-        cache: "no-store",
-      });
-
-      const data = await response.json().catch(() => ({}));
-
-      if (!response.ok) {
-        throw new Error(data?.error || `HTTP ${response.status}`);
-      }
-
-      const mediaUrl =
-        data?.mediaUrl || data?.url || data?.streamUrl || data?.playbackUrl || "";
-
-      if (!mediaUrl) {
-        throw new Error(t.olgooLiveUnavailable);
-      }
-
-      setActivePlayback("olgoo-live", mediaUrl);
-      setPlayingVideo({
-        url: mediaUrl,
-        title: data?.title || "Olgoo Live",
-        person: "Olgoo Live",
-        timestamp: data?.updatedAt || data?.startedAt,
-        playerType: data?.playerType || "video",
-        sourceLabel: "Olgoo Live",
-        isLive: true,
-      });
-    } catch (error) {
-      console.error("Olgoo Live photo click failed", error);
-      alert(t.olgooLiveUnavailable);
-    }
   };
 
   const sectionTitleClass = isFa
@@ -356,7 +413,7 @@ function HomePageContent() {
       <div className="relative z-0 bg-transparent">
         <main className="mx-auto w-full max-w-[1500px] px-4 py-2 bg-transparent">
           <section className={`${panelClass} p-3`}>
-            <HeroSection onLivePhotoClick={handleOlgooLivePhotoClick} />
+            <HeroSection />
           </section>
 
           <div className="mb-4 flex items-center justify-end">
@@ -400,7 +457,6 @@ function HomePageContent() {
             className={`${panelClass} scroll-mt-24 border border-white/10 p-4`}
           >
             <h2 className={sectionTitleClass}>{t.videoHub}</h2>
-
             <VideoHub
               onVideoClick={(video) => {
                 handleVideoPlay({
