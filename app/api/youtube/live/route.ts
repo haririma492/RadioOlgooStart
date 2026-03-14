@@ -33,8 +33,9 @@ function isQuotaError(message: string): boolean {
   return /quota|exceeded|limit/i.test(message || "");
 }
 
-// ── Types ──────────────────────────────────────────────────────────────────
+// ── Types ────────────────────────────────────────────────────────────────
 type FoundBy = "rss_videos_list" | "none";
+
 type Result = {
   channelId?: string;
   handle?: string;
@@ -46,11 +47,11 @@ type Result = {
 };
 
 // ── Helpers ────────────────────────────────────────────────────────────────
-function isValidVideoId(v: string) {
+function isValidVideoId(v: string): boolean {
   return /^[a-zA-Z0-9_-]{11}$/.test(v);
 }
 
-function normalizeHandle(h: string) {
+function normalizeHandle(h: string): string {
   return (h || "").trim().replace(/^@/, "");
 }
 
@@ -151,6 +152,7 @@ async function fetchLiveRedirectFromUrl(liveUrl: string): Promise<string | null>
     const finalUrl = res.url || liveUrl;
     const m = finalUrl.match(/[?&]v=([A-Za-z0-9_-]{11})/);
     if (m?.[1] && isValidVideoId(m[1])) return m[1];
+
     const embedMatch = finalUrl.match(/\/embed\/([A-Za-z0-9_-]{11})/);
     if (embedMatch?.[1] && embedMatch[1] !== "live_stream" && isValidVideoId(embedMatch[1])) {
       return embedMatch[1];
@@ -161,6 +163,7 @@ async function fetchLiveRedirectFromUrl(liveUrl: string): Promise<string | null>
       /<link rel="canonical" href="https:\/\/www\.youtube\.com\/watch\?v=([A-Za-z0-9_-]{11})">/
     );
     if (canonical?.[1] && isValidVideoId(canonical[1])) return canonical[1];
+
     const ogVideo = html.match(
       /<meta property="og:video:url" content="[^"]*[?&]v=([A-Za-z0-9_-]{11})">/
     );
@@ -243,7 +246,11 @@ async function fetchLiveVideoIdBySearch(
 
 // ── Step 2: Batch video liveness check ─────────────────────────────────────
 const VIDEOS_LIST_MAX_IDS = 50;
-type VideoLiveInfo = { videoId: string; isLive: boolean };
+
+type VideoLiveInfo = {
+  videoId: string;
+  isLive: boolean;
+};
 
 async function batchCheckLiveness(videoIds: string[], apiKey: string): Promise<VideoLiveInfo[]> {
   if (videoIds.length === 0) return [];
@@ -251,28 +258,36 @@ async function batchCheckLiveness(videoIds: string[], apiKey: string): Promise<V
   if (unique.length === 0) return [];
 
   const out: VideoLiveInfo[] = [];
+
   for (let i = 0; i < unique.length; i += VIDEOS_LIST_MAX_IDS) {
     const chunk = unique.slice(i, i + VIDEOS_LIST_MAX_IDS);
     const url =
       `https://www.googleapis.com/youtube/v3/videos` +
       `?part=liveStreamingDetails&id=${encodeURIComponent(chunk.join(","))}` +
       `&key=${encodeURIComponent(apiKey)}`;
+
     try {
       const res = await fetch(url, { cache: "no-store" });
       const json = await res.json().catch(() => null);
       if (!res.ok || !json) continue;
-      const items: any[] = Array.isArray(json.items) ? json.items : [];
+
+      const items: Array<{ id?: string; liveStreamingDetails?: { actualStartTime?: string; actualEndTime?: string } }> =
+        Array.isArray(json.items) ? json.items : [];
+
       for (const it of items) {
         const lsd = it?.liveStreamingDetails;
         const started = lsd?.actualStartTime ? Date.parse(lsd.actualStartTime) : NaN;
         const ended = lsd?.actualEndTime ? Date.parse(lsd.actualEndTime) : NaN;
         const isLive = Number.isFinite(started) && !Number.isFinite(ended);
-        out.push({ videoId: it.id as string, isLive });
+        if (typeof it.id === "string") {
+          out.push({ videoId: it.id, isLive });
+        }
       }
     } catch {
       // skip chunk on error
     }
   }
+
   return out;
 }
 
@@ -330,7 +345,7 @@ export async function GET(req: Request) {
 
   for (const e of entries) {
     if (e.handle && !e.channelId && HANDLE_TO_CHANNEL[e.handle]) {
-      (e as { channelId?: string }).channelId = HANDLE_TO_CHANNEL[e.handle];
+      e.channelId = HANDLE_TO_CHANNEL[e.handle];
     }
   }
 
@@ -364,7 +379,7 @@ export async function GET(req: Request) {
   try {
     const raw = await redisGet(cacheKey);
     if (raw) {
-      const parsed = JSON.parse(raw) as { results: Record<string, Result> };
+      const parsed = JSON.parse(raw) as { results?: Record<string, Result> };
       if (parsed?.results) {
         return NextResponse.json(
           { ok: true, results: parsed.results, cached: true },
@@ -387,7 +402,7 @@ export async function GET(req: Request) {
     );
   }
 
-  const resolvedEntries: (ChannelEntry & { channelId: string })[] = entries
+  const resolvedEntries: Array<ChannelEntry & { channelId: string }> = entries
     .filter((e): e is ChannelEntry & { channelId: string } => !!e.channelId)
     .map((e) => e as ChannelEntry & { channelId: string });
 
@@ -404,19 +419,24 @@ export async function GET(req: Request) {
         fetchRssVideoIds(entry.channelId),
         fetchLiveRedirectVideoId(entry.channelId),
       ]);
+
       let redirectId = redirectFromChannel;
+
       if (!redirectId && entry.handle) {
         redirectId = await fetchLiveRedirectFromUrl(`https://www.youtube.com/@${entry.handle}/live`);
       }
+
       if (!redirectId && entry.channelId) {
         redirectId = await fetchLiveRedirectFromUrl(
           `https://www.youtube.com/embed/live_stream?channel=${encodeURIComponent(entry.channelId)}`
         );
       }
+
       const videoIds = [...rssIds];
       if (redirectId && !videoIds.includes(redirectId)) {
         videoIds.push(redirectId);
       }
+
       return { entry, videoIds, redirectId };
     })
   );
@@ -434,10 +454,11 @@ export async function GET(req: Request) {
   });
 
   const searchLastError = { channelId: "", message: "" };
+
   const searchResults = await Promise.all(
     allowlistedNeedingSearch.map(async (d) => ({
-      channelId: d.entry.channelId!,
-      videoId: await fetchLiveVideoIdBySearch(d.entry.channelId!, apiKey, {
+      channelId: d.entry.channelId,
+      videoId: await fetchLiveVideoIdBySearch(d.entry.channelId, apiKey, {
         lastError: searchLastError,
       }),
     }))
@@ -467,34 +488,28 @@ export async function GET(req: Request) {
 
   for (const { entry, videoIds, redirectId } of discoveryResults) {
     const liveFromApi = videoIds.find((id) => liveSet.has(id));
-    const key = entry.handle || entry.channelId!;
-    const isAlwaysLiveChannel =
-      (entry.handle && ALWAYS_LIVE_HANDLES.has(entry.handle)) ||
-      (entry.channelId && ALWAYS_LIVE_CHANNEL_IDS.has(entry.channelId));
 
-    const fromSearch = entry.channelId ? liveVideoIdByChannel.get(entry.channelId) : undefined;
+    const key = entry.handle || entry.channelId;
+
     const effectiveVideoId =
-      liveFromApi ?? fromSearch ?? (isAlwaysLiveChannel && redirectId ? redirectId : undefined);
+      liveFromApi ??
+      (entry.channelId ? liveVideoIdByChannel.get(entry.channelId) : undefined) ??
+      (redirectId && isValidVideoId(redirectId) ? redirectId : undefined);
 
-    const isLive = !!effectiveVideoId || (isAlwaysLiveChannel && !!entry.channelId);
-    const channelEmbedUrl = entry.channelId
-      ? `https://www.youtube.com/embed/live_stream?channel=${entry.channelId}`
-      : undefined;
+    const isLive = !!effectiveVideoId;
 
     const watchUrl = effectiveVideoId
       ? `https://www.youtube.com/watch?v=${effectiveVideoId}`
-      : entry.channelId
-        ? `https://www.youtube.com/channel/${entry.channelId}/live`
-        : undefined;
+      : undefined;
 
-    const embedUrl = isLive && channelEmbedUrl && !effectiveVideoId ? channelEmbedUrl : undefined;
+    const embedUrl: string | undefined = undefined;
 
     results[key] = {
       channelId: entry.channelId,
       handle: entry.handle,
       isLive,
       videoId: effectiveVideoId,
-      watchUrl: isLive ? watchUrl : undefined,
+      watchUrl,
       embedUrl,
       foundBy: effectiveVideoId ? "rss_videos_list" : "none",
     };
@@ -506,7 +521,13 @@ export async function GET(req: Request) {
         body: JSON.stringify({
           location: "youtube/live/route.ts:result-IRANINTL",
           message: "IRANINTL result built",
-          data: { key, effectiveVideoId: !!effectiveVideoId, embedUrl: !!embedUrl, isLive },
+          data: {
+            key,
+            effectiveVideoId: !!effectiveVideoId,
+            embedUrl: !!embedUrl,
+            isLive,
+            watchUrl,
+          },
           timestamp: Date.now(),
           hypothesisId: "C",
         }),
@@ -514,13 +535,18 @@ export async function GET(req: Request) {
     }
   }
 
-  for (const entry of Array.from(entries)) {
-    const key = entry.handle || entry.channelId!;
+  for (const entry of entries) {
+    const key = entry.handle || entry.channelId;
+    if (!key) continue;
     if (results[key]) continue;
+
     const channelAlreadyInResults =
       entry.channelId && Object.values(results).some((r) => r.channelId === entry.channelId);
+
     if (channelAlreadyInResults) continue;
+
     results[key] = {
+      channelId: entry.channelId,
       handle: entry.handle,
       isLive: false,
       foundBy: "none",
@@ -535,9 +561,12 @@ export async function GET(req: Request) {
     ttlMs: quotaExceeded ? QUOTA_BACKOFF_TTL_MS : undefined,
   });
 
+  const iranintlHasVideo =
+    !!results["IRANINTL"]?.videoId || !!results["UCat6bC0Wrqq9Bcq7EkH_yQw"]?.videoId;
+
   const ttlSec = quotaExceeded
     ? QUOTA_BACKOFF_TTL_SEC
-    : hasAllowlistedChannel && results["IRANINTL"]?.videoId
+    : hasAllowlistedChannel && iranintlHasVideo
       ? ALLOWLISTED_WITH_VIDEO_TTL_SEC
       : DEFAULT_CACHE_TTL_SEC;
 

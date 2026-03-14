@@ -16,82 +16,173 @@ function getEmbedSrc(
 }
 
 type Props = {
-  liveItems: LiveItem[]; // already filtered to only live channels
-  maxWall?: number; // unused; kept for API compatibility
-  title?: string; // optional section title
+  liveItems: LiveItem[];
+  maxWall?: number;
+  title?: string;
 };
 
-export default function LiveSection({ liveItems, maxWall: _maxWall, title = "LIVE" }: Props) {
-  const [activeVideoId, setActiveVideoId] = useState<string | null>(null);
+export default function LiveSection({
+  liveItems,
+  maxWall: _maxWall,
+  title = "LIVE",
+}: Props) {
+  const [activeInlineVideoId, setActiveInlineVideoId] = useState<string | null>(null);
+  const [modalVideoId, setModalVideoId] = useState<string | null>(null);
 
-  const { allItems, activeItem } = useMemo(() => {
+  const { allItems, activeInlineItem, modalItem } = useMemo(() => {
     const items = Array.isArray(liveItems) ? liveItems : [];
-    const active = activeVideoId ? items.find((x) => x.videoId === activeVideoId) : undefined;
-    return { allItems: items, activeItem: active };
-  }, [liveItems, activeVideoId]);
+    const inlineItem = activeInlineVideoId
+      ? items.find((x) => x.videoId === activeInlineVideoId)
+      : undefined;
+    const currentModalItem = modalVideoId
+      ? items.find((x) => x.videoId === modalVideoId)
+      : undefined;
 
-  const inFocus = !!activeVideoId;
+    return {
+      allItems: items,
+      activeInlineItem: inlineItem,
+      modalItem: currentModalItem,
+    };
+  }, [liveItems, activeInlineVideoId, modalVideoId]);
 
   useEffect(() => {
-    if (!inFocus) return;
+    if (!modalVideoId) return;
+
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setActiveVideoId(null);
+      if (e.key === "Escape") setModalVideoId(null);
     };
+
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [inFocus]);
+  }, [modalVideoId]);
 
   return (
     <section className="w-full">
-      <div className="flex items-center justify-between mb-3">
+      <div className="mb-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <div className="text-sm font-semibold tracking-wide">{title}</div>
           <div className="text-xs opacity-70">
             {liveItems?.length ? `${liveItems.length} live` : "No live channels"}
           </div>
         </div>
+      </div>
 
-        {inFocus && (
-          <button
-            className="text-sm px-3 py-1 rounded-lg border border-white/20 hover:border-white/40"
-            onClick={() => setActiveVideoId(null)}
-          >
-            Back to Wall
-          </button>
+      <div className="w-full">
+        {allItems.length > 0 ? (
+          <div className="scrollbar-modern -mx-1 overflow-x-auto overflow-y-hidden px-1 pb-2">
+            <div className="flex gap-3" style={{ scrollBehavior: "smooth" }}>
+              {allItems.map((item) => {
+                const isInlineActive = activeInlineItem?.videoId === item.videoId;
+                const cardSrc = getEmbedSrc(item, {
+                  autoplay: true,
+                  mute: !isInlineActive,
+                });
+
+                return (
+                  <div
+                    key={`card-${item.videoId}`}
+                    className="w-[300px] flex-shrink-0 overflow-hidden rounded-xl border border-white/10 bg-black transition hover:border-white/25 sm:w-[340px]"
+                  >
+                    <div
+                      className="relative aspect-video w-full cursor-pointer"
+                      onClick={() => setActiveInlineVideoId(item.videoId)}
+                      onDoubleClick={() => setModalVideoId(item.videoId)}
+                      title="Click to play here, double-click to open larger view"
+                    >
+                      <div className="absolute top-2 left-2 z-10 rounded bg-red-600 px-2 py-1 text-xs font-bold">
+                        LIVE
+                      </div>
+
+                      {isInlineActive ? (
+                        <div className="absolute top-2 right-2 z-10 rounded bg-black/70 px-2 py-1 text-[11px] font-semibold text-white border border-white/20">
+                          SOUND ON
+                        </div>
+                      ) : (
+                        <div className="absolute inset-0 z-10 flex items-center justify-center">
+                          <div className="rounded-full bg-black/55 p-3 border border-white/20">
+                            <svg
+                              width="28"
+                              height="28"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              xmlns="http://www.w3.org/2000/svg"
+                            >
+                              <circle cx="12" cy="12" r="10" fill="white" fillOpacity="0.9" />
+                              <path d="M10 8L16 12L10 16V8Z" fill="#212B36" />
+                            </svg>
+                          </div>
+                        </div>
+                      )}
+
+                      <iframe
+                        key={`${isInlineActive ? "active" : "preview"}-${item.videoId}`}
+                        src={cardSrc}
+                        className="h-full w-full"
+                        allow="autoplay; encrypted-media; picture-in-picture"
+                        allowFullScreen
+                        title={`${item.handle} live`}
+                      />
+                    </div>
+
+                    <div className="flex min-w-0 items-center justify-between p-2">
+                      <div className="truncate text-sm font-semibold">{item.handle}</div>
+                      <a
+                        href={item.watchUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="shrink-0 text-xs underline opacity-80 hover:opacity-100"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        YouTube
+                      </a>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-2xl border border-white/10 p-6 opacity-80">
+            No live channels right now.
+          </div>
         )}
       </div>
 
-      {/* Focus mode: inline player (X or Back to Wall or Escape to return) */}
-      {inFocus && activeItem ? (
-        <div className="max-w-2xl mx-auto mb-4">
-          <div className="rounded-2xl overflow-hidden border border-white/10 bg-black relative">
-            <div className="aspect-video w-full relative">
+      {modalItem ? (
+        <div
+          className="fixed inset-0 z-[220] bg-black/70 p-4"
+          onClick={() => setModalVideoId(null)}
+        >
+          <div
+            className="absolute left-1/2 top-1/2 w-full max-w-5xl -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-2xl border border-white/10 bg-black shadow-[0_18px_50px_rgba(0,0,0,0.5)]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-white/10 p-3">
+              <div className="text-sm font-semibold">{modalItem.handle}</div>
               <button
                 type="button"
-                onClick={() => setActiveVideoId(null)}
-                className="absolute top-2 right-2 z-10 w-8 h-8 rounded-full bg-black/70 hover:bg-black/90 text-white flex items-center justify-center text-lg leading-none border border-white/20 hover:border-white/40 transition"
-                title="Back to wall"
-                aria-label="Back to wall"
+                onClick={() => setModalVideoId(null)}
+                className="rounded-lg border border-white/20 px-3 py-1 text-sm hover:border-white/40"
               >
-                ×
+                Close
               </button>
+            </div>
+
+            <div className="relative aspect-video w-full bg-black">
               <iframe
-                key={`focus-${activeItem.videoId}`}
-                src={getEmbedSrc(activeItem, { autoplay: true, mute: false })}
-                className="w-full h-full"
+                key={`modal-${modalItem.videoId}`}
+                src={getEmbedSrc(modalItem, { autoplay: true, mute: false })}
+                className="h-full w-full"
                 allow="autoplay; encrypted-media; picture-in-picture"
                 allowFullScreen
-                title={`${activeItem.handle} live`}
+                title={`${modalItem.handle} live modal`}
               />
             </div>
 
-            <div className="p-3 flex items-center justify-between">
-              <div className="text-sm">
-                <span className="font-semibold">{activeItem.handle}</span>
-                <span className="opacity-70"> — playing with sound</span>
-              </div>
+            <div className="flex items-center justify-between p-3">
+              <div className="text-sm opacity-80">Playing with sound</div>
               <a
-                href={activeItem.watchUrl}
+                href={modalItem.watchUrl}
                 target="_blank"
                 rel="noreferrer"
                 className="text-sm underline opacity-90 hover:opacity-100"
@@ -102,59 +193,6 @@ export default function LiveSection({ liveItems, maxWall: _maxWall, title = "LIV
           </div>
         </div>
       ) : null}
-
-      {/* Wall mode: single horizontal scroll row of smaller cards */}
-      {!inFocus && (
-        <div className="w-full">
-          {allItems.length > 0 ? (
-            <div className="overflow-x-auto overflow-y-hidden pb-2 scrollbar-modern -mx-1 px-1">
-              <div className="flex gap-3" style={{ scrollBehavior: "smooth" }}>
-                {allItems.map((item) => (
-                  <div
-                    key={`card-${item.videoId}`}
-                    className="flex-shrink-0 w-[300px] sm:w-[340px] rounded-xl overflow-hidden border border-white/10 bg-black hover:border-white/25 transition"
-                  >
-                    <div className="relative w-full aspect-video cursor-pointer">
-                      <div className="absolute z-10 top-2 left-2 px-2 py-1 rounded text-xs font-bold bg-red-600">
-                        LIVE
-                      </div>
-                      <div
-                        className="absolute inset-0 z-[5]"
-                        aria-hidden
-                        onClick={() => setActiveVideoId(item.videoId)}
-                      />
-                      <iframe
-                        key={`muted-${item.videoId}`}
-                        src={getEmbedSrc(item, { autoplay: true, mute: true })}
-                        className="w-full h-full"
-                        allow="autoplay; encrypted-media; picture-in-picture"
-                        allowFullScreen
-                        title={`${item.handle} live`}
-                      />
-                    </div>
-
-                    <div className="p-2 flex items-center justify-between min-w-0">
-                      <div className="text-sm font-semibold truncate">{item.handle}</div>
-                      <a
-                        href={item.watchUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-xs underline opacity-80 hover:opacity-100 shrink-0"
-                      >
-                        YouTube
-                      </a>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <div className="rounded-2xl border border-white/10 p-6 opacity-80">
-              No live channels right now.
-            </div>
-          )}
-        </div>
-      )}
     </section>
   );
 }

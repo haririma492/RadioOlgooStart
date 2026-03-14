@@ -34,6 +34,7 @@
     "tailwindcss-animate": "^1.0.7",
     "use-debounce": "^10.1.0",
     "uuid": "^13.0.0",
+    "vazirmatn": "^33.0.3",
     "yt-dlp-wrap": "^2.3.12",
     "ytdl-core": "^4.11.5"
   },

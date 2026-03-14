@@ -134,9 +134,22 @@ const tehranHourFa = new Intl.DateTimeFormat("fa-IR", {
         timeZone: "Asia/Tehran",
       }).format(now)
     );
-    let periodFa = translations.fa.morning;
-    if (hour24 >= 12 && hour24 < 18) periodFa = translations.fa.afternoon;
-    if (hour24 >= 18 || hour24 < 5) periodFa = translations.fa.evening;
+let periodFa = translations.fa.morning;
+
+// 18:00 → 23:59  = شام
+if (hour24 >= 18 && hour24 <= 23) {
+  periodFa = "شام";
+}
+
+// 00:01 → 11:59 = بامداد
+else if (hour24 >= 0 && hour24 < 12) {
+  periodFa = "بامداد";
+}
+
+// 12:00 → 17:59 = نیمروز
+else {
+  periodFa = "نیمروز";
+}
 
     const weekdayEn = new Intl.DateTimeFormat("en-US", {
       weekday: "long",
@@ -312,7 +325,7 @@ function TopCalendarBar({
     faGregorianDate = parts[1] ?? "";
   }
 
-const unifiedTextClass = "text-base md:text-lg lg:text-xl";
+  const unifiedTextClass = "text-base md:text-lg lg:text-xl";
   const unifiedTextStyle: React.CSSProperties = {
     color: "#4ade80",
     fontWeight: 600,
@@ -324,6 +337,9 @@ const unifiedTextClass = "text-base md:text-lg lg:text-xl";
         <div
           className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center"
           aria-hidden="true"
+          style={{
+            transform: "translateX(-70px)",
+          }}
         >
           <button
             type="button"
@@ -341,7 +357,7 @@ const unifiedTextClass = "text-base md:text-lg lg:text-xl";
             }}
           >
             <img
-              src="/images/GaahNaameh3.png"
+              src="/images/Gaahnaameh3.png"
               alt={t.calendarTitle}
               className="h-20 w-auto rounded-lg object-contain md:h-24 lg:h-28"
               style={{
@@ -377,65 +393,85 @@ const unifiedTextClass = "text-base md:text-lg lg:text-xl";
               className="mb-3 flex w-full items-center border-b border-white/10 pb-3"
               style={{
                 direction: "rtl",
-                justifyContent: "flex-end",
+                justifyContent: "space-between",
               }}
             >
-              {segments.isReady ? (
-                isFa ? (
+              {isFa ? (
+                <>
                   <div
-                    className="ml-auto flex items-center flex-nowrap"
+                    className={unifiedTextClass}
                     style={{
-                      gap: "18px",
-                      direction: "rtl",
-                      justifyContent: "flex-start",
+                      ...unifiedTextStyle,
+                      textDecoration: "underline",
+                      textUnderlineOffset: "4px",
+                      whiteSpace: "nowrap",
+                      marginRight: 0,
+                      flexShrink: 0,
                     }}
                   >
-<div className={unifiedTextClass} style={unifiedTextStyle}>
-  <TimePill value={segments.timeOnly} />
-</div>
-<div className={unifiedTextClass} style={unifiedTextStyle}>
-  {segments.periodOnly}
-</div>
-<div className={unifiedTextClass} style={unifiedTextStyle}>
-  {t.inTehran}
-</div>
+                    گاهشمار
                   </div>
-                ) : (
-                  <div
-                    className="flex items-center justify-end flex-nowrap"
-                    style={{ gap: "18px", width: "100%" }}
-                  >
-                    <div className={unifiedTextClass} style={unifiedTextStyle}>
-                      {t.timeWord}
+
+                  {segments.isReady ? (
+                    <div
+                      className="flex items-center flex-nowrap"
+                      style={{
+                        gap: "18px",
+                        direction: "rtl",
+                        justifyContent: "flex-start",
+                        marginRight: "48px",
+                        marginLeft: "auto",
+                      }}
+                    >
+                      <div className={unifiedTextClass} style={unifiedTextStyle}>
+                        <TimePill value={segments.timeOnly} />
+                      </div>
+                      <div className={unifiedTextClass} style={unifiedTextStyle}>
+                        {segments.periodOnly}
+                      </div>
+                      <div className={unifiedTextClass} style={unifiedTextStyle}>
+                        {t.inTehran}
+                      </div>
                     </div>
-                    <div className={unifiedTextClass} style={unifiedTextStyle}>
-                      <TimePill value={segments.timeOnly} />
+                  ) : (
+                    <div
+                      className="flex items-center flex-nowrap"
+                      style={{
+                        gap: "18px",
+                        direction: "rtl",
+                        justifyContent: "flex-start",
+                        marginRight: "48px",
+                        marginLeft: "auto",
+                      }}
+                    >
+                      <div className={`${unifiedTextClass} invisible`} style={unifiedTextStyle}>
+                        <TimePill value="00:00" invisible />
+                      </div>
+                      <div className={`${unifiedTextClass} invisible`} style={unifiedTextStyle}>
+                        {translations.fa.afternoon}
+                      </div>
+                      <div className={`${unifiedTextClass} invisible`} style={unifiedTextStyle}>
+                        {t.inTehran}
+                      </div>
                     </div>
-                    <div className={unifiedTextClass} style={unifiedTextStyle}>
-                      {segments.periodOnly}
-                    </div>
-                    <div className={unifiedTextClass} style={unifiedTextStyle}>
-                      {t.inTehran}
-                    </div>
-                  </div>
-                )
-              ) : isFa ? (
+                  )}
+                </>
+              ) : segments.isReady ? (
                 <div
-                  className="ml-auto flex items-center flex-nowrap"
-                  style={{
-                    gap: "18px",
-                    direction: "rtl",
-                    justifyContent: "flex-start",
-                  }}
+                  className="flex items-center justify-end flex-nowrap"
+                  style={{ gap: "18px", width: "100%" }}
                 >
-                  <div className={`${unifiedTextClass} invisible`} style={unifiedTextStyle}>
+                  <div className={unifiedTextClass} style={unifiedTextStyle}>
+                    {t.timeWord}
+                  </div>
+                  <div className={unifiedTextClass} style={unifiedTextStyle}>
+                    <TimePill value={segments.timeOnly} />
+                  </div>
+                  <div className={unifiedTextClass} style={unifiedTextStyle}>
+                    {segments.periodOnly}
+                  </div>
+                  <div className={unifiedTextClass} style={unifiedTextStyle}>
                     {t.inTehran}
-                  </div>
-                  <div className={`${unifiedTextClass} invisible`} style={unifiedTextStyle}>
-                    {translations.fa.afternoon}
-                  </div>
-                  <div className={`${unifiedTextClass} invisible`} style={unifiedTextStyle}>
-                    <TimePill value="00:00" invisible />
                   </div>
                 </div>
               ) : (
@@ -461,18 +497,36 @@ const unifiedTextClass = "text-base md:text-lg lg:text-xl";
 
             <div className="flex w-full justify-end">
               <div
-                className={
-                  isFa
-                    ? "w-full text-right min-h-[2.25rem]"
-                    : "w-full text-right min-h-[2.25rem]"
-                }
+                className="w-full text-right min-h-[2.25rem]"
+                style={isFa ? { paddingRight: "110px" } : undefined}
               >
                 {segments.isReady ? (
                   isFa ? (
                     <>
-                      <span className={unifiedTextClass} style={unifiedTextStyle}>
-                        {faPrimaryDate}
-                      </span>
+{(() => {
+  const match = faPrimaryDate.match(/^(.*?)(\s*\([^)]+\))$/);
+  if (!match) {
+    return (
+      <span className={unifiedTextClass} style={unifiedTextStyle}>
+        {faPrimaryDate}
+      </span>
+    );
+  }
+
+  return (
+    <>
+      <span className={unifiedTextClass} style={unifiedTextStyle}>
+        {match[1]}
+      </span>
+      <span
+        className="text-sm md:text-base lg:text-lg"
+        style={{ ...unifiedTextStyle, fontWeight: 500 }}
+      >
+        {match[2]}
+      </span>
+    </>
+  );
+})()}
                       {faGregorianDate ? (
                         <>
                           <span style={{ display: "inline-block", width: "3ch" }} />
@@ -498,6 +552,7 @@ const unifiedTextClass = "text-base md:text-lg lg:text-xl";
     </div>
   );
 }
+
 function HomePageContent() {
   const [playingVideo, setPlayingVideo] = useState<PlayingVideo | null>(null);
   const { activePlayback, setActivePlayback } = usePlayback();
@@ -546,9 +601,9 @@ function HomePageContent() {
       />
       <div className="fixed inset-0 -z-[9]" style={{ backgroundColor: "rgba(22, 28, 36, 0.18)" }} />
 
-      <div className="relative z-10 bg-transparent">
-        <Header />
-      </div>
+<div className="relative z-10 bg-transparent">
+  <Header lang={lang} setLang={setLang} />
+</div>
 
 <div className="relative z-0 bg-transparent pt-4">
   <TopCalendarBar
@@ -563,36 +618,6 @@ function HomePageContent() {
             <HeroSection />
           </section>
 
-          <div className="mb-4 flex items-center justify-end">
-            <div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-black/70 p-1">
-              <button
-                type="button"
-                onClick={() => setLang("fa")}
-                className={[
-                  "rounded-full px-5 py-2 font-semibold transition",
-                  isFa
-                    ? "bg-white text-black shadow"
-                    : "bg-transparent text-white/80 hover:bg-white/10",
-                  "text-base md:text-lg",
-                ].join(" ")}
-              >
-                {t.farsi}
-              </button>
-              <button
-                type="button"
-                onClick={() => setLang("en")}
-                className={[
-                  "rounded-full px-5 py-2 font-semibold transition",
-                  !isFa
-                    ? "bg-white text-black shadow"
-                    : "bg-transparent text-white/80 hover:bg-white/10",
-                  "text-base md:text-lg",
-                ].join(" ")}
-              >
-                {t.english}
-              </button>
-            </div>
-          </div>
 
           <section className={`${panelClass} border border-white/10 p-4`}>
             <LiveBlock />
