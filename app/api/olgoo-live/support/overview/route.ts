@@ -1,16 +1,16 @@
 import { NextResponse } from "next/server";
-import { listSavedPlaylists } from "@/lib/olgoo-live/playlists";
-import { listSavedSchedules } from "@/lib/olgoo-live/schedules";
+import { listPlaylists } from "@/lib/olgoo-live/playlists";
+import { listSchedules } from "@/lib/olgoo-live/schedules";
 import { listSavedSubtitleSets } from "@/lib/olgoo-live/subtitles";
-import { fetchChannelState } from "@/lib/olgoo-live/schedules";
+import { getPlaybackState } from "@/lib/olgoo-live/dynamo";
 
 export async function GET() {
   try {
-    const [playlists, schedules, subtitles, channelState] = await Promise.all([
-      listSavedPlaylists(),
-      listSavedSchedules(),
+    const [playlists, schedules, subtitles, playbackState] = await Promise.all([
+      listPlaylists(),
+      listSchedules(),
       listSavedSubtitleSets(),
-      fetchChannelState("OLGOO_LIVE"),
+      getPlaybackState(),
     ]);
 
     return NextResponse.json({
@@ -18,7 +18,7 @@ export async function GET() {
       playlists: playlists.length,
       schedules: schedules.length,
       subtitleSets: subtitles.length,
-      activeScheduleId: channelState?.activeScheduleId || null,
+      activeScheduleId: playbackState?.sourceScheduleId || null,
     });
   } catch (error) {
     console.error("olgoo-live support overview failed", error);

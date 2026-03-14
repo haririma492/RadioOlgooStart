@@ -1,5 +1,5 @@
 import { ScanCommand } from "@aws-sdk/lib-dynamodb";
-import { ddbDoc } from "./dynamo";
+import { ddb } from "./dynamo";
 import { TABLES } from "./config";
 
 function inferSourceType(item: Record<string, any>) {
@@ -34,7 +34,7 @@ function inferMediaType(item: Record<string, any>, sourceType: string) {
 }
 
 export async function listSlides(limit = 500) {
-  const res = await ddbDoc.send(
+  const res = await ddb.send(
     new ScanCommand({
       TableName: TABLES.slides,
       Limit: limit,

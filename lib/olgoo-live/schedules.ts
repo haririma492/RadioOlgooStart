@@ -16,15 +16,18 @@ export async function listSchedules(): Promise<ScheduleMeta[]> {
 
   return rows
     .filter((row) => row.SK === "META" && String(row.PK || "").startsWith("SCHEDULE#"))
-    .map((row) => ({
-      scheduleId: String(row.scheduleId || ""),
-      name: String(row.name || row.scheduleId || ""),
-      channelId: String(row.channelId || "OLGOO_LIVE"),
-      status: String(row.status || "draft") === "active" ? "active" : "draft",
-      blockCount: Number(row.blockCount || 0),
-      createdAt: row.createdAt ? String(row.createdAt) : undefined,
-      updatedAt: row.updatedAt ? String(row.updatedAt) : undefined,
-    }))
+    .map(
+      (row) =>
+        ({
+          scheduleId: String(row.scheduleId || ""),
+          name: String(row.name || row.scheduleId || ""),
+          channelId: String(row.channelId || "OLGOO_LIVE"),
+          status: String(row.status || "draft") === "active" ? "active" : "draft",
+          blockCount: Number(row.blockCount || 0),
+          createdAt: row.createdAt ? String(row.createdAt) : undefined,
+          updatedAt: row.updatedAt ? String(row.updatedAt) : undefined,
+        }) satisfies ScheduleMeta
+    )
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -37,14 +40,17 @@ export async function getSchedule(scheduleId: string): Promise<ScheduleRecord | 
   const blocks = rows
     .filter((row) => String(row.SK || "").startsWith("BLOCK#"))
     .sort((a, b) => Number(a.order || 0) - Number(b.order || 0))
-    .map((row) => ({
-      order: Number(row.order || 0),
-      blockType: String(row.blockType || "playlist") === "item" ? "item" : "playlist",
-      refId: String(row.refId || ""),
-      title: String(row.title || ""),
-      durationSec: Number(row.durationSec || 0),
-      url: row.url ? String(row.url) : undefined,
-    } satisfies ScheduleBlock));
+    .map(
+      (row) =>
+        ({
+          order: Number(row.order || 0),
+          blockType: String(row.blockType || "playlist") === "item" ? "item" : "playlist",
+          refId: String(row.refId || ""),
+          title: String(row.title || ""),
+          durationSec: Number(row.durationSec || 0),
+          url: row.url ? String(row.url) : undefined,
+        }) satisfies ScheduleBlock
+    );
 
   return {
     scheduleId,
@@ -75,14 +81,17 @@ export async function saveSchedule(input: {
   }
 
   const timestamp = nowIso();
-  const normalizedBlocks = input.blocks.map((block, index) => ({
-    order: index + 1,
-    blockType: block.blockType === "item" ? "item" : "playlist",
-    refId: block.refId.trim(),
-    title: block.title.trim(),
-    durationSec: Math.max(1, Number(block.durationSec || 0)),
-    url: block.url?.trim() || undefined,
-  } satisfies ScheduleBlock));
+  const normalizedBlocks = input.blocks.map(
+    (block, index) =>
+      ({
+        order: index + 1,
+        blockType: block.blockType === "item" ? "item" : "playlist",
+        refId: block.refId.trim(),
+        title: block.title.trim(),
+        durationSec: Math.max(1, Number(block.durationSec || 0)),
+        url: block.url?.trim() || undefined,
+      }) satisfies ScheduleBlock
+  );
 
   await putItem(SCHEDULE_TABLE_NAME, {
     PK: pk,

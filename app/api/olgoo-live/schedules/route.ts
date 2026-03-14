@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { listSchedules, saveSchedule } from "@/lib/olgoo-live/schedules";
+import type { ScheduleBlock } from "@/lib/olgoo-live/types";
 
 function bad(message: string, status = 400) {
   return NextResponse.json({ error: message }, { status });
@@ -33,10 +34,20 @@ export async function POST(request: NextRequest) {
       return bad("playlistId is required.");
     }
 
+    const blocks: ScheduleBlock[] = [
+      {
+        order: 1,
+        blockType: "playlist",
+        refId: playlistId,
+        title: playlistId,
+        durationSec: 1,
+      },
+    ];
+
     const schedule = await saveSchedule({
       name,
-      playlistId,
       channelId,
+      blocks,
     });
 
     return NextResponse.json({
