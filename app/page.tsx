@@ -14,6 +14,8 @@ import type { OlgooLivePlayerType } from "@/components/OlgooLive/types";
 
 type Lang = "fa" | "en";
 
+const CALENDAR_LINK = "https://www.aryamehr.online/post/culturalcalendarofthe2585thiranianempire";
+
 const translations = {
   fa: {
     videoHub: "آرشیو ویدئو",
@@ -27,7 +29,10 @@ const translations = {
     evening: "شام",
     timeWord: "زمان",
     inTehran: "در تهران",
-    olgooLiveUnavailable: "پخش اُلگو لایو اکنون در دسترس نیست.",
+    olgooLiveUnavailable: "پخش زنده اکنون در دسترس نیست.",
+    calendarTitle: "گاهنامه",
+    openInNewTab: "باز کردن در صفحهٔ جدید",
+    close: "بستن",
   },
   en: {
     videoHub: "Video Archive",
@@ -42,6 +47,9 @@ const translations = {
     timeWord: "Time",
     inTehran: "in Tehran",
     olgooLiveUnavailable: "Olgoo Live is not available right now.",
+    calendarTitle: "Cultural Calendar",
+    openInNewTab: "Open in New Tab",
+    close: "Close",
   },
 };
 
@@ -61,31 +69,24 @@ function toPersianDigits(value: string | number): string {
 
 function useLiveNow() {
   const [now, setNow] = useState<Date | null>(null);
-
   useEffect(() => {
     const tick = () => setNow(new Date());
     tick();
-
     const interval = window.setInterval(tick, 60_000);
-    const delay =
-      (60 - new Date().getSeconds()) * 1000 - new Date().getMilliseconds();
-
+    const delay = (60 - new Date().getSeconds()) * 1000 - new Date().getMilliseconds();
     const timeout = window.setTimeout(() => {
       tick();
     }, Math.max(0, delay));
-
     return () => {
       window.clearInterval(interval);
       window.clearTimeout(timeout);
     };
   }, []);
-
   return now;
 }
 
 function useLiveCalendarSegments(lang: Lang) {
   const now = useLiveNow();
-
   return useMemo(() => {
     if (!now) {
       return {
@@ -95,23 +96,19 @@ function useLiveCalendarSegments(lang: Lang) {
         isReady: false,
       };
     }
-
     const weekdayFa = new Intl.DateTimeFormat("fa-IR-u-ca-persian", {
       weekday: "long",
       timeZone: "Asia/Tehran",
     }).format(now);
-
     const jalaliPartsFa = new Intl.DateTimeFormat("fa-IR-u-ca-persian", {
       year: "numeric",
       month: "long",
       day: "numeric",
       timeZone: "Asia/Tehran",
     }).formatToParts(now);
-
     const jalaliDayFa = jalaliPartsFa.find((p) => p.type === "day")?.value ?? "";
     const jalaliMonthFa = jalaliPartsFa.find((p) => p.type === "month")?.value ?? "";
     const jalaliYearFa = jalaliPartsFa.find((p) => p.type === "year")?.value ?? "";
-
     const gregorianPartsFa = new Intl.DateTimeFormat("fa-IR", {
       calendar: "gregory",
       year: "numeric",
@@ -119,21 +116,17 @@ function useLiveCalendarSegments(lang: Lang) {
       day: "numeric",
       timeZone: "Asia/Tehran",
     }).formatToParts(now);
-
     const gregorianDayFa = gregorianPartsFa.find((p) => p.type === "day")?.value ?? "";
     const gregorianMonthFa = gregorianPartsFa.find((p) => p.type === "month")?.value ?? "";
     const gregorianYearFa = gregorianPartsFa.find((p) => p.type === "year")?.value ?? "";
-
     const shahanshahiYear = 2584;
     const shahanshahiFa = `${toPersianDigits(shahanshahiYear)} (${jalaliYearFa})`;
-
     const tehranHourFa = new Intl.DateTimeFormat("fa-IR", {
       hour: "numeric",
       minute: "2-digit",
       hour12: true,
       timeZone: "Asia/Tehran",
     }).format(now);
-
     const hour24 = Number(
       new Intl.DateTimeFormat("en-GB", {
         hour: "2-digit",
@@ -141,7 +134,6 @@ function useLiveCalendarSegments(lang: Lang) {
         timeZone: "Asia/Tehran",
       }).format(now)
     );
-
     let periodFa = translations.fa.morning;
     if (hour24 >= 12 && hour24 < 18) periodFa = translations.fa.afternoon;
     if (hour24 >= 18 || hour24 < 5) periodFa = translations.fa.evening;
@@ -150,38 +142,31 @@ function useLiveCalendarSegments(lang: Lang) {
       weekday: "long",
       timeZone: "Asia/Tehran",
     }).format(now);
-
     const jalaliPartsEn = new Intl.DateTimeFormat("en-US-u-ca-persian", {
       year: "numeric",
       month: "long",
       day: "numeric",
       timeZone: "Asia/Tehran",
     }).formatToParts(now);
-
     const jalaliDayEn = jalaliPartsEn.find((p) => p.type === "day")?.value ?? "";
     const jalaliMonthEn = jalaliPartsEn.find((p) => p.type === "month")?.value ?? "";
     const jalaliYearEn = jalaliPartsEn.find((p) => p.type === "year")?.value ?? "";
-
     const gregorianPartsEn = new Intl.DateTimeFormat("en-US", {
       year: "numeric",
       month: "long",
       day: "numeric",
       timeZone: "Asia/Tehran",
     }).formatToParts(now);
-
     const gregorianDayEn = gregorianPartsEn.find((p) => p.type === "day")?.value ?? "";
     const gregorianMonthEn = gregorianPartsEn.find((p) => p.type === "month")?.value ?? "";
     const gregorianYearEn = gregorianPartsEn.find((p) => p.type === "year")?.value ?? "";
-
     const shahanshahiEn = `${shahanshahiYear} (${jalaliYearEn})`;
-
     const tehranTimeEn = new Intl.DateTimeFormat("en-US", {
       hour: "numeric",
       minute: "2-digit",
       hour12: true,
       timeZone: "Asia/Tehran",
     }).format(now);
-
     let periodEn = translations.en.morning;
     if (hour24 >= 12 && hour24 < 18) periodEn = translations.en.afternoon;
     if (hour24 >= 18 || hour24 < 5) periodEn = translations.en.evening;
@@ -194,7 +179,6 @@ function useLiveCalendarSegments(lang: Lang) {
         isReady: true,
       };
     }
-
     return {
       dateLine: `${weekdayEn} ${jalaliDayEn} - ${jalaliMonthEn} - ${shahanshahiEn}   ${gregorianDayEn} - ${gregorianMonthEn} - ${gregorianYearEn}`,
       timeOnly: tehranTimeEn,
@@ -241,14 +225,108 @@ function TimePill({ value, invisible = false }: { value: string; invisible?: boo
   );
 }
 
-function TopCalendarBar({ lang }: { lang: Lang }) {
+function CalendarModal({
+  isOpen,
+  onClose,
+  lang,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  lang: Lang;
+}) {
+  const t = translations[lang];
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [isOpen, onClose]);
+  if (!isOpen) return null;
+  return (
+    <div className="fixed inset-0 z-[200] bg-black/20" onClick={onClose}>
+      <div
+        className="absolute bottom-6 right-6 flex h-[52vh] w-[min(56rem,calc(100vw-3rem))] flex-col overflow-hidden rounded-2xl border border-white/15 bg-[#0d0d0d]/95 shadow-[0_18px_50px_rgba(0,0,0,0.5)]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3 text-white">
+          <div className="text-base font-bold md:text-lg">{t.calendarTitle}</div>
+          <div className="flex items-center gap-2">
+            <a
+              href={CALENDAR_LINK}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="rounded-full border border-white/15 bg-white/10 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/20"
+            >
+              {t.openInNewTab}
+            </a>
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-full border border-white/15 bg-white/10 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/20"
+            >
+              {t.close}
+            </button>
+          </div>
+        </div>
+        <div className="relative flex-1 bg-white">
+          <iframe
+            src={CALENDAR_LINK}
+            title={t.calendarTitle}
+            className="h-full w-full"
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TopCalendarBar({
+  lang,
+  onCalendarImageClick,
+}: {
+  lang: Lang;
+  onCalendarImageClick: () => void;
+}) {
   const isFa = lang === "fa";
   const t = translations[lang];
   const segments = useLiveCalendarSegments(lang);
 
   return (
     <div className="mx-auto mb-6 w-full max-w-[1500px] px-4">
-      <div className="rounded-2xl border border-white/10 bg-black/80 px-5 py-4 shadow-[0_8px_30px_rgba(0,0,0,0.28)]">
+      <div className="relative rounded-2xl border border-white/10 bg-black/80 px-5 py-4 shadow-[0_8px_30px_rgba(0,0,0,0.28)]">
+        <div
+          className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center"
+          aria-hidden="true"
+        >
+          <button
+            type="button"
+            onClick={onCalendarImageClick}
+            className="pointer-events-auto group relative flex items-center justify-center rounded-2xl p-[6px] transition-transform duration-200 hover:scale-105 focus:outline-none focus:ring-2 focus:ring-white/60"
+            aria-label={t.calendarTitle}
+            title={t.calendarTitle}
+            style={{
+              background: "linear-gradient(180deg, rgba(255,255,255,0.18), rgba(255,255,255,0.06))",
+              boxShadow:
+                "0 10px 24px rgba(0,0,0,0.42), inset 0 1px 0 rgba(255,255,255,0.18)",
+              border: "1px solid rgba(255,255,255,0.14)",
+              backdropFilter: "blur(2px)",
+            }}
+          >
+            <img
+              src="/images/Gaahnaameh3.png"
+              alt={t.calendarTitle}
+              className="h-20 w-auto rounded-lg object-contain md:h-24 lg:h-28"
+              style={{
+                boxShadow: "0 8px 18px rgba(0,0,0,0.38)",
+              }}
+            />
+          </button>
+        </div>
+
         <div
           className={[
             "flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between",
@@ -271,56 +349,48 @@ function TopCalendarBar({ lang }: { lang: Lang }) {
           </div>
 
           <div className="min-w-0 flex-1">
+            {/* ────────────────────────────────────────────────
+                REPLACED BLOCK – now correctly right-aligned in fa mode
+            ──────────────────────────────────────────────── */}
             <div
-              className="mb-3 flex w-full items-center border-b border-white/10 pb-3"
-              style={{
-                direction: isFa ? "rtl" : "ltr",
-                justifyContent: "flex-end",
-              }}
+              className="mb-3 flex w-full items-center justify-end gap-5 border-b border-white/10 pb-3"
+              style={{ direction: isFa ? "rtl" : "ltr" }}
             >
               {segments.isReady ? (
                 isFa ? (
-                  <div
-                    className="flex items-center justify-end flex-nowrap"
-                    style={{ gap: "18px", width: "100%" }}
-                  >
-                    <div className="text-lg font-bold md:text-xl">{t.timeWord}</div>
-                    <div className="text-lg font-bold md:text-xl">{t.inTehran}</div>
-                    <TimePill value={segments.timeOnly} />
+                  <>
                     <div className="text-lg font-bold md:text-xl">{segments.periodOnly}</div>
-                  </div>
+                    <TimePill value={segments.timeOnly} />
+                    <div className="text-lg font-bold md:text-xl">{t.inTehran}</div>
+                    <div className="text-lg font-bold md:text-xl">{t.timeWord}</div>
+                  </>
                 ) : (
-                  <div
-                    className="flex items-center justify-end flex-nowrap"
-                    style={{ gap: "18px", width: "100%" }}
-                  >
+                  <>
                     <div className="text-base font-bold md:text-lg">{t.timeWord}</div>
                     <TimePill value={segments.timeOnly} />
                     <div className="text-base font-bold md:text-lg">{segments.periodOnly}</div>
                     <div className="text-base font-bold md:text-lg">{t.inTehran}</div>
-                  </div>
+                  </>
                 )
               ) : (
                 isFa ? (
-                  <div
-                    className="flex items-center justify-end flex-nowrap"
-                    style={{ gap: "18px", width: "100%" }}
-                  >
-                    <div className="text-lg font-bold md:text-xl invisible">{t.timeWord}</div>
+                  <>
+                    <div className="text-lg font-bold md:text-xl invisible">
+                      {translations.fa.evening}
+                    </div>
+                    <TimePill value="۰۰:۰۰" invisible />
                     <div className="text-lg font-bold md:text-xl invisible">{t.inTehran}</div>
-                    <TimePill value="00:00" invisible />
-                    <div className="text-lg font-bold md:text-xl invisible">{translations.fa.afternoon}</div>
-                  </div>
+                    <div className="text-lg font-bold md:text-xl invisible">{t.timeWord}</div>
+                  </>
                 ) : (
-                  <div
-                    className="flex items-center justify-end flex-nowrap"
-                    style={{ gap: "18px", width: "100%" }}
-                  >
+                  <>
                     <div className="text-base font-bold md:text-lg invisible">{t.timeWord}</div>
                     <TimePill value="00:00" invisible />
-                    <div className="text-base font-bold md:text-lg invisible">{translations.en.afternoon}</div>
+                    <div className="text-base font-bold md:text-lg invisible">
+                      {translations.en.evening}
+                    </div>
                     <div className="text-base font-bold md:text-lg invisible">{t.inTehran}</div>
-                  </div>
+                  </>
                 )
               )}
             </div>
@@ -351,7 +421,7 @@ function HomePageContent() {
   const [playingVideo, setPlayingVideo] = useState<PlayingVideo | null>(null);
   const { activePlayback, setActivePlayback } = usePlayback();
   const [lang, setLang] = useState<Lang>("fa");
-
+  const [isCalendarModalOpen, setIsCalendarModalOpen] = useState(false);
   const t = translations[lang];
   const isFa = lang === "fa";
 
@@ -374,9 +444,7 @@ function HomePageContent() {
   const sectionTitleClass = isFa
     ? "mb-3 text-2xl font-bold tracking-normal"
     : "mb-3 text-xl font-bold tracking-normal";
-
-  const panelClass =
-    "mb-6 rounded-2xl bg-black/90 shadow-[0_8px_30px_rgba(0,0,0,0.35)]";
+  const panelClass = "mb-6 rounded-2xl bg-black/90 shadow-[0_8px_30px_rgba(0,0,0,0.35)]";
 
   return (
     <div
@@ -386,7 +454,6 @@ function HomePageContent() {
       style={{ backgroundColor: "#434343" }}
     >
       <div className="fixed inset-0 -z-20" style={{ backgroundColor: "#434343" }} />
-
       <div
         className="fixed inset-0 -z-10"
         style={{
@@ -396,18 +463,17 @@ function HomePageContent() {
           backgroundRepeat: "no-repeat",
         }}
       />
-
-      <div
-        className="fixed inset-0 -z-[9]"
-        style={{ backgroundColor: "rgba(22, 28, 36, 0.18)" }}
-      />
+      <div className="fixed inset-0 -z-[9]" style={{ backgroundColor: "rgba(22, 28, 36, 0.18)" }} />
 
       <div className="relative z-10 bg-transparent">
         <Header />
       </div>
 
       <div className="relative z-0 bg-transparent">
-        <TopCalendarBar lang={lang} />
+        <TopCalendarBar
+          lang={lang}
+          onCalendarImageClick={() => setIsCalendarModalOpen(true)}
+        />
       </div>
 
       <div className="relative z-0 bg-transparent">
@@ -431,7 +497,6 @@ function HomePageContent() {
               >
                 {t.farsi}
               </button>
-
               <button
                 type="button"
                 onClick={() => setLang("en")}
@@ -501,6 +566,12 @@ function HomePageContent() {
         playerType={playingVideo?.playerType}
         sourceLabel={playingVideo?.sourceLabel}
         isLive={playingVideo?.isLive}
+      />
+
+      <CalendarModal
+        isOpen={isCalendarModalOpen}
+        onClose={() => setIsCalendarModalOpen(false)}
+        lang={lang}
       />
     </div>
   );
