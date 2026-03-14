@@ -121,12 +121,12 @@ function useLiveCalendarSegments(lang: Lang) {
     const gregorianYearFa = gregorianPartsFa.find((p) => p.type === "year")?.value ?? "";
     const shahanshahiYear = 2584;
     const shahanshahiFa = `${toPersianDigits(shahanshahiYear)} (${jalaliYearFa})`;
-    const tehranHourFa = new Intl.DateTimeFormat("fa-IR", {
-      hour: "numeric",
-      minute: "2-digit",
-      hour12: true,
-      timeZone: "Asia/Tehran",
-    }).format(now);
+const tehranHourFa = new Intl.DateTimeFormat("fa-IR", {
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+  timeZone: "Asia/Tehran",
+}).format(now);
     const hour24 = Number(
       new Intl.DateTimeFormat("en-GB", {
         hour: "2-digit",
@@ -191,7 +191,7 @@ function useLiveCalendarSegments(lang: Lang) {
 function TimePill({ value, invisible = false }: { value: string; invisible?: boolean }) {
   return (
     <div
-      className="text-xl font-semibold md:text-2xl"
+      className="text-sm font-semibold md:text-base lg:text-lg"
       style={{
         display: "inline-flex",
         direction: "ltr",
@@ -235,25 +235,32 @@ function CalendarModal({
   lang: Lang;
 }) {
   const t = translations[lang];
+
   useEffect(() => {
     if (!isOpen) return;
+
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
     };
+
     document.addEventListener("keydown", onKeyDown);
+
     return () => {
       document.removeEventListener("keydown", onKeyDown);
     };
   }, [isOpen, onClose]);
+
   if (!isOpen) return null;
+
   return (
     <div className="fixed inset-0 z-[200] bg-black/20" onClick={onClose}>
       <div
-        className="absolute bottom-6 right-6 flex h-[52vh] w-[min(56rem,calc(100vw-3rem))] flex-col overflow-hidden rounded-2xl border border-white/15 bg-[#0d0d0d]/95 shadow-[0_18px_50px_rgba(0,0,0,0.5)]"
+        className="absolute bottom-6 right-6 flex h-[68vh] w-[min(73rem,calc(100vw-3rem))] flex-col overflow-hidden rounded-2xl border border-white/15 bg-[#0d0d0d]/95 shadow-[0_18px_50px_rgba(0,0,0,0.5)]"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3 text-white">
           <div className="text-base font-bold md:text-lg">{t.calendarTitle}</div>
+
           <div className="flex items-center gap-2">
             <a
               href={CALENDAR_LINK}
@@ -263,6 +270,7 @@ function CalendarModal({
             >
               {t.openInNewTab}
             </a>
+
             <button
               type="button"
               onClick={onClose}
@@ -272,18 +280,18 @@ function CalendarModal({
             </button>
           </div>
         </div>
+
         <div className="relative flex-1 bg-white">
           <iframe
             src={CALENDAR_LINK}
             title={t.calendarTitle}
-            className="h-full w-full"
+            className="h-full w-full border-0"
           />
         </div>
       </div>
     </div>
   );
 }
-
 function TopCalendarBar({
   lang,
   onCalendarImageClick,
@@ -294,6 +302,21 @@ function TopCalendarBar({
   const isFa = lang === "fa";
   const t = translations[lang];
   const segments = useLiveCalendarSegments(lang);
+
+  let faPrimaryDate = "";
+  let faGregorianDate = "";
+
+  if (isFa && segments.dateLine) {
+    const parts = segments.dateLine.split(/\s{3,}/);
+    faPrimaryDate = parts[0] ?? segments.dateLine;
+    faGregorianDate = parts[1] ?? "";
+  }
+
+const unifiedTextClass = "text-base md:text-lg lg:text-xl";
+  const unifiedTextStyle: React.CSSProperties = {
+    color: "#4ade80",
+    fontWeight: 600,
+  };
 
   return (
     <div className="mx-auto mb-6 w-full max-w-[1500px] px-4">
@@ -309,7 +332,8 @@ function TopCalendarBar({
             aria-label={t.calendarTitle}
             title={t.calendarTitle}
             style={{
-              background: "linear-gradient(180deg, rgba(255,255,255,0.18), rgba(255,255,255,0.06))",
+              background:
+                "linear-gradient(180deg, rgba(255,255,255,0.18), rgba(255,255,255,0.06))",
               boxShadow:
                 "0 10px 24px rgba(0,0,0,0.42), inset 0 1px 0 rgba(255,255,255,0.18)",
               border: "1px solid rgba(255,255,255,0.14)",
@@ -317,7 +341,7 @@ function TopCalendarBar({
             }}
           >
             <img
-              src="/images/GaahNaameh3.png"
+              src="/images/Gaahnaameh3.png"
               alt={t.calendarTitle}
               className="h-20 w-auto rounded-lg object-contain md:h-24 lg:h-28"
               style={{
@@ -349,49 +373,89 @@ function TopCalendarBar({
           </div>
 
           <div className="min-w-0 flex-1">
-            {/* ────────────────────────────────────────────────
-                REPLACED BLOCK – now correctly right-aligned in fa mode
-            ──────────────────────────────────────────────── */}
             <div
-              className="mb-3 flex w-full items-center justify-end gap-5 border-b border-white/10 pb-3"
-              style={{ direction: isFa ? "rtl" : "ltr" }}
+              className="mb-3 flex w-full items-center border-b border-white/10 pb-3"
+              style={{
+                direction: "rtl",
+                justifyContent: "flex-end",
+              }}
             >
               {segments.isReady ? (
                 isFa ? (
-                  <>
-                    <div className="text-lg font-bold md:text-xl">{segments.periodOnly}</div>
-                    <TimePill value={segments.timeOnly} />
-                    <div className="text-lg font-bold md:text-xl">{t.inTehran}</div>
-                    <div className="text-lg font-bold md:text-xl">{t.timeWord}</div>
-                  </>
+                  <div
+                    className="ml-auto flex items-center flex-nowrap"
+                    style={{
+                      gap: "18px",
+                      direction: "rtl",
+                      justifyContent: "flex-start",
+                    }}
+                  >
+<div className={unifiedTextClass} style={unifiedTextStyle}>
+  <TimePill value={segments.timeOnly} />
+</div>
+<div className={unifiedTextClass} style={unifiedTextStyle}>
+  {segments.periodOnly}
+</div>
+<div className={unifiedTextClass} style={unifiedTextStyle}>
+  {t.inTehran}
+</div>
+                  </div>
                 ) : (
-                  <>
-                    <div className="text-base font-bold md:text-lg">{t.timeWord}</div>
-                    <TimePill value={segments.timeOnly} />
-                    <div className="text-base font-bold md:text-lg">{segments.periodOnly}</div>
-                    <div className="text-base font-bold md:text-lg">{t.inTehran}</div>
-                  </>
-                )
-              ) : (
-                isFa ? (
-                  <>
-                    <div className="text-lg font-bold md:text-xl invisible">
-                      {translations.fa.evening}
+                  <div
+                    className="flex items-center justify-end flex-nowrap"
+                    style={{ gap: "18px", width: "100%" }}
+                  >
+                    <div className={unifiedTextClass} style={unifiedTextStyle}>
+                      {t.timeWord}
                     </div>
-                    <TimePill value="۰۰:۰۰" invisible />
-                    <div className="text-lg font-bold md:text-xl invisible">{t.inTehran}</div>
-                    <div className="text-lg font-bold md:text-xl invisible">{t.timeWord}</div>
-                  </>
-                ) : (
-                  <>
-                    <div className="text-base font-bold md:text-lg invisible">{t.timeWord}</div>
+                    <div className={unifiedTextClass} style={unifiedTextStyle}>
+                      <TimePill value={segments.timeOnly} />
+                    </div>
+                    <div className={unifiedTextClass} style={unifiedTextStyle}>
+                      {segments.periodOnly}
+                    </div>
+                    <div className={unifiedTextClass} style={unifiedTextStyle}>
+                      {t.inTehran}
+                    </div>
+                  </div>
+                )
+              ) : isFa ? (
+                <div
+                  className="ml-auto flex items-center flex-nowrap"
+                  style={{
+                    gap: "18px",
+                    direction: "rtl",
+                    justifyContent: "flex-start",
+                  }}
+                >
+                  <div className={`${unifiedTextClass} invisible`} style={unifiedTextStyle}>
+                    {t.inTehran}
+                  </div>
+                  <div className={`${unifiedTextClass} invisible`} style={unifiedTextStyle}>
+                    {translations.fa.afternoon}
+                  </div>
+                  <div className={`${unifiedTextClass} invisible`} style={unifiedTextStyle}>
                     <TimePill value="00:00" invisible />
-                    <div className="text-base font-bold md:text-lg invisible">
-                      {translations.en.evening}
-                    </div>
-                    <div className="text-base font-bold md:text-lg invisible">{t.inTehran}</div>
-                  </>
-                )
+                  </div>
+                </div>
+              ) : (
+                <div
+                  className="flex items-center justify-end flex-nowrap"
+                  style={{ gap: "18px", width: "100%" }}
+                >
+                  <div className={`${unifiedTextClass} invisible`} style={unifiedTextStyle}>
+                    {t.timeWord}
+                  </div>
+                  <div className={`${unifiedTextClass} invisible`} style={unifiedTextStyle}>
+                    <TimePill value="00:00" invisible />
+                  </div>
+                  <div className={`${unifiedTextClass} invisible`} style={unifiedTextStyle}>
+                    {translations.en.afternoon}
+                  </div>
+                  <div className={`${unifiedTextClass} invisible`} style={unifiedTextStyle}>
+                    {t.inTehran}
+                  </div>
+                </div>
               )}
             </div>
 
@@ -399,12 +463,30 @@ function TopCalendarBar({
               <div
                 className={
                   isFa
-                    ? "w-full text-right text-lg font-semibold md:text-xl lg:text-2xl min-h-[2.25rem]"
-                    : "w-full text-right text-base font-semibold md:text-lg lg:text-xl min-h-[2.25rem]"
+                    ? "w-full text-right min-h-[2.25rem]"
+                    : "w-full text-right min-h-[2.25rem]"
                 }
               >
                 {segments.isReady ? (
-                  segments.dateLine
+                  isFa ? (
+                    <>
+                      <span className={unifiedTextClass} style={unifiedTextStyle}>
+                        {faPrimaryDate}
+                      </span>
+                      {faGregorianDate ? (
+                        <>
+                          <span style={{ display: "inline-block", width: "3ch" }} />
+                          <span className={unifiedTextClass} style={unifiedTextStyle}>
+                            {faGregorianDate}
+                          </span>
+                        </>
+                      ) : null}
+                    </>
+                  ) : (
+                    <span className={unifiedTextClass} style={unifiedTextStyle}>
+                      {segments.dateLine}
+                    </span>
+                  )
                 ) : (
                   <span className="invisible">loading date line</span>
                 )}
@@ -416,7 +498,6 @@ function TopCalendarBar({
     </div>
   );
 }
-
 function HomePageContent() {
   const [playingVideo, setPlayingVideo] = useState<PlayingVideo | null>(null);
   const { activePlayback, setActivePlayback } = usePlayback();
@@ -469,12 +550,12 @@ function HomePageContent() {
         <Header />
       </div>
 
-      <div className="relative z-0 bg-transparent">
-        <TopCalendarBar
-          lang={lang}
-          onCalendarImageClick={() => setIsCalendarModalOpen(true)}
-        />
-      </div>
+<div className="relative z-0 bg-transparent pt-4">
+  <TopCalendarBar
+    lang={lang}
+    onCalendarImageClick={() => setIsCalendarModalOpen(true)}
+  />
+</div>
 
       <div className="relative z-0 bg-transparent">
         <main className="mx-auto w-full max-w-[1500px] px-4 py-2 bg-transparent">
