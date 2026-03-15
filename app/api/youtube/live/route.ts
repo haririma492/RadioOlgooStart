@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { redisGet, redisSet } from "@/lib/redisLiveCache";
+import { parseYouTubeTarget, type YouTubeTarget } from "@/lib/YoutubeTarget";
+
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

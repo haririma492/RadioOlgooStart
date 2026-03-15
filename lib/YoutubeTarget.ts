@@ -73,7 +73,7 @@ export function parseYouTubeTarget(input: string): YouTubeTarget {
         }
       }
 
-      if (segments.length >= 2 && segments[0].toLowerCase() === "live" && segments[1]) {
+      if (segments.length >= 2 && segments[0].toLowerCase() === "live") {
         const maybeVideoId = segments[1];
         if (/^[a-zA-Z0-9_-]{11}$/.test(maybeVideoId)) {
           return { kind: "videoId", videoId: maybeVideoId };
@@ -111,3 +111,4 @@ export function parseYouTubeTarget(input: string): YouTubeTarget {
 
   return { kind: "unknown", raw };
 }
+
