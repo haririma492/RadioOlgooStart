@@ -13,7 +13,7 @@ export default function Header({ lang = "fa", setLang }: HeaderProps) {
   const isFa = lang === "fa";
 
   const headerTitle = isFa
-    ? "ایستگاه دیداری-شنیداری انقلاب شیر و خورشید و تمدن ایرانی"
+    ? "ایستگاه دیداری-شنیداری انقلاب شیر و خورشید"
     : "Video Hub of Iranian Civilization and Lion and Sun Revolution";
 
   return (

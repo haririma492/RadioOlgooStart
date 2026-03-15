@@ -357,7 +357,7 @@ function TopCalendarBar({
             }}
           >
             <img
-              src="/images/Gaahnaameh3.png"
+              src="/images/GaahNaameh3.png"
               alt={t.calendarTitle}
               className="h-20 w-auto rounded-lg object-contain md:h-24 lg:h-28"
               style={{
