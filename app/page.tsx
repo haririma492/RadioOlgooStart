@@ -240,10 +240,7 @@ function TimePill({
   return (
     <div
       className="inline-flex items-center justify-end text-sm font-semibold sm:text-base lg:text-lg"
-      style={{
-        direction: "ltr",
-        minWidth: 0,
-      }}
+      style={{ direction: "ltr", minWidth: 0 }}
     >
       <span
         className={invisible ? "invisible" : ""}
@@ -290,7 +287,10 @@ function CalendarModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[200] bg-black/50 backdrop-blur-sm" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-[200] bg-black/50 backdrop-blur-sm"
+      onClick={onClose}
+    >
       <div
         className="absolute inset-x-2 bottom-2 top-2 flex flex-col overflow-hidden rounded-2xl border border-white/15 bg-[#0d0d0d]/95 shadow-[0_18px_50px_rgba(0,0,0,0.5)] sm:inset-x-4 sm:bottom-4 sm:top-4 lg:bottom-6 lg:right-6 lg:left-auto lg:top-auto lg:h-[68vh] lg:w-[min(73rem,calc(100vw-3rem))]"
         onClick={(e) => e.stopPropagation()}
@@ -332,13 +332,7 @@ function CalendarModal({
   );
 }
 
-function TopCalendarBar({
-  lang,
-  onCalendarImageClick,
-}: {
-  lang: Lang;
-  onCalendarImageClick: () => void;
-}) {
+function TopCalendarBar({ lang }: { lang: Lang }) {
   const isFa = lang === "fa";
   const t = translations[lang];
   const segments = useLiveCalendarSegments(lang);
@@ -359,94 +353,133 @@ function TopCalendarBar({
   };
 
   return (
-    <div className="mx-auto mb-4 w-full max-w-[1500px] px-3 sm:mb-6 sm:px-4">
+    <div className="mx-auto mb-3 w-full max-w-[1500px] px-3 sm:px-4">
       <div className="rounded-2xl border border-white/10 bg-black/80 px-3 py-3 shadow-[0_8px_30px_rgba(0,0,0,0.28)] sm:px-5 sm:py-4">
         <div
           className={[
-            "flex flex-col gap-4",
-            "lg:grid lg:grid-cols-[auto_1fr_auto] lg:items-start lg:gap-6",
-            isFa ? "lg:[direction:rtl]" : "",
+            "flex flex-col gap-4 lg:grid lg:items-start lg:gap-6",
+            isFa ? "lg:grid-cols-[1fr_auto]" : "lg:grid-cols-[auto_1fr]",
           ].join(" ")}
         >
-          <div className="order-1 flex justify-center lg:order-none lg:justify-start">
-            <img
-              src="/images/banner1.png"
-              alt="Olgoo logo"
-              className="h-16 w-16 rounded-full object-contain sm:h-20 sm:w-20 md:h-24 md:w-24"
-              onError={(e) => {
-                const target = e.currentTarget;
-                if (!target.dataset.fallbackTried) {
-                  target.dataset.fallbackTried = "1";
-                  target.src = "/images/banner1.webp";
-                }
-              }}
-            />
-          </div>
-
-          <div className="order-3 min-w-0 lg:order-none">
+          {/* ── Text column ── */}
+          <div
+            className={[
+              "min-w-0",
+              isFa ? "order-1 lg:order-1" : "order-2 lg:order-2",
+            ].join(" ")}
+          >
+            {/* ── Top row: title + time ── */}
             <div
               className={[
-                "mb-3 flex w-full flex-col gap-3 border-b border-white/10 pb-3",
-                "sm:flex-row sm:items-center sm:justify-between",
-                isFa ? "sm:text-right" : "sm:text-left",
+                "mb-3 border-b border-white/10 pb-3",
+                isFa ? "text-right" : "text-left",
               ].join(" ")}
             >
-              <div
-                className={unifiedTextClass}
-                style={{
-                  ...unifiedTextStyle,
-                  textDecoration: "underline",
-                  textUnderlineOffset: "4px",
-                  flexShrink: 0,
-                }}
-              >
-                {isFa ? "گاهشمار" : t.calendarTitle}
-              </div>
-
-              {segments.isReady ? (
-                <div
-                  className={[
-                    "flex flex-wrap items-center gap-x-4 gap-y-2",
-                    isFa ? "justify-start sm:justify-end" : "justify-start sm:justify-end",
-                  ].join(" ")}
-                >
-                  {!isFa && (
-                    <div className={unifiedTextClass} style={unifiedTextStyle}>
-                      {t.timeWord}
+              {isFa ? (
+                /* ── FA: title left, time group right ── */
+                <div className="flex flex-col gap-3">
+                  <div className="flex items-center justify-between gap-4">
+                    <div
+                      className={unifiedTextClass}
+                      style={{
+                        ...unifiedTextStyle,
+                        textDecoration: "underline",
+                        textUnderlineOffset: "4px",
+                        flexShrink: 0,
+                      }}
+                    >
+                      گاهشمار
                     </div>
-                  )}
-                  <div className={unifiedTextClass} style={unifiedTextStyle}>
-                    <TimePill value={segments.timeOnly} />
-                  </div>
-                  <div className={unifiedTextClass} style={unifiedTextStyle}>
-                    {segments.periodOnly}
-                  </div>
-                  <div className={unifiedTextClass} style={unifiedTextStyle}>
-                    {t.inTehran}
+
+                    {segments.isReady ? (
+                      <div
+                        className="flex flex-wrap items-center justify-end gap-x-4 gap-y-2 text-right"
+                        style={{ direction: "rtl", marginInlineStart: "auto" }}
+                      >
+                        <div className={unifiedTextClass} style={unifiedTextStyle}>
+                          {t.inTehran}
+                        </div>
+                        <div className={unifiedTextClass} style={unifiedTextStyle}>
+                          {segments.periodOnly}
+                        </div>
+                        <div className={unifiedTextClass} style={unifiedTextStyle}>
+                          <TimePill value={segments.timeOnly} />
+                        </div>
+                      </div>
+                    ) : (
+                      <div
+                        className="flex flex-wrap items-center justify-end gap-x-4 gap-y-2 text-right"
+                        style={{ direction: "rtl", marginInlineStart: "auto" }}
+                      >
+                        <div className={`${unifiedTextClass} invisible`} style={unifiedTextStyle}>
+                          {t.inTehran}
+                        </div>
+                        <div className={`${unifiedTextClass} invisible`} style={unifiedTextStyle}>
+                          {translations.fa.afternoon}
+                        </div>
+                        <div className={`${unifiedTextClass} invisible`} style={unifiedTextStyle}>
+                          <TimePill value="00:00" invisible />
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               ) : (
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-                  {!isFa && (
-                    <div className={`${unifiedTextClass} invisible`} style={unifiedTextStyle}>
-                      {t.timeWord}
+                /* ── EN: title left, time group right — always single row ── */
+                <div className="flex flex-row items-center justify-between gap-4">
+                  <div
+                    className={unifiedTextClass}
+                    style={{
+                      ...unifiedTextStyle,
+                      textDecoration: "underline",
+                      textUnderlineOffset: "4px",
+                      flexShrink: 0,
+                    }}
+                  >
+                    {t.calendarTitle}
+                  </div>
+
+                  {segments.isReady ? (
+                    <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-2">
+                      <div className={unifiedTextClass} style={unifiedTextStyle}>
+                        {t.timeWord}
+                      </div>
+                      <div className={unifiedTextClass} style={unifiedTextStyle}>
+                        <TimePill value={segments.timeOnly} />
+                      </div>
+                      <div className={unifiedTextClass} style={unifiedTextStyle}>
+                        {segments.periodOnly}
+                      </div>
+                      <div className={unifiedTextClass} style={unifiedTextStyle}>
+                        {t.inTehran}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-2">
+                      <div className={`${unifiedTextClass} invisible`} style={unifiedTextStyle}>
+                        {t.timeWord}
+                      </div>
+                      <div className={`${unifiedTextClass} invisible`} style={unifiedTextStyle}>
+                        <TimePill value="00:00" invisible />
+                      </div>
+                      <div className={`${unifiedTextClass} invisible`} style={unifiedTextStyle}>
+                        {translations.en.afternoon}
+                      </div>
+                      <div className={`${unifiedTextClass} invisible`} style={unifiedTextStyle}>
+                        {t.inTehran}
+                      </div>
                     </div>
                   )}
-                  <div className={`${unifiedTextClass} invisible`} style={unifiedTextStyle}>
-                    <TimePill value="00:00" invisible />
-                  </div>
-                  <div className={`${unifiedTextClass} invisible`} style={unifiedTextStyle}>
-                    {translations.en.afternoon}
-                  </div>
-                  <div className={`${unifiedTextClass} invisible`} style={unifiedTextStyle}>
-                    {t.inTehran}
-                  </div>
                 </div>
               )}
             </div>
 
+            {/* ── Date line ── */}
             <div className={isFa ? "text-right" : "text-left"}>
-              <div className="min-h-[2.25rem] break-words leading-relaxed">
+              <div
+                className="min-h-[2.25rem] break-words leading-relaxed"
+                style={isFa ? { direction: "rtl" } : { direction: "ltr" }}
+              >
                 {segments.isReady ? (
                   isFa ? (
                     <>
@@ -497,32 +530,69 @@ function TopCalendarBar({
             </div>
           </div>
 
-          <div className="order-2 flex justify-center lg:order-none lg:justify-end">
-            <button
-              type="button"
-              onClick={onCalendarImageClick}
-              className="group relative flex items-center justify-center rounded-2xl p-1.5 transition-transform duration-200 hover:scale-105 focus:outline-none focus:ring-2 focus:ring-white/60"
-              aria-label={t.calendarTitle}
-              title={t.calendarTitle}
-              style={{
-                background:
-                  "linear-gradient(180deg, rgba(255,255,255,0.18), rgba(255,255,255,0.06))",
-                boxShadow:
-                  "0 10px 24px rgba(0,0,0,0.42), inset 0 1px 0 rgba(255,255,255,0.18)",
-                border: "1px solid rgba(255,255,255,0.14)",
-                backdropFilter: "blur(2px)",
+          {/* ── Logo column ── */}
+          <div
+            className={[
+              "flex justify-center",
+              isFa
+                ? "order-2 lg:order-2 lg:justify-end"
+                : "order-1 lg:order-1 lg:justify-start",
+            ].join(" ")}
+          >
+            <img
+              src="/images/banner1.png"
+              alt="Olgoo logo"
+              className="h-16 w-16 rounded-full object-contain sm:h-20 sm:w-20 md:h-24 md:w-24"
+              onError={(e) => {
+                const target = e.currentTarget;
+                if (!target.dataset.fallbackTried) {
+                  target.dataset.fallbackTried = "1";
+                  target.src = "/images/banner1.webp";
+                }
               }}
-            >
-              <img
-                src="/images/GaahNaameh3.png"
-                alt={t.calendarTitle}
-                className="h-16 w-auto rounded-lg object-contain sm:h-20 md:h-24 lg:h-28"
-                style={{
-                  boxShadow: "0 8px 18px rgba(0,0,0,0.38)",
-                }}
-              />
-            </button>
+            />
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CalendarImageBlock({
+  lang,
+  onCalendarImageClick,
+}: {
+  lang: Lang;
+  onCalendarImageClick: () => void;
+}) {
+  const t = translations[lang];
+
+  return (
+    <div className="mx-auto mb-4 w-full max-w-[1500px] px-3 sm:mb-6 sm:px-4">
+      <div className="rounded-2xl border border-white/10 bg-black/80 px-3 py-4 shadow-[0_8px_30px_rgba(0,0,0,0.28)] sm:px-5 sm:py-5">
+        <div className="flex items-center justify-center">
+          <button
+            type="button"
+            onClick={onCalendarImageClick}
+            className="group relative flex items-center justify-center rounded-2xl p-1.5 transition-transform duration-200 hover:scale-105 focus:outline-none focus:ring-2 focus:ring-white/60"
+            aria-label={t.calendarTitle}
+            title={t.calendarTitle}
+            style={{
+              background:
+                "linear-gradient(180deg, rgba(255,255,255,0.18), rgba(255,255,255,0.06))",
+              boxShadow:
+                "0 10px 24px rgba(0,0,0,0.42), inset 0 1px 0 rgba(255,255,255,0.18)",
+              border: "1px solid rgba(255,255,255,0.14)",
+              backdropFilter: "blur(2px)",
+            }}
+          >
+            <img
+              src="/images/GaahNaameh3.png"
+              alt={t.calendarTitle}
+              className="h-20 w-auto rounded-lg object-contain sm:h-24 md:h-28 lg:h-32"
+              style={{ boxShadow: "0 8px 18px rgba(0,0,0,0.38)" }}
+            />
+          </button>
         </div>
       </div>
     </div>
@@ -538,7 +608,10 @@ function HomePageContent() {
   const isFa = lang === "fa";
 
   useEffect(() => {
-    if (activePlayback && !["floating", "olgoo-live"].includes(activePlayback.source)) {
+    if (
+      activePlayback &&
+      !["floating", "olgoo-live"].includes(activePlayback.source)
+    ) {
       setPlayingVideo(null);
     }
   }, [activePlayback]);
@@ -589,7 +662,8 @@ function HomePageContent() {
       </div>
 
       <div className="relative z-0 bg-transparent pt-3 sm:pt-4">
-        <TopCalendarBar
+        <TopCalendarBar lang={lang} />
+        <CalendarImageBlock
           lang={lang}
           onCalendarImageClick={() => setIsCalendarModalOpen(true)}
         />
@@ -634,7 +708,9 @@ function HomePageContent() {
           </section>
 
           <section className={`${panelClass} p-2 sm:p-3`}>
-            <h2 className={`${sectionTitleClass} text-red-400`}>{t.breakingNews}</h2>
+            <h2 className={`${sectionTitleClass} text-red-400`}>
+              {t.breakingNews}
+            </h2>
             <BreakingNewsBanner />
           </section>
         </main>
