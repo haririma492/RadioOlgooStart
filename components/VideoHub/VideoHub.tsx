@@ -57,7 +57,13 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
   const [showModal, setShowModal] = useState(false);
   const [showSearchModal, setShowSearchModal] = useState(false);
   const [modalPlayingVideo, setModalPlayingVideo] = useState<VideoItem | null>(null);
+  const [isFaPage, setIsFaPage] = useState(false);
   const hubContentRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const root = document.getElementById("user-page");
+    setIsFaPage(root?.getAttribute("dir") === "rtl");
+  }, []);
 
   useEffect(() => {
     async function fetchMedia() {
@@ -205,10 +211,7 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
       currentAll.push(toVideoItem(item));
       map.set(allKey, currentAll);
 
-      if (
-        groupName &&
-        isYoutubeVideoSection(item.section ?? "")
-      ) {
+      if (groupName && isYoutubeVideoSection(item.section ?? "")) {
         const groupKey = `${personKey}__${normalizeGroup(groupName)}`;
         const currentGroup = map.get(groupKey) ?? [];
         currentGroup.push(toVideoItem(item));
@@ -397,9 +400,11 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
         className="w-full flex flex-col md:flex-row gap-6 md:gap-8 px-4 md:px-6 lg:px-8 pb-8 md:items-stretch"
       >
         <div className="w-full md:w-[400px] lg:w-[500px] xl:w-[560px] flex-shrink-0 flex flex-col order-1 md:order-2 md:min-h-0 min-w-0">
-          <h2 className="text-white text-[24.64px] font-semibold leading-[1.5] mb-6">
-            Your Favourite
-          </h2>
+          {!isFaPage && (
+            <h2 className="text-white text-[24.64px] font-semibold leading-[1.5] mb-6">
+              Your Favourite
+            </h2>
+          )}
 
           <div className="flex-1 min-h-0 flex flex-col w-full max-w-[360px] lg:max-w-[440px] xl:max-w-[510px] overflow-hidden">
             <ProfileCardWithDropdown
@@ -429,9 +434,11 @@ export default function VideoHub({ onVideoClick }: VideoHubProps) {
         </div>
 
         <div className="flex-1 w-full flex flex-col order-2 md:order-1 min-w-0">
-          <h2 className="text-white text-[24.64px] font-semibold leading-[1.5] mb-6">
-            Recent Video Hub
-          </h2>
+          {!isFaPage && (
+            <h2 className="text-white text-[24.64px] font-semibold leading-[1.5] mb-6">
+              Recent Video Hub
+            </h2>
+          )}
 
           <div className="flex flex-col gap-8">
             {youtubeGroupNames.length === 0 ? (
