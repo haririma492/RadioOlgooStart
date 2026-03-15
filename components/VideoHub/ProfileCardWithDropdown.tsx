@@ -1,6 +1,12 @@
 "use client";
 
-import React, { useRef, useState, useEffect, useLayoutEffect } from "react";
+import React, {
+  useRef,
+  useState,
+  useEffect,
+  useLayoutEffect,
+  useCallback,
+} from "react";
 import { createPortal } from "react-dom";
 import ProfileCardDropdown from "./ProfileCardDropdown";
 
@@ -44,13 +50,23 @@ export default function ProfileCardWithDropdown({
   const isPlayingOnCard = Boolean(playingVideo);
   const isKing = size === "king";
   const cardRef = useRef<HTMLDivElement>(null);
+  const ignoreNextToggleRef = useRef(false);
+
   const [dropdownStyle, setDropdownStyle] = useState<{
     top: number;
     left: number;
     width: number;
   } | null>(null);
 
-  const updatePosition = () => {
+  const markIgnoreNextToggle = useCallback(() => {
+    ignoreNextToggleRef.current = true;
+
+    window.setTimeout(() => {
+      ignoreNextToggleRef.current = false;
+    }, 0);
+  }, []);
+
+  const updatePosition = useCallback(() => {
     if (!cardRef.current) return;
 
     const rect = cardRef.current.getBoundingClientRect();
@@ -59,7 +75,8 @@ export default function ProfileCardWithDropdown({
 
     const targetTop = rect.top + scrollY + rect.height / 2;
 
-    const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
+    const isMobile =
+      typeof window !== "undefined" && window.innerWidth < 768;
     const dropdownWidth = isMobile ? 250 : 480;
     let targetLeft = rect.left + scrollX;
     const viewportWidth = window.innerWidth;
@@ -75,7 +92,7 @@ export default function ProfileCardWithDropdown({
       left: targetLeft,
       width: dropdownWidth,
     });
-  };
+  }, []);
 
   useLayoutEffect(() => {
     if (isExpanded) {
@@ -83,7 +100,7 @@ export default function ProfileCardWithDropdown({
     } else {
       setDropdownStyle(null);
     }
-  }, [isExpanded]);
+  }, [isExpanded, updatePosition]);
 
   useEffect(() => {
     if (!isExpanded) return;
@@ -103,7 +120,36 @@ export default function ProfileCardWithDropdown({
         scrollableParent.removeEventListener("scroll", updatePosition);
       }
     };
-  }, [isExpanded]);
+  }, [isExpanded, updatePosition]);
+
+  const handleCardToggle = useCallback(() => {
+    if (ignoreNextToggleRef.current) {
+      ignoreNextToggleRef.current = false;
+      return;
+    }
+    onToggle();
+  }, [onToggle]);
+
+  const handleDropdownVideoClick = useCallback(
+    (video: VideoItem) => {
+      ignoreNextToggleRef.current = true;
+      onVideoClick(video);
+
+      window.setTimeout(() => {
+        ignoreNextToggleRef.current = false;
+      }, 0);
+    },
+    [onVideoClick]
+  );
+
+  const handleDropdownViewAllClick = useCallback(() => {
+    ignoreNextToggleRef.current = true;
+    onViewAllClick?.();
+
+    window.setTimeout(() => {
+      ignoreNextToggleRef.current = false;
+    }, 0);
+  }, [onViewAllClick]);
 
   return (
     <div
@@ -115,7 +161,7 @@ export default function ProfileCardWithDropdown({
       }`}
     >
       <div
-        onClick={onToggle}
+        onClick={handleCardToggle}
         className={`w-full cursor-pointer hover:opacity-90 transition-opacity text-left ${
           isKing ? "flex-1 min-h-0 max-h-full flex flex-col" : ""
         }`}
@@ -124,7 +170,7 @@ export default function ProfileCardWithDropdown({
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
-            onToggle();
+            handleCardToggle();
           }
         }}
       >
@@ -140,6 +186,7 @@ export default function ProfileCardWithDropdown({
               className="absolute inset-0"
               onClick={(e) => e.stopPropagation()}
               onDoubleClick={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
             >
               <video
                 key={playingVideo.id}
@@ -156,6 +203,7 @@ export default function ProfileCardWithDropdown({
                     e.stopPropagation();
                     onClearPlayingVideo();
                   }}
+                  onMouseDown={(e) => e.stopPropagation()}
                   className="absolute top-1.5 right-1.5 w-8 h-8 rounded-full bg-black/70 hover:bg-black/90 text-white flex items-center justify-center transition-colors"
                   aria-label="Stop video"
                 >
@@ -221,7 +269,11 @@ export default function ProfileCardWithDropdown({
       {isKing && onSearchClick && (
         <button
           type="button"
-          onClick={onSearchClick}
+          onClick={(e) => {
+            e.stopPropagation();
+            onSearchClick();
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
           className="w-auto min-w-[120px] max-w-[85%] mx-auto mt-1 py-2 px-4 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] backdrop-blur-sm text-white/90 text-sm font-medium border border-white/15 hover:border-white/25 transition-all duration-200 flex items-center justify-center gap-2 shadow-sm cursor-pointer"
         >
           <svg
@@ -244,7 +296,11 @@ export default function ProfileCardWithDropdown({
       {!isKing && onSearchClick && (
         <button
           type="button"
-          onClick={onSearchClick}
+          onClick={(e) => {
+            e.stopPropagation();
+            onSearchClick();
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
           className="w-full mt-1 py-1 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] backdrop-blur-sm text-white/90 text-sm font-medium border border-white/15 hover:border-white/25 transition-all duration-200 flex items-center justify-center gap-2 shadow-sm cursor-pointer"
         >
           <svg
@@ -277,12 +333,19 @@ export default function ProfileCardWithDropdown({
               width: dropdownStyle.width,
               transform: "translateY(-100%)",
             }}
-            onClick={(e) => e.stopPropagation()}
+            onMouseDown={(e) => {
+              e.stopPropagation();
+              markIgnoreNextToggle();
+            }}
+            onClick={(e) => {
+              e.stopPropagation();
+              markIgnoreNextToggle();
+            }}
           >
             <ProfileCardDropdown
               videos={videos}
-              onVideoClick={onVideoClick}
-              onViewAllClick={onViewAllClick}
+              onVideoClick={handleDropdownVideoClick}
+              onViewAllClick={handleDropdownViewAllClick}
             />
           </div>,
           document.body

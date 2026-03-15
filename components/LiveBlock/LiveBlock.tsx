@@ -5,6 +5,7 @@ import LiveSection from "@/components/LiveSection/LiveSection";
 import type { LiveItem } from "@/lib/youtubeLive";
 import { youtubeWatchUrl } from "@/lib/youtubeLive";
 
+
 type LiveRow = {
   PK: string;
   url: string;
@@ -16,7 +17,8 @@ type LiveRow = {
 };
 
 type YTLiveResult = {
-  handle: string;
+  handle?: string;
+  channelId?: string;
   isLive: boolean;
   videoId?: string;
   embedUrl?: string;
@@ -25,16 +27,17 @@ type YTLiveResult = {
   error?: string;
 };
 
-function normalizeStr(s: unknown): string {
-  return String(s ?? "").trim().toLowerCase();
-}
-
 function extractHandle(input: string): string | null {
   const s = (input || "").trim();
   if (!s) return null;
   if (/^@?[A-Za-z0-9._-]+$/.test(s)) return s.replace(/^@/, "");
-  const m = s.match(/youtube\.com\/@([A-Za-z0-9._-]+)/i);
-  if (m?.[1]) return m[1];
+
+  const m1 = s.match(/youtube\.com\/@([A-Za-z0-9._-]+)/i);
+  if (m1?.[1]) return m1[1];
+
+  const m2 = s.match(/youtube\.com\/(?:c|user)\/([A-Za-z0-9._-]+)/i);
+  if (m2?.[1]) return m2[1];
+
   return null;
 }
 
@@ -47,24 +50,31 @@ function extractVideoIdFromYouTubeUrl(url: string): string | null {
     const u = new URL(url);
     const v = u.searchParams.get("v");
     if (v && /^[a-zA-Z0-9_-]{11}$/.test(v)) return v;
+
     if (/youtu\.be$/i.test(u.hostname)) {
       const id = u.pathname.replace("/", "");
       if (/^[a-zA-Z0-9_-]{11}$/.test(id)) return id;
     }
+
+    if (u.pathname.startsWith("/embed/")) {
+      const id = u.pathname.split("/embed/")[1]?.split("/")[0];
+      if (id && /^[a-zA-Z0-9_-]{11}$/.test(id)) return id;
+    }
+
     return null;
   } catch {
     return null;
   }
 }
 
-function toPersianDigits(value: number): string {
-  return String(value).replace(/\d/g, (d) => "۰۱۲۳۴۵۶۷۸۹"[Number(d)]);
+function getRowKey(row: LiveRow): string {
+  return extractHandle(row.url) || row.channelId || row.url;
 }
 
 export default function LiveBlock() {
   const [liveRows, setLiveRows] = useState<LiveRow[]>([]);
   const [liveLoading, setLiveLoading] = useState(false);
-  const [liveError, setLiveError] = useState<string>("");
+  const [liveError, setLiveError] = useState("");
 
   const lastGoodRef = useRef<Record<string, { at: number; data: YTLiveResult }>>({});
   const [ytStatus, setYtStatus] = useState<Record<string, YTLiveResult>>({});
@@ -80,6 +90,7 @@ export default function LiveBlock() {
   async function loadLiveRows() {
     setLiveLoading(true);
     setLiveError("");
+
     try {
       const res = await fetch(`/api/live-videos?t=${Date.now()}`, { cache: "no-store" });
       const json = await res.json().catch(() => ({}));
@@ -100,11 +111,6 @@ export default function LiveBlock() {
         );
       }
 
-      const isLiveSection = (s: unknown) => normalizeStr(s) === "live videos";
-      const isRevolutionGroup = (g: unknown) => {
-        const x = normalizeStr(g);
-        return x.includes("revolution") && x.includes("tv") && x.includes("channel");
-      };
       const getUrl = (it: { url?: string; URL?: string; link?: string }) =>
         it?.url || it?.URL || it?.link || "";
 
@@ -120,9 +126,7 @@ export default function LiveBlock() {
           }) => ({ ...x, url: getUrl(x) })
         )
         .filter((x): x is LiveRow & { url: string } => !!x?.url)
-        .filter((x) => (x?.active ?? true) === true)
-        .filter((x) => isLiveSection(x?.section))
-        .filter((x) => isRevolutionGroup(x?.group));
+        .filter((x) => x.active !== false);
 
       setLiveRows(cleaned);
     } catch (e: unknown) {
@@ -140,6 +144,7 @@ export default function LiveBlock() {
     const ytRows = rows.filter(
       (r) => isYouTubeUrl(r.url) && !extractVideoIdFromYouTubeUrl(r.url)
     );
+
     if (ytRows.length === 0) {
       setYtLiveLoading(false);
       return;
@@ -149,6 +154,7 @@ export default function LiveBlock() {
     const withoutChannelId = ytRows.filter((r) => !r.channelId);
 
     const params = new URLSearchParams();
+
     if (withChannelId.length > 0) {
       params.set(
         "channelIds",
@@ -157,11 +163,15 @@ export default function LiveBlock() {
           .join(",")
       );
     }
+
     if (withoutChannelId.length > 0) {
       const handles = withoutChannelId
         .map((r) => extractHandle(r.url))
         .filter((h): h is string => !!h);
-      if (handles.length > 0) params.set("handles", handles.join(","));
+
+      if (handles.length > 0) {
+        params.set("handles", Array.from(new Set(handles)).join(","));
+      }
     }
 
     const url = `/api/youtube/live?${params.toString()}&t=${Date.now()}`;
@@ -169,56 +179,61 @@ export default function LiveBlock() {
     try {
       const res = await fetch(url, { cache: "no-store" });
       const json = await res.json().catch(() => ({}));
-      if (!res.ok || !json?.ok) throw new Error(json?.error || "YT live check failed");
+
+      if (!res.ok || !json?.ok) {
+        throw new Error(json?.error || "YT live check failed");
+      }
 
       const results: Record<string, YTLiveResult> = json.results || {};
       const now = Date.now();
 
-      Object.entries(results).forEach(([key, r]) => {
-        lastGoodRef.current[key] = { at: now, data: r };
+      Object.entries(results).forEach(([key, value]) => {
+        lastGoodRef.current[key] = { at: now, data: value };
       });
 
       setYtStatus(results);
     } catch {
       const now = Date.now();
       const held: Record<string, YTLiveResult> = {};
+
       for (const row of ytRows) {
-        const key = extractHandle(row.url) || row.channelId || row.url;
+        const key = getRowKey(row);
         const heldEntry = lastGoodRef.current[key];
+
         if (heldEntry && now - heldEntry.at < 2 * 60_000) {
           held[key] = heldEntry.data;
         } else {
-          held[key] = { handle: key, isLive: false, error: "request_failed" };
+          held[key] = { handle: extractHandle(row.url) || undefined, channelId: row.channelId, isLive: false, error: "request_failed" };
         }
       }
+
       setYtStatus(held);
     } finally {
       setYtLiveLoading(false);
     }
   }
 
-  const ytRows = useMemo(() => {
-    return liveRows.filter(
-      (r) => isYouTubeUrl(r.url) && !extractVideoIdFromYouTubeUrl(r.url)
-    );
-  }, [liveRows]);
+  const ytRows = useMemo(
+    () => liveRows.filter((r) => isYouTubeUrl(r.url) && !extractVideoIdFromYouTubeUrl(r.url)),
+    [liveRows]
+  );
 
-  const ytHandles = useMemo(() => {
-    return ytRows
-      .map((r) => r.channelId || extractHandle(r.url))
-      .filter((h): h is string => !!h);
-  }, [ytRows]);
+  const ytHandles = useMemo(
+    () => ytRows.map((r) => r.channelId || extractHandle(r.url)).filter((h): h is string => !!h),
+    [ytRows]
+  );
 
   useEffect(() => {
     if (ytRows.length === 0) {
       setYtLiveLoading(false);
       return;
     }
+
     setYtLiveLoading(true);
     pollYouTubeLive(ytRows);
 
-    const t = setInterval(() => pollYouTubeLive(ytRows), 7 * 60_000);
-    return () => clearInterval(t);
+    const timer = setInterval(() => pollYouTubeLive(ytRows), 7 * 60_000);
+    return () => clearInterval(timer);
   }, [ytHandles.join(",")]);
 
   const liveCards = useMemo(() => {
@@ -226,8 +241,9 @@ export default function LiveBlock() {
       const isYT = isYouTubeUrl(row.url);
       const directVideoId = isYT ? extractVideoIdFromYouTubeUrl(row.url) : null;
       const handle = isYT && !directVideoId ? extractHandle(row.url) : null;
-      const statusKey = handle || row.channelId;
-      const status = statusKey ? ytStatus[statusKey] : undefined;
+      const statusKey = handle || row.channelId || row.url;
+      const status = ytStatus[statusKey];
+
       const videoId = directVideoId || status?.videoId;
       const embedUrl = status?.embedUrl;
       const isLive = isYT && (!!videoId || !!embedUrl);
@@ -243,28 +259,27 @@ export default function LiveBlock() {
         videoId,
         embedUrl,
         watchUrl: status?.watchUrl,
-        statusError: status?.error,
       };
     });
 
-    const onlyLive = cards.filter((c) => c.isLive);
-    return onlyLive.sort((a, b) => String(a.title).localeCompare(String(b.title)));
+    return cards
+      .filter((card) => card.isLive)
+      .sort((a, b) => String(a.title).localeCompare(String(b.title)));
   }, [liveRows, ytStatus]);
 
-  const liveYouTubeItems: LiveItem[] = useMemo(() => {
-    return liveCards
-      .filter((c) => c.isYouTube && (c.videoId || c.embedUrl))
-      .map((c) => ({
-        handle: (c.handle || c.title || c.PK).toString(),
-        videoId: c.videoId || `channel-${c.channelId || c.PK}`,
-        watchUrl: c.watchUrl || (c.videoId ? youtubeWatchUrl(c.videoId) : c.url),
-        embedUrl: c.embedUrl,
-      }));
-  }, [liveCards]);
+  const liveYouTubeItems: LiveItem[] = useMemo(
+    () =>
+      liveCards
+        .filter((card) => card.isYouTube && (card.videoId || card.embedUrl))
+        .map((card) => ({
+          handle: (card.handle || card.title || card.PK).toString(),
+          videoId: card.videoId || `channel-${card.channelId || card.PK}`,
+          watchUrl: card.watchUrl || (card.videoId ? youtubeWatchUrl(card.videoId) : card.url),
+          embedUrl: card.embedUrl,
+        })),
+    [liveCards]
+  );
 
-  const liveCount = liveYouTubeItems.length;
-  const headerLabel = isFa ? "" : "";
-  const countText = isFa
   const loadingSourcesText = isFa ? "در حال بارگذاری منابع زنده..." : "Loading live sources...";
   const loadingChannelsText = isFa ? "در حال بارگذاری کانال‌های زنده..." : "Loading live channels...";
   const noneLiveText = isFa ? "اکنون کانال زنده‌ای وجود ندارد." : "No channels are live right now.";
@@ -273,12 +288,7 @@ export default function LiveBlock() {
   return (
     <section className="mb-10">
       <div className="mb-4 flex items-center justify-between gap-4">
-        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-2">
-          <span className={isFa ? "text-2xl font-bold tracking-normal" : "text-3xl font-bold tracking-wide"}>
-            {headerLabel}
-          </span>
-        </div>
-
+        <div />
         <button
           onClick={loadLiveRows}
           className="rounded-lg border border-white/10 bg-white/10 px-4 py-2 hover:bg-white/15"
