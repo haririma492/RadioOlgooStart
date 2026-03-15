@@ -46,6 +46,9 @@ type Result = {
   foundBy: FoundBy;
 };
 
+type ChannelEntry = { channelId?: string; handle?: string; key: string };
+
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 function isValidVideoId(v: string): boolean {
   return /^[a-zA-Z0-9_-]{11}$/.test(v);
@@ -65,6 +68,84 @@ function extractHandle(input: string): string | null {
   const m3 = s.match(/\/channel\/(UC[A-Za-z0-9_-]+)/i);
   if (m3?.[1]) return null;
   return null;
+}
+
+function extractChannelId(input: string): string | null {
+  const s = (input || "").trim();
+  if (!s) return null;
+  if (/^UC[A-Za-z0-9_-]+$/.test(s)) return s;
+  const m = s.match(/(?:youtube\.com\/channel\/)(UC[A-Za-z0-9_-]+)/i);
+  return m?.[1] ?? null;
+}
+
+async function resolveHandleToChannelId(handle: string, apiKey: string): Promise<string | null> {
+  const normalized = normalizeHandle(handle);
+  if (!normalized) return null;
+
+  if (apiKey) {
+    try {
+      const byHandleUrl =
+        `https://www.googleapis.com/youtube/v3/channels` +
+        `?part=id&forHandle=${encodeURIComponent(normalized)}` +
+        `&key=${encodeURIComponent(apiKey)}`;
+
+      const res = await fetch(byHandleUrl, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      });
+      const json = await res.json().catch(() => null);
+      const channelId = json?.items?.[0]?.id;
+      if (typeof channelId === "string" && channelId.startsWith("UC")) {
+        return channelId;
+      }
+    } catch {
+      // continue to page fallback
+    }
+  }
+
+  try {
+    const res = await fetch(`https://www.youtube.com/@${encodeURIComponent(normalized)}`, {
+      cache: "no-store",
+      redirect: "follow",
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      headers: LIVE_PAGE_HEADERS,
+    });
+    const finalUrl = res.url || "";
+    const fromFinalUrl = extractChannelId(finalUrl);
+    if (fromFinalUrl) return fromFinalUrl;
+
+    const html = await res.text();
+    const canonicalMatch = html.match(/<link rel="canonical" href="https:\/\/www\.youtube\.com\/channel\/(UC[A-Za-z0-9_-]+)"/i);
+    if (canonicalMatch?.[1]) return canonicalMatch[1];
+
+    const channelIdMatch = html.match(/"channelId":"(UC[A-Za-z0-9_-]+)"/);
+    if (channelIdMatch?.[1]) return channelIdMatch[1];
+
+    const browseIdMatch = html.match(/"browseId":"(UC[A-Za-z0-9_-]+)"/);
+    if (browseIdMatch?.[1]) return browseIdMatch[1];
+  } catch {
+    // ignore
+  }
+
+  return null;
+}
+
+async function resolveMissingChannelIds(entries: ChannelEntry[], apiKey: string): Promise<void> {
+  const unresolved = entries.filter((e) => e.handle && !e.channelId);
+  if (unresolved.length === 0) return;
+
+  const resolved = await Promise.all(
+    unresolved.map(async (entry) => ({
+      entry,
+      channelId: await resolveHandleToChannelId(entry.handle!, apiKey),
+    }))
+  );
+
+  for (const item of resolved) {
+    if (item.channelId) {
+      item.entry.channelId = item.channelId;
+    }
+  }
 }
 
 // ── Step 1: Fetch RSS feed and extract video IDs ───────────────────────────
@@ -306,7 +387,6 @@ export async function GET(req: Request) {
   const handlesParam = searchParams.get("handles") || "";
   const inputsParam = searchParams.get("inputs") || "";
 
-  type ChannelEntry = { channelId?: string; handle?: string; key: string };
   const entries: ChannelEntry[] = [];
 
   if (channelIdsParam) {
@@ -348,6 +428,8 @@ export async function GET(req: Request) {
       e.channelId = HANDLE_TO_CHANNEL[e.handle];
     }
   }
+
+  await resolveMissingChannelIds(entries, apiKey);
 
   fetch("http://127.0.0.1:7245/ingest/d5efc3aa-8cbf-4f94-9a4d-8b25d050894c", {
     method: "POST",
@@ -402,29 +484,29 @@ export async function GET(req: Request) {
     );
   }
 
-  const resolvedEntries: Array<ChannelEntry & { channelId: string }> = entries
-    .filter((e): e is ChannelEntry & { channelId: string } => !!e.channelId)
-    .map((e) => e as ChannelEntry & { channelId: string });
+  const resolvableEntries = entries.filter((e) => !!e.channelId || !!e.handle);
 
-  const byChannelId = new Map<string, ChannelEntry & { channelId: string }>();
-  for (const e of resolvedEntries) {
-    const existing = byChannelId.get(e.channelId);
-    if (!existing || e.handle) byChannelId.set(e.channelId, e);
+  const byDiscoveryKey = new Map<string, ChannelEntry>();
+  for (const e of resolvableEntries) {
+    const discoveryKey = e.channelId || e.handle;
+    if (!discoveryKey) continue;
+
+    const existing = byDiscoveryKey.get(discoveryKey);
+    if (!existing || (!!e.channelId && !existing.channelId) || (!!e.handle && !existing.handle)) {
+      byDiscoveryKey.set(discoveryKey, e);
+    }
   }
-  const resolvedEntriesUnique = Array.from(byChannelId.values());
+  const resolvedEntriesUnique = Array.from(byDiscoveryKey.values());
 
   const discoveryResults = await Promise.all(
     resolvedEntriesUnique.map(async (entry) => {
-      const [rssIds, redirectFromChannel] = await Promise.all([
-        fetchRssVideoIds(entry.channelId),
-        fetchLiveRedirectVideoId(entry.channelId),
+      const [rssIds, redirectFromChannel, redirectFromHandle] = await Promise.all([
+        entry.channelId ? fetchRssVideoIds(entry.channelId) : Promise.resolve([]),
+        entry.channelId ? fetchLiveRedirectVideoId(entry.channelId) : Promise.resolve(null),
+        entry.handle ? fetchLiveRedirectFromUrl(`https://www.youtube.com/@${entry.handle}/live`) : Promise.resolve(null),
       ]);
 
-      let redirectId = redirectFromChannel;
-
-      if (!redirectId && entry.handle) {
-        redirectId = await fetchLiveRedirectFromUrl(`https://www.youtube.com/@${entry.handle}/live`);
-      }
+      let redirectId = redirectFromHandle || redirectFromChannel;
 
       if (!redirectId && entry.channelId) {
         redirectId = await fetchLiveRedirectFromUrl(
