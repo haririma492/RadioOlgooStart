@@ -18,7 +18,7 @@ const CALENDAR_LINK = "https://www.aryamehr.online/post/culturalcalendarofthe258
 
 const translations = {
   fa: {
-    videoHub: "گزیده نماهنگ",
+    videoHub: "آرشیو ویدئو",
     music: "موسیقی میهنی",
     breakingNews: "خبر فوری",
     english: "English",
@@ -357,7 +357,7 @@ function TopCalendarBar({
             }}
           >
             <img
-              src="/images/GaahNaameh3.png"
+              src="/images/Gaahnaameh3.png"
               alt={t.calendarTitle}
               className="h-20 w-auto rounded-lg object-contain md:h-24 lg:h-28"
               style={{
@@ -576,10 +576,10 @@ function HomePageContent() {
     setActivePlayback(null);
     setPlayingVideo(null);
   };
-const sectionTitleClass = isFa
-  ? "mb-3 text-3xl md:text-4xl font-normal tracking-normal"
-  : "mb-3 text-xl font-bold tracking-normal"; 
-  
+
+  const sectionTitleClass = isFa
+    ? "mb-3 text-2xl font-bold tracking-normal"
+    : "mb-3 text-xl font-bold tracking-normal";
   const panelClass = "mb-6 rounded-2xl bg-black/90 shadow-[0_8px_30px_rgba(0,0,0,0.35)]";
 
   return (

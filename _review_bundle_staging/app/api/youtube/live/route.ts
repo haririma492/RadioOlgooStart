@@ -1,3 +1,4 @@
+// app/api/youtube/live/route.ts
 import { NextResponse } from "next/server";
 import { redisGet, redisSet } from "@/lib/redisLiveCache";
 
@@ -5,36 +6,35 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-const CACHE_VERSION = "v4-live-verified";
-const LIVE_CACHE_TTL_MS = 3 * 60 * 1000;
-const ALLOWLISTED_CACHE_TTL_MS = 90 * 1000;
-const ALLOWLISTED_WITH_VIDEO_TTL_SEC = 90;
-const QUOTA_BACKOFF_TTL_MS = 60 * 60 * 1000;
+// ── Cache ──────────────────────────────────────────────────────────────────
+const LIVE_CACHE_TTL_MS = 2 * 60 * 1000; // 2 minutes
+const ALLOWLISTED_CACHE_TTL_MS = 2 * 60 * 1000; // 2 minutes
+const ALLOWLISTED_WITH_VIDEO_TTL_SEC = 2 * 60; // 2 minutes
+const QUOTA_BACKOFF_TTL_MS = 60 * 60 * 1000; // 1 hour when quota exceeded
 const QUOTA_BACKOFF_TTL_SEC = 60 * 60;
-const DEFAULT_CACHE_TTL_SEC = 180;
-const LIVE_GRACE_MS = 90 * 1000;
+const DEFAULT_CACHE_TTL_SEC = 2 * 60; // 2 minutes
+
 const NO_CACHE_HEADERS = {
   "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
   Pragma: "no-cache",
   Expires: "0",
 };
 
-const liveCache = new Map<string, { results: Record<string, Result>; ts: number; ttlMs?: number }>();
+const liveCache = new Map<
+  string,
+  { results: Record<string, Result>; ts: number; ttlMs?: number }
+>();
 
 function getCacheKey(channelIds: string[], handles: string[]): string {
-  return `${CACHE_VERSION}:${[...channelIds, ...handles].sort().join(",")}`;
+  return [...channelIds, ...handles].sort().join(",");
 }
 
 function isQuotaError(message: string): boolean {
   return /quota|exceeded|limit/i.test(message || "");
 }
 
-type FoundBy =
-  | "videos_list_live"
-  | "search_live"
-  | "redirect_verified"
-  | "cached_live_grace"
-  | "none";
+// ── Types ────────────────────────────────────────────────────────────────
+type FoundBy = "rss_videos_list" | "none";
 
 type Result = {
   channelId?: string;
@@ -44,9 +44,9 @@ type Result = {
   watchUrl?: string;
   embedUrl?: string;
   foundBy: FoundBy;
-  lastConfirmedAt?: number;
 };
 
+// ── Helpers ────────────────────────────────────────────────────────────────
 function isValidVideoId(v: string): boolean {
   return /^[a-zA-Z0-9_-]{11}$/.test(v);
 }
@@ -62,12 +62,13 @@ function extractHandle(input: string): string | null {
   if (m1?.[1]) return normalizeHandle(m1[1]);
   const m2 = s.match(/youtube\.com\/(?:c|user)\/([A-Za-z0-9._-]+)/i);
   if (m2?.[1]) return normalizeHandle(m2[1]);
+  const m3 = s.match(/\/channel\/(UC[A-Za-z0-9_-]+)/i);
+  if (m3?.[1]) return null;
   return null;
 }
 
+// ── Step 1: Fetch RSS feed and extract video IDs ───────────────────────────
 const FETCH_TIMEOUT_MS = 18_000;
-const SEARCH_TIMEOUT_MS = 14_000;
-const VIDEOS_LIST_MAX_IDS = 50;
 
 async function fetchRssVideoIds(channelId: string): Promise<string[]> {
   const rssUrl = `https://www.youtube.com/feeds/videos.xml?channel_id=${encodeURIComponent(channelId)}`;
@@ -94,6 +95,7 @@ async function fetchRssVideoIds(channelId: string): Promise<string[]> {
   }
 }
 
+// ── Step 1.5: Catch 24/7 permanent live streams ────────────────────────────
 function extractJsonByKey(html: string, key: string): Record<string, unknown> | null {
   const needle = `"${key}"`;
   const idx = html.indexOf(needle);
@@ -182,6 +184,8 @@ async function fetchLiveRedirectVideoId(channelId: string): Promise<string | nul
   return fetchLiveRedirectFromUrl(`https://www.youtube.com/channel/${channelId}/live`);
 }
 
+const SEARCH_TIMEOUT_MS = 14_000;
+
 async function fetchLiveVideoIdBySearch(
   channelId: string,
   apiKey: string,
@@ -240,13 +244,16 @@ async function fetchLiveVideoIdBySearch(
   }
 }
 
+// ── Step 2: Batch video liveness check ─────────────────────────────────────
+const VIDEOS_LIST_MAX_IDS = 50;
+
 type VideoLiveInfo = {
   videoId: string;
   isLive: boolean;
 };
 
 async function batchCheckLiveness(videoIds: string[], apiKey: string): Promise<VideoLiveInfo[]> {
-  if (videoIds.length === 0 || !apiKey) return [];
+  if (videoIds.length === 0) return [];
   const unique = Array.from(new Set(videoIds)).filter(isValidVideoId);
   if (unique.length === 0) return [];
 
@@ -272,47 +279,27 @@ async function batchCheckLiveness(videoIds: string[], apiKey: string): Promise<V
         const started = lsd?.actualStartTime ? Date.parse(lsd.actualStartTime) : NaN;
         const ended = lsd?.actualEndTime ? Date.parse(lsd.actualEndTime) : NaN;
         const isLive = Number.isFinite(started) && !Number.isFinite(ended);
-        if (typeof it.id === "string") out.push({ videoId: it.id, isLive });
+        if (typeof it.id === "string") {
+          out.push({ videoId: it.id, isLive });
+        }
       }
     } catch {
-      // skip chunk
+      // skip chunk on error
     }
   }
 
   return out;
 }
 
-function applyStickyLiveGrace(
-  fresh: Record<string, Result>,
-  previous: Record<string, Result> | undefined,
-  now: number
-): Record<string, Result> {
-  if (!previous) return fresh;
-  const merged: Record<string, Result> = { ...fresh };
-
-  for (const [key, prev] of Object.entries(previous)) {
-    const next = merged[key];
-    const stillFresh = !!prev.lastConfirmedAt && now - prev.lastConfirmedAt <= LIVE_GRACE_MS;
-    const trustworthyPrev = ["videos_list_live", "search_live", "redirect_verified", "cached_live_grace"].includes(prev.foundBy);
-
-    if (
-      prev.isLive &&
-      prev.videoId &&
-      stillFresh &&
-      trustworthyPrev &&
-      (!next || !next.isLive)
-    ) {
-      merged[key] = {
-        ...prev,
-        foundBy: "cached_live_grace",
-      };
-    }
-  }
-
-  return merged;
-}
-
+// ── Main GET handler ───────────────────────────────────────────────────────
 export async function GET(req: Request) {
+  console.log(
+    "[yt-live][GET] hasKey=",
+    !!process.env.YOUTUBE_API_KEY,
+    "len=",
+    (process.env.YOUTUBE_API_KEY || "").length
+  );
+
   const { searchParams } = new URL(req.url);
 
   const channelIdsParam = searchParams.get("channelIds") || "";
@@ -325,7 +312,9 @@ export async function GET(req: Request) {
   if (channelIdsParam) {
     for (const part of channelIdsParam.split(",")) {
       const [cid, handle] = part.trim().split(":");
-      if (cid && cid.startsWith("UC")) entries.push({ channelId: cid, handle: handle || undefined, key: cid });
+      if (cid && cid.startsWith("UC")) {
+        entries.push({ channelId: cid, handle: handle || undefined, key: cid });
+      }
     }
   }
 
@@ -337,7 +326,9 @@ export async function GET(req: Request) {
     .filter((x): x is string => !!x);
 
   for (const h of Array.from(new Set(rawHandles))) {
-    if (!entries.find((e) => e.handle === h)) entries.push({ handle: h, key: h });
+    if (!entries.find((e) => e.handle === h)) {
+      entries.push({ handle: h, key: h });
+    }
   }
 
   if (entries.length === 0) {
@@ -345,6 +336,7 @@ export async function GET(req: Request) {
   }
 
   const apiKey = process.env.YOUTUBE_API_KEY || "";
+
   const ALWAYS_LIVE_HANDLES = new Set(["IRANINTL"]);
   const ALWAYS_LIVE_CHANNEL_IDS = new Set(["UCat6bC0Wrqq9Bcq7EkH_yQw"]);
   const HANDLE_TO_CHANNEL: Record<string, string> = {
@@ -352,8 +344,26 @@ export async function GET(req: Request) {
   };
 
   for (const e of entries) {
-    if (e.handle && !e.channelId && HANDLE_TO_CHANNEL[e.handle]) e.channelId = HANDLE_TO_CHANNEL[e.handle];
+    if (e.handle && !e.channelId && HANDLE_TO_CHANNEL[e.handle]) {
+      e.channelId = HANDLE_TO_CHANNEL[e.handle];
+    }
   }
+
+  fetch("http://127.0.0.1:7245/ingest/d5efc3aa-8cbf-4f94-9a4d-8b25d050894c", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      location: "youtube/live/route.ts:entries-after-fallback",
+      message: "entries after handle->channelId fallback",
+      data: {
+        entriesCount: entries.length,
+        withChannelId: entries.filter((e) => e.channelId).length,
+        apiKeySet: !!apiKey,
+      },
+      timestamp: Date.now(),
+      hypothesisId: "A",
+    }),
+  }).catch(() => {});
 
   const hasAllowlistedChannel = entries.some(
     (e) =>
@@ -366,15 +376,19 @@ export async function GET(req: Request) {
     entries.filter((e) => !e.channelId).map((e) => e.handle!)
   );
 
-  let previousResults: Record<string, Result> | undefined;
   try {
     const raw = await redisGet(cacheKey);
     if (raw) {
       const parsed = JSON.parse(raw) as { results?: Record<string, Result> };
-      if (parsed?.results) previousResults = parsed.results;
+      if (parsed?.results) {
+        return NextResponse.json(
+          { ok: true, results: parsed.results, cached: true },
+          { headers: NO_CACHE_HEADERS }
+        );
+      }
     }
   } catch {
-    // ignore
+    // Redis miss or error
   }
 
   const cached = liveCache.get(cacheKey);
@@ -382,12 +396,15 @@ export async function GET(req: Request) {
   const effectiveTtlMs = cached?.ttlMs ?? cacheTtlMs;
 
   if (cached && Date.now() - cached.ts < effectiveTtlMs) {
-    return NextResponse.json({ ok: true, results: cached.results, cached: true }, { headers: NO_CACHE_HEADERS });
+    return NextResponse.json(
+      { ok: true, results: cached.results, cached: true },
+      { headers: NO_CACHE_HEADERS }
+    );
   }
 
-  const resolvedEntries: Array<ChannelEntry & { channelId: string }> = entries.filter(
-    (e): e is ChannelEntry & { channelId: string } => !!e.channelId
-  );
+  const resolvedEntries: Array<ChannelEntry & { channelId: string }> = entries
+    .filter((e): e is ChannelEntry & { channelId: string } => !!e.channelId)
+    .map((e) => e as ChannelEntry & { channelId: string });
 
   const byChannelId = new Map<string, ChannelEntry & { channelId: string }>();
   for (const e of resolvedEntries) {
@@ -404,9 +421,11 @@ export async function GET(req: Request) {
       ]);
 
       let redirectId = redirectFromChannel;
+
       if (!redirectId && entry.handle) {
         redirectId = await fetchLiveRedirectFromUrl(`https://www.youtube.com/@${entry.handle}/live`);
       }
+
       if (!redirectId && entry.channelId) {
         redirectId = await fetchLiveRedirectFromUrl(
           `https://www.youtube.com/embed/live_stream?channel=${encodeURIComponent(entry.channelId)}`
@@ -414,7 +433,10 @@ export async function GET(req: Request) {
       }
 
       const videoIds = [...rssIds];
-      if (redirectId && !videoIds.includes(redirectId)) videoIds.push(redirectId);
+      if (redirectId && !videoIds.includes(redirectId)) {
+        videoIds.push(redirectId);
+      }
+
       return { entry, videoIds, redirectId };
     })
   );
@@ -425,18 +447,20 @@ export async function GET(req: Request) {
 
   const allowlistedNeedingSearch = discoveryResults.filter((d) => {
     const liveFromApi = d.videoIds.find((id) => liveSet.has(id));
-    const redirectVerifiedLive = !!d.redirectId && liveSet.has(d.redirectId);
     const isAlwaysLive =
       (d.entry.handle && ALWAYS_LIVE_HANDLES.has(d.entry.handle)) ||
       (d.entry.channelId && ALWAYS_LIVE_CHANNEL_IDS.has(d.entry.channelId));
-    return isAlwaysLive && !liveFromApi && !redirectVerifiedLive && !!d.entry.channelId;
+    return isAlwaysLive && !liveFromApi && !!d.entry.channelId;
   });
 
   const searchLastError = { channelId: "", message: "" };
+
   const searchResults = await Promise.all(
     allowlistedNeedingSearch.map(async (d) => ({
       channelId: d.entry.channelId,
-      videoId: await fetchLiveVideoIdBySearch(d.entry.channelId, apiKey, { lastError: searchLastError }),
+      videoId: await fetchLiveVideoIdBySearch(d.entry.channelId, apiKey, {
+        lastError: searchLastError,
+      }),
     }))
   );
 
@@ -445,24 +469,40 @@ export async function GET(req: Request) {
     if (videoId) liveVideoIdByChannel.set(channelId, videoId);
   }
 
-  const now = Date.now();
-  let results: Record<string, Result> = {};
+  fetch("http://127.0.0.1:7245/ingest/d5efc3aa-8cbf-4f94-9a4d-8b25d050894c", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      location: "youtube/live/route.ts:after-search",
+      message: "search.list results for allowlisted channels",
+      data: {
+        allowlistedNeedingSearchCount: allowlistedNeedingSearch.length,
+        searchResultMap: Object.fromEntries(liveVideoIdByChannel),
+      },
+      timestamp: Date.now(),
+      hypothesisId: "B",
+    }),
+  }).catch(() => {});
+
+  const results: Record<string, Result> = {};
 
   for (const { entry, videoIds, redirectId } of discoveryResults) {
     const liveFromApi = videoIds.find((id) => liveSet.has(id));
-    const searchLive = entry.channelId ? liveVideoIdByChannel.get(entry.channelId) : undefined;
-    const redirectVerifiedLive = redirectId && liveSet.has(redirectId) ? redirectId : undefined;
 
     const key = entry.handle || entry.channelId;
-    const effectiveVideoId = liveFromApi ?? searchLive ?? redirectVerifiedLive ?? undefined;
 
-    let foundBy: FoundBy = "none";
-    if (liveFromApi) foundBy = "videos_list_live";
-    else if (searchLive) foundBy = "search_live";
-    else if (redirectVerifiedLive) foundBy = "redirect_verified";
+    const effectiveVideoId =
+      liveFromApi ??
+      (entry.channelId ? liveVideoIdByChannel.get(entry.channelId) : undefined) ??
+      (redirectId && isValidVideoId(redirectId) ? redirectId : undefined);
 
     const isLive = !!effectiveVideoId;
-    const watchUrl = effectiveVideoId ? `https://www.youtube.com/watch?v=${effectiveVideoId}` : undefined;
+
+    const watchUrl = effectiveVideoId
+      ? `https://www.youtube.com/watch?v=${effectiveVideoId}`
+      : undefined;
+
+    const embedUrl: string | undefined = undefined;
 
     results[key] = {
       channelId: entry.channelId,
@@ -470,18 +510,39 @@ export async function GET(req: Request) {
       isLive,
       videoId: effectiveVideoId,
       watchUrl,
-      embedUrl: undefined,
-      foundBy,
-      lastConfirmedAt: isLive ? now : undefined,
+      embedUrl,
+      foundBy: effectiveVideoId ? "rss_videos_list" : "none",
     };
+
+    if (key === "IRANINTL" || entry.channelId === "UCat6bC0Wrqq9Bcq7EkH_yQw") {
+      fetch("http://127.0.0.1:7245/ingest/d5efc3aa-8cbf-4f94-9a4d-8b25d050894c", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          location: "youtube/live/route.ts:result-IRANINTL",
+          message: "IRANINTL result built",
+          data: {
+            key,
+            effectiveVideoId: !!effectiveVideoId,
+            embedUrl: !!embedUrl,
+            isLive,
+            watchUrl,
+          },
+          timestamp: Date.now(),
+          hypothesisId: "C",
+        }),
+      }).catch(() => {});
+    }
   }
 
   for (const entry of entries) {
     const key = entry.handle || entry.channelId;
-    if (!key || results[key]) continue;
+    if (!key) continue;
+    if (results[key]) continue;
 
     const channelAlreadyInResults =
       entry.channelId && Object.values(results).some((r) => r.channelId === entry.channelId);
+
     if (channelAlreadyInResults) continue;
 
     results[key] = {
@@ -492,30 +553,33 @@ export async function GET(req: Request) {
     };
   }
 
-  results = applyStickyLiveGrace(results, previousResults, now);
-  if (cached?.results) results = applyStickyLiveGrace(results, cached.results, now);
-
   const quotaExceeded = isQuotaError(searchLastError.message);
+
   liveCache.set(cacheKey, {
     results,
-    ts: now,
+    ts: Date.now(),
     ttlMs: quotaExceeded ? QUOTA_BACKOFF_TTL_MS : undefined,
   });
 
-  const iranintlHasVideo = !!results["IRANINTL"]?.videoId || !!results["UCat6bC0Wrqq9Bcq7EkH_yQw"]?.videoId;
+  const iranintlHasVideo =
+    !!results["IRANINTL"]?.videoId || !!results["UCat6bC0Wrqq9Bcq7EkH_yQw"]?.videoId;
+
   const ttlSec = quotaExceeded
     ? QUOTA_BACKOFF_TTL_SEC
     : hasAllowlistedChannel && iranintlHasVideo
       ? ALLOWLISTED_WITH_VIDEO_TTL_SEC
       : DEFAULT_CACHE_TTL_SEC;
 
-  await redisSet(cacheKey, JSON.stringify({ results, storedAt: now, version: CACHE_VERSION }), ttlSec);
+  await redisSet(cacheKey, JSON.stringify({ results }), ttlSec);
 
   const debugParam = searchParams.get("debug");
-  const body: { ok: boolean; results: Record<string, Result>; debug?: object } = { ok: true, results };
+  const body: { ok: boolean; results: Record<string, Result>; debug?: object } = {
+    ok: true,
+    results,
+  };
+
   if (debugParam === "1" || debugParam === "true") {
     body.debug = {
-      cacheVersion: CACHE_VERSION,
       entriesCount: entries.length,
       entriesWithChannelId: entries.filter((e) => e.channelId).length,
       apiKeySet: !!apiKey,
@@ -530,5 +594,7 @@ export async function GET(req: Request) {
     };
   }
 
-  return NextResponse.json(body, { headers: NO_CACHE_HEADERS });
+  return NextResponse.json(body, {
+    headers: NO_CACHE_HEADERS,
+  });
 }
