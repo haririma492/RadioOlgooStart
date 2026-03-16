@@ -227,9 +227,9 @@ export default function PlaylistTab() {
                   <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 6 }}>{item.title || "Untitled"}</div>
                   <div style={{ color: "#94a3b8", fontSize: 13, lineHeight: 1.7 }}>
                     <div>PK: {item.PK}</div>
-                    <div>{item.section || "—"} | {item.group || "—"} | {item.person || "—"}</div>
-                    <div>{item.mediaType || "—"} | {item.sourceType || "—"} | {item.status || "—"}</div>
-                    <div>{item.url || "—"}</div>
+                    <div>{item.section || "ΓÇö"} | {item.group || "ΓÇö"} | {item.person || "ΓÇö"}</div>
+                    <div>{item.mediaType || "ΓÇö"} | {item.sourceType || "ΓÇö"} | {item.status || "ΓÇö"}</div>
+                    <div>{item.url || "ΓÇö"}</div>
                   </div>
                 </div>
 
@@ -287,8 +287,8 @@ export default function PlaylistTab() {
                     {index + 1}. {item.title || "Untitled"}
                   </div>
                   <div style={{ color: "#94a3b8", fontSize: 13, lineHeight: 1.7 }}>
-                    <div>{item.section || "—"} | {item.group || "—"}</div>
-                    <div>{item.url || "—"}</div>
+                    <div>{item.section || "ΓÇö"} | {item.group || "ΓÇö"}</div>
+                    <div>{item.url || "ΓÇö"}</div>
                     <div>Duration: {fmtDuration(item.durationSec)}</div>
                   </div>
                 </div>
