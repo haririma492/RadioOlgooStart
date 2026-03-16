@@ -48,6 +48,14 @@ type PlaybackState = {
   updatedAt?: string;
   sourceScheduleId?: string;
   sourcePlaylistId?: string;
+  currentItem?: {
+    title: string;
+    url: string;
+    durationSec: number;
+    mediaType?: string;
+    sourceType?: string;
+  } | null;
+  offsetSec?: number;
 };
 
 function fmtDuration(totalSeconds: number): string {
@@ -945,13 +953,15 @@ export default function TVSupportPage() {
                 <div className="rounded-[24px] border border-white/10 bg-[#071736] p-5 shadow-2xl">
                   <h3 className="mb-4 text-2xl font-bold">Operator preview</h3>
                   {playbackState?.mediaUrl ? (
-                    <OlgooLivePlayer
-                      mediaUrl={playbackState.mediaUrl}
-                      title={playbackState.title || "Olgoo Live"}
-                      autoPlay
-                      controls
-                      muted={false}
-                    />
+<OlgooLivePlayer
+  mediaUrl={playbackState.currentItem?.url || playbackState.mediaUrl || ""}
+  title={playbackState.currentItem?.title || playbackState.title || "Olgoo Live"}
+  startAtSec={playbackState.offsetSec || 0}
+  liveSync
+  autoPlay
+  controls
+  muted={false}
+/>
                   ) : (
                     <div className="flex aspect-video items-center justify-center rounded-2xl bg-black text-white/60">
                       No active playback

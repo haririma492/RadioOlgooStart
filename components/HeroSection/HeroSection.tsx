@@ -88,12 +88,14 @@ function HeroImage({
 type LivePlayerOverlayProps = {
   mediaUrl: string;
   playerType: "video" | "hls" | "dash";
+  startAtSec?: number;
   onClose: () => void;
 };
 
 function LivePlayerOverlay({
   mediaUrl,
   playerType,
+  startAtSec = 0,
   onClose,
 }: LivePlayerOverlayProps) {
   return (
@@ -110,6 +112,22 @@ function LivePlayerOverlay({
         autoPlay
         controls
         playsInline
+        onLoadedMetadata={(e) => {
+          const el = e.currentTarget;
+          const target = Math.max(0, Math.floor(Number(startAtSec || 0)));
+
+          if (target > 0) {
+            try {
+              const duration = Number.isFinite(el.duration) ? el.duration : NaN;
+              el.currentTime =
+                Number.isFinite(duration) && duration > 0
+                  ? Math.min(target, Math.max(0, duration - 0.25))
+                  : target;
+            } catch (error) {
+              console.error("Failed to seek live media", error);
+            }
+          }
+        }}
         style={{
           width: "100%",
           height: "100%",
@@ -155,6 +173,7 @@ export default function HeroSection() {
   const [isLivePlaying, setIsLivePlaying] = useState(false);
   const [liveMediaUrl, setLiveMediaUrl] = useState<string | null>(null);
   const [livePlayerType, setLivePlayerType] = useState<"video" | "hls" | "dash">("video");
+  const [liveOffsetSec, setLiveOffsetSec] = useState(0);
 
   const handleLiveClick = async () => {
     if (isLivePlaying) return;
@@ -169,10 +188,17 @@ export default function HeroSection() {
       const data = await response.json();
 
       const url =
-        data?.mediaUrl || data?.url || data?.streamUrl || data?.playbackUrl || "";
+        data?.currentItem?.url ||
+        data?.mediaUrl ||
+        data?.url ||
+        data?.streamUrl ||
+        data?.playbackUrl ||
+        "";
+
       if (!url) throw new Error("No live URL available");
 
       setLiveMediaUrl(url);
+      setLiveOffsetSec(Number(data?.offsetSec || 0));
       setLivePlayerType(data?.playerType || "video");
       setIsLivePlaying(true);
     } catch (err) {
@@ -184,6 +210,7 @@ export default function HeroSection() {
   const handleCloseLive = () => {
     setIsLivePlaying(false);
     setLiveMediaUrl(null);
+    setLiveOffsetSec(0);
   };
 
   return (
@@ -220,7 +247,6 @@ export default function HeroSection() {
           }}
         />
 
-        {/* Left image container */}
         <div
           style={{
             position: "absolute",
@@ -244,12 +270,12 @@ export default function HeroSection() {
             <LivePlayerOverlay
               mediaUrl={liveMediaUrl}
               playerType={livePlayerType}
+              startAtSec={liveOffsetSec}
               onClose={handleCloseLive}
             />
           )}
         </div>
 
-        {/* Right image */}
         <HeroImage
           primarySrc="/images/banner3.webp"
           fallbackSrc="/images/banner3.png"
