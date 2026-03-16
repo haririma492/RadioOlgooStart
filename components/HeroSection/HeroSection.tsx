@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 
 type HeroImageProps = {
   primarySrc: string;
@@ -32,7 +32,7 @@ function HeroImage({
       onMouseEnter={() => hoverGlow && setHover(true)}
       onMouseLeave={() => hoverGlow && setHover(false)}
       style={{
-        position: fillContainer ? "absolute" : "absolute",
+        position: "absolute",
         top: fillContainer ? 0 : "50%",
         left: fillContainer ? 0 : side === "left" ? "6%" : undefined,
         right: fillContainer ? undefined : side === "right" ? "6%" : undefined,
@@ -43,8 +43,8 @@ function HeroImage({
             ? "scale(1.03)"
             : "none"
           : hover
-          ? "translateY(-50%) scale(1.03)"
-          : "translateY(-50%)",
+            ? "translateY(-50%) scale(1.03)"
+            : "translateY(-50%)",
         transition: "all 0.25s ease",
         cursor: onClick || hoverGlow ? "pointer" : "default",
         zIndex: 2,
@@ -98,8 +98,124 @@ function LivePlayerOverlay({
   startAtSec = 0,
   onClose,
 }: LivePlayerOverlayProps) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [isPaused, setIsPaused] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  async function seekTo(el: HTMLVideoElement, targetSec: number) {
+    const target = Math.max(0, Math.floor(Number(targetSec || 0)));
+    if (target <= 0) return;
+
+    try {
+      const duration = Number.isFinite(el.duration) ? el.duration : NaN;
+      el.currentTime =
+        Number.isFinite(duration) && duration > 0
+          ? Math.min(target, Math.max(0, duration - 0.25))
+          : target;
+    } catch (error) {
+      console.error("Failed to seek live media", error);
+    }
+  }
+
+  async function resyncAndPlay(el: HTMLVideoElement | null) {
+    if (!el) return;
+
+    try {
+      const response = await fetch(`/api/olgoo-live/state?t=${Date.now()}`, {
+        cache: "no-store",
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch live state (${response.status})`);
+      }
+
+      const data = await response.json();
+
+      const liveUrl =
+        data?.currentItem?.url ||
+        data?.mediaUrl ||
+        data?.url ||
+        data?.streamUrl ||
+        data?.playbackUrl ||
+        "";
+
+      const liveOffsetSec = Math.max(0, Math.floor(Number(data?.offsetSec || 0)));
+
+      if (!liveUrl) return;
+
+      const sameUrl =
+        el.currentSrc === liveUrl ||
+        el.currentSrc.includes(liveUrl) ||
+        mediaUrl === liveUrl;
+
+      const playAtLivePoint = async () => {
+        await seekTo(el, liveOffsetSec);
+        await el.play();
+        setIsPaused(false);
+      };
+
+      if (!sameUrl) {
+        el.src = liveUrl;
+        el.load();
+
+        const onLoadedMetadata = async () => {
+          try {
+            await playAtLivePoint();
+          } catch (error) {
+            console.error("Failed to resume live media", error);
+          }
+          el.removeEventListener("loadedmetadata", onLoadedMetadata);
+        };
+
+        el.addEventListener("loadedmetadata", onLoadedMetadata);
+        return;
+      }
+
+      await playAtLivePoint();
+    } catch (error) {
+      console.error("Failed to resync live playback", error);
+      try {
+        await el.play();
+        setIsPaused(false);
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  async function handlePlayPause() {
+    const el = videoRef.current;
+    if (!el) return;
+
+    if (el.paused) {
+      await resyncAndPlay(el);
+    } else {
+      el.pause();
+      setIsPaused(true);
+    }
+  }
+
+  async function handleFullscreenToggle() {
+    const container = containerRef.current;
+    if (!container) return;
+
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+        setIsFullscreen(false);
+      } else {
+        await container.requestFullscreen();
+        setIsFullscreen(true);
+      }
+    } catch (error) {
+      console.error("Failed to toggle fullscreen", error);
+    }
+  }
+
   return (
     <div
+      ref={containerRef}
       style={{
         position: "absolute",
         inset: 0,
@@ -109,29 +225,24 @@ function LivePlayerOverlay({
       }}
     >
       <video
+        ref={videoRef}
         autoPlay
-        controls
         playsInline
+        controls={false}
         onLoadedMetadata={(e) => {
-          const el = e.currentTarget;
-          const target = Math.max(0, Math.floor(Number(startAtSec || 0)));
-
-          if (target > 0) {
-            try {
-              const duration = Number.isFinite(el.duration) ? el.duration : NaN;
-              el.currentTime =
-                Number.isFinite(duration) && duration > 0
-                  ? Math.min(target, Math.max(0, duration - 0.25))
-                  : target;
-            } catch (error) {
-              console.error("Failed to seek live media", error);
-            }
-          }
+          void seekTo(e.currentTarget, startAtSec);
+        }}
+        onPause={() => {
+          setIsPaused(true);
+        }}
+        onPlay={() => {
+          setIsPaused(false);
         }}
         style={{
           width: "100%",
           height: "100%",
           objectFit: "contain",
+          background: "#000",
         }}
       >
         <source
@@ -140,6 +251,74 @@ function LivePlayerOverlay({
         />
         Your browser does not support the video tag.
       </video>
+
+<img
+  src="/images/logo_circular.png"
+  alt="Olgoo logo"
+  style={{
+    position: "absolute",
+    top: 10,
+    left: 10,
+    zIndex: 20,
+    width: 64,
+    height: 64,
+    objectFit: "contain",
+    pointerEvents: "none",
+    filter: "drop-shadow(0 4px 12px rgba(0,0,0,0.7))",
+  }}
+/>
+
+      <div
+        style={{
+          position: "absolute",
+          bottom: 10,
+          right: 10,
+          zIndex: 20,
+          display: "flex",
+          gap: 8,
+          alignItems: "center",
+        }}
+      >
+        <button
+          onClick={() => void handlePlayPause()}
+          style={{
+            background: "rgba(0,0,0,0.65)",
+            color: "white",
+            border: "none",
+            borderRadius: 999,
+            minWidth: 72,
+            height: 36,
+            padding: "0 14px",
+            fontSize: 14,
+            fontWeight: 700,
+            cursor: "pointer",
+            boxShadow: "0 2px 8px rgba(0,0,0,0.4)",
+          }}
+          aria-label={isPaused ? "Play live" : "Pause live"}
+        >
+          {isPaused ? "Play" : "Pause"}
+        </button>
+
+        <button
+          onClick={() => void handleFullscreenToggle()}
+          style={{
+            background: "rgba(0,0,0,0.65)",
+            color: "white",
+            border: "none",
+            borderRadius: 999,
+            minWidth: 98,
+            height: 36,
+            padding: "0 14px",
+            fontSize: 14,
+            fontWeight: 700,
+            cursor: "pointer",
+            boxShadow: "0 2px 8px rgba(0,0,0,0.4)",
+          }}
+          aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+        >
+          {isFullscreen ? "Exit Full" : "Fullscreen"}
+        </button>
+      </div>
 
       <button
         onClick={onClose}
@@ -151,17 +330,18 @@ function LivePlayerOverlay({
           color: "white",
           border: "none",
           borderRadius: "50%",
-          width: 32,
-          height: 32,
+          width: 36,
+          height: 36,
           fontSize: 18,
           fontWeight: "bold",
           cursor: "pointer",
-          zIndex: 10,
+          zIndex: 30,
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
           boxShadow: "0 2px 8px rgba(0,0,0,0.4)",
         }}
+        aria-label="Close live player"
       >
         ✕
       </button>
@@ -214,29 +394,28 @@ export default function HeroSection() {
   };
 
   return (
-    <section
-      style={{
-        position: "relative",
-        width: "100%",
-        height: "clamp(280px, 36vw, 430px)",
-        overflow: "hidden",
-        backgroundColor: "#000",
-        padding: "4px 6px",
-      }}
-    >
-      <div
-        style={{
-          position: "relative",
-          width: "100%",
-          height: "100%",
-          borderRadius: "18px",
-          border: "1px solid rgba(197,155,65,0.45)",
-          background: "rgba(10,10,10,0.88)",
-          boxShadow:
-            "0 10px 30px rgba(0,0,0,0.45), 0 0 0 1px rgba(255,255,255,0.03) inset, 0 0 18px rgba(197,155,65,0.10)",
-          overflow: "hidden",
-        }}
-      >
+<section
+  style={{
+    position: "relative",
+    width: "100%",
+    height: "clamp(280px, 36vw, 430px)",
+    overflow: "visible",
+    backgroundColor: "transparent",
+    padding: 0,
+  }}
+>
+<div
+  style={{
+    position: "relative",
+    width: "100%",
+    height: "100%",
+    borderRadius: "18px",
+    border: "none",
+    background: "transparent",
+    boxShadow: "none",
+    overflow: "hidden",
+  }}
+>
         <div
           style={{
             position: "absolute",
