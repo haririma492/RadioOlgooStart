@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 import OlgooLivePlayer from "@/components/OlgooLive/OlgooLivePlayer";
+import type { OlgooLivePlayerType } from "@/components/OlgooLive/types";
 import { usePlayback } from "@/context/PlaybackContext";
 
 const LIVE_HEARTBEAT_MS = 7_000;
@@ -85,7 +86,7 @@ type LiveStateResponse = {
   streamUrl?: string;
   playbackUrl?: string;
   offsetSec?: number;
-  playerType?: "video" | "iframe" | "audio" | "image";
+  playerType?: OlgooLivePlayerType;
   playToken?: string;
   title?: string;
   currentItem?: {
@@ -96,7 +97,7 @@ type LiveStateResponse = {
 
 type LiveSnapshot = {
   mediaUrl: string;
-  playerType: "video" | "iframe" | "audio" | "image";
+  playerType: OlgooLivePlayerType;
   offsetSec: number;
   playToken: string;
   title: string;
@@ -127,7 +128,7 @@ async function fetchLiveState(): Promise<LiveSnapshot | null> {
 
   return {
     mediaUrl,
-    playerType: data?.playerType || "video",
+    playerType: data?.playerType === "iframe" ? "iframe" : "video",
     offsetSec: Math.max(0, Math.floor(Number(data?.offsetSec || 0))),
     playToken: String(data?.playToken || mediaUrl),
     title: data?.currentItem?.title || data?.title || "Olgoo Live",
@@ -136,7 +137,7 @@ async function fetchLiveState(): Promise<LiveSnapshot | null> {
 
 type LivePlayerOverlayProps = {
   mediaUrl: string;
-  playerType: "video" | "iframe" | "audio" | "image";
+  playerType: OlgooLivePlayerType;
   startAtSec?: number;
   title: string;
   onClose: () => void;
@@ -204,7 +205,7 @@ function LivePlayerOverlay({
 export default function HeroSection() {
   const [isLivePlaying, setIsLivePlaying] = useState(false);
   const [liveMediaUrl, setLiveMediaUrl] = useState<string | null>(null);
-  const [livePlayerType, setLivePlayerType] = useState<"video" | "iframe" | "audio" | "image">("video");
+  const [livePlayerType, setLivePlayerType] = useState<OlgooLivePlayerType>("video");
   const [liveOffsetSec, setLiveOffsetSec] = useState(0);
   const [liveTitle, setLiveTitle] = useState("Olgoo Live");
   const [livePlayToken, setLivePlayToken] = useState("");
