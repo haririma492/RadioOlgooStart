@@ -53,11 +53,12 @@ function clampSeek(el: HTMLMediaElement, targetSec: number) {
 
   try {
     const duration = Number.isFinite(el.duration) ? el.duration : NaN;
-    el.currentTime = Number.isFinite(duration) && duration > 0
-      ? Math.min(target, Math.max(0, duration - 0.25))
-      : target;
+    el.currentTime =
+      Number.isFinite(duration) && duration > 0
+        ? Math.min(target, Math.max(0, duration - 0.25))
+        : target;
   } catch {
-    // ignore seek errors for streams that do not expose duration
+    // ignore
   }
 }
 
@@ -85,26 +86,11 @@ export default function OlgooLivePlayer({
   const [isMuted, setIsMuted] = useState(muted);
 
   useEffect(() => {
-    return () => {
-      allowPauseRef.current = true;
-
-      const media = mediaRef.current;
-      if (media) {
-        try {
-          media.pause();
-        } catch {
-          // ignore
-        }
-
-        try {
-          media.removeAttribute("src");
-          media.load();
-        } catch {
-          // ignore
-        }
-      }
-    };
-  }, []);
+    const media = mediaRef.current;
+    if (!media) return;
+    media.muted = muted;
+    setIsMuted(muted);
+  }, [muted, safeUrl]);
 
   useEffect(() => {
     const media = mediaRef.current;
@@ -186,6 +172,17 @@ export default function OlgooLivePlayer({
   useEffect(() => {
     return () => {
       allowPauseRef.current = true;
+
+      const media = mediaRef.current;
+      if (media) {
+        try {
+          media.pause();
+        } catch {}
+        try {
+          media.removeAttribute("src");
+          media.load();
+        } catch {}
+      }
     };
   }, []);
 
@@ -197,27 +194,28 @@ export default function OlgooLivePlayer({
     );
   }
 
-  const muteButton = resolvedPlayerType === "video" ? (
-    <button
-      type="button"
-      onClick={() => {
-        const media = mediaRef.current;
-        if (!media) return;
-        const nextMuted = !media.muted;
-        media.muted = nextMuted;
-        setIsMuted(nextMuted);
-      }}
-      className="absolute bottom-3 right-3 z-20 rounded-full bg-black/70 px-4 py-2 text-sm font-semibold text-white"
-    >
-      {isMuted ? "Unmute" : "Mute"}
-    </button>
-  ) : null;
+  const muteButton =
+    resolvedPlayerType === "video" ? (
+      <button
+        type="button"
+        onClick={() => {
+          const media = mediaRef.current;
+          if (!media) return;
+          const nextMuted = !media.muted;
+          media.muted = nextMuted;
+          setIsMuted(nextMuted);
+        }}
+        className="absolute bottom-3 right-3 z-20 rounded-full bg-black/70 px-4 py-2 text-sm font-semibold text-white"
+      >
+        {isMuted ? "Unmute" : "Mute"}
+      </button>
+    ) : null;
 
   if (resolvedPlayerType === "iframe" && ytId) {
     return (
       <div className={`relative aspect-video w-full overflow-hidden rounded-2xl bg-black ${className}`}>
         <iframe
-          src={`https://www.youtube.com/embed/${ytId}?autoplay=${autoPlay ? 1 : 0}&mute=1&controls=0&disablekb=1&fs=1&modestbranding=1&playsinline=1&rel=0&start=${Math.max(0, Math.floor(startAtSec || 0))}`}
+          src={`https://www.youtube.com/embed/${ytId}?autoplay=${autoPlay ? 1 : 0}&mute=0&controls=0&disablekb=1&fs=1&modestbranding=1&playsinline=1&rel=0&start=${Math.max(0, Math.floor(startAtSec || 0))}`}
           title={title}
           className="absolute inset-0 h-full w-full border-0"
           allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
