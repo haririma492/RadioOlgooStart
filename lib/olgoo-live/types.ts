@@ -1,12 +1,37 @@
 export type OlgooChannelId = "OLGOO_LIVE" | string;
 
+export type OlgooLivePlayerType = "video" | "iframe";
+
+export type OlgooLiveState = {
+  ok: boolean;
+  configured: boolean;
+  playState: "playing" | "stopped" | "paused";
+  title?: string;
+  subtitle?: string;
+  mediaUrl?: string;
+  playerType?: OlgooLivePlayerType;
+  playToken?: string;
+  startedAt?: string;
+  isLive?: boolean;
+  posterUrl?: string;
+  message?: string;
+  source?: string;
+  updatedAt?: string;
+  canPlay?: boolean;
+  clickable?: boolean;
+  offsetSec?: number;
+  currentItem?: CanonicalPlaybackItem | null;
+};
+
 export type PlaylistItem = {
   assetPk?: string;
+  id?: string;
   title: string;
   url: string;
   durationSec: number;
   sourceType?: string;
   mediaType?: string;
+  playerType?: OlgooLivePlayerType;
 };
 
 export type PlaylistMeta = {
@@ -22,6 +47,8 @@ export type PlaylistRecord = PlaylistMeta & {
   items: PlaylistItem[];
 };
 
+export type Playlist = PlaylistRecord;
+
 export type ScheduleBlock = {
   order: number;
   blockType: "playlist" | "item";
@@ -29,6 +56,7 @@ export type ScheduleBlock = {
   title: string;
   durationSec: number;
   url?: string;
+  playlistId?: string;
 };
 
 export type ScheduleMeta = {
@@ -45,26 +73,32 @@ export type ScheduleRecord = ScheduleMeta & {
   blocks: ScheduleBlock[];
 };
 
-export type CanonicalLiveState = {
-  ok: boolean;
-  playState: "playing" | "stopped" | "paused";
-  title?: string;
-  mediaUrl?: string;
-  playerType?: "video" | "iframe";
-  startedAt?: string;
+export type Schedule = ScheduleRecord;
+
+export type PlaybackState = {
+  mode: "schedule" | "manual";
+  scheduleId?: string;
+  startedAt: string;
   updatedAt?: string;
-  sourceScheduleId?: string;
-  sourcePlaylistId?: string;
-  currentItem?: PlaylistItem | null;
+  active?: boolean;
+  mediaUrl?: string;
+  title?: string;
+  playerType?: OlgooLivePlayerType;
+};
+
+export type CanonicalPlaybackItem = {
+  itemIndex?: number;
+  itemId?: string;
+  title: string;
+  url: string;
+  durationSec: number;
+  sourceType?: string;
+  mediaType?: string;
+  playerType?: OlgooLivePlayerType;
+  startedAt?: string;
+  itemStartedAt?: string;
   offsetSec?: number;
   playToken?: string;
-  configured: boolean;
-  isConfigured?: boolean;
-  isLive: boolean;
-  canPlay: boolean;
-  clickable: boolean;
-  url?: string;
-  streamUrl?: string;
-  playbackUrl?: string;
-  status?: string;
+  canPlay?: boolean;
+  playState?: "playing" | "stopped" | "paused";
 };

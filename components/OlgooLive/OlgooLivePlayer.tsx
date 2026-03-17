@@ -24,11 +24,9 @@ type CanonicalStateResponse = {
 };
 
 function detectPlayerType(url: string, hinted?: OlgooLivePlayerType): OlgooLivePlayerType {
-  if (hinted) return hinted;
+  if (hinted === "iframe") return "iframe";
   const lower = (url || "").toLowerCase();
   if (/youtube\.com|youtu\.be/.test(lower)) return "iframe";
-  if (/\.(jpg|jpeg|png|webp|gif)(\?|$)/.test(lower)) return "image";
-  if (/\.(mp3|wav|m4a|aac|ogg)(\?|$)/.test(lower)) return "audio";
   return "video";
 }
 
@@ -75,10 +73,13 @@ export default function OlgooLivePlayer({
   playerType,
 }: OlgooLivePlayerProps) {
   const safeUrl = (mediaUrl || "").trim();
-  const resolvedPlayerType = useMemo(() => detectPlayerType(safeUrl, playerType), [safeUrl, playerType]);
+  const resolvedPlayerType = useMemo(
+    () => detectPlayerType(safeUrl, playerType),
+    [safeUrl, playerType]
+  );
   const ytId = extractYoutubeId(safeUrl);
 
-  const mediaRef = useRef<HTMLVideoElement | HTMLAudioElement | null>(null);
+  const mediaRef = useRef<HTMLVideoElement | null>(null);
   const resyncingRef = useRef(false);
   const allowPauseRef = useRef(false);
   const [isMuted, setIsMuted] = useState(muted);
@@ -113,7 +114,7 @@ export default function OlgooLivePlayer({
   }, [safeUrl, startAtSec]);
 
   useEffect(() => {
-    if (!liveSync || !mediaRef.current) return;
+    if (!liveSync || !mediaRef.current || resolvedPlayerType !== "video") return;
 
     const resync = async () => {
       const media = mediaRef.current;
@@ -165,7 +166,7 @@ export default function OlgooLivePlayer({
       document.removeEventListener("visibilitychange", visibilityHandler);
       window.removeEventListener("focus", focusHandler);
     };
-  }, [liveSync, safeUrl]);
+  }, [liveSync, safeUrl, resolvedPlayerType]);
 
   useEffect(() => {
     return () => {
@@ -176,12 +177,12 @@ export default function OlgooLivePlayer({
   if (!safeUrl) {
     return (
       <div className={`flex aspect-video w-full items-center justify-center rounded-2xl bg-black text-white/70 ${className}`}>
-        No canonical live media URL provided.
+        Live stream unavailable.
       </div>
     );
   }
 
-  const muteButton = (
+  const muteButton = resolvedPlayerType === "video" ? (
     <button
       type="button"
       onClick={() => {
@@ -195,47 +196,18 @@ export default function OlgooLivePlayer({
     >
       {isMuted ? "Unmute" : "Mute"}
     </button>
-  );
+  ) : null;
 
   if (resolvedPlayerType === "iframe" && ytId) {
     return (
       <div className={`relative aspect-video w-full overflow-hidden rounded-2xl bg-black ${className}`}>
         <iframe
-          src={`https://www.youtube.com/embed/${ytId}?autoplay=${autoPlay ? 1 : 0}&mute=${isMuted ? 1 : 0}&controls=0&disablekb=1&fs=1&modestbranding=1&playsinline=1&rel=0&start=${Math.max(0, Math.floor(startAtSec || 0))}`}
+          src={`https://www.youtube.com/embed/${ytId}?autoplay=${autoPlay ? 1 : 0}&mute=1&controls=0&disablekb=1&fs=1&modestbranding=1&playsinline=1&rel=0&start=${Math.max(0, Math.floor(startAtSec || 0))}`}
           title={title}
           className="absolute inset-0 h-full w-full border-0"
           allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
           allowFullScreen
         />
-        <div className="absolute left-3 top-3 z-20 rounded-full bg-black/70 px-3 py-1 text-xs font-semibold text-white">
-          Live broadcast
-        </div>
-      </div>
-    );
-  }
-
-  if (resolvedPlayerType === "image") {
-    return (
-      <div className={`relative aspect-video w-full overflow-hidden rounded-2xl bg-black ${className}`}>
-        <img src={safeUrl} alt={title} className="absolute inset-0 h-full w-full object-contain" />
-      </div>
-    );
-  }
-
-  if (resolvedPlayerType === "audio") {
-    return (
-      <div className={`relative flex aspect-video w-full items-center justify-center overflow-hidden rounded-2xl bg-black ${className}`}>
-        <audio
-          ref={(node) => {
-            mediaRef.current = node;
-          }}
-          src={safeUrl}
-          autoPlay={autoPlay}
-          controls={controls}
-          muted={muted}
-          preload="auto"
-        />
-        {muteButton}
       </div>
     );
   }
@@ -255,9 +227,6 @@ export default function OlgooLivePlayer({
         preload="auto"
         className="absolute inset-0 h-full w-full object-contain"
       />
-      <div className="absolute left-3 top-3 z-20 rounded-full bg-black/70 px-3 py-1 text-xs font-semibold text-white">
-        Live broadcast
-      </div>
       {muteButton}
     </div>
   );
