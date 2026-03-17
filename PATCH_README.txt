@@ -1,22 +1,16 @@
-RadioOlgoo canonical-broadcast patch
-
-This patch updates the must-change files for the Olgoo Live listener path.
-
-Files included:
-- app/page.tsx
+Patch contents:
 - app/api/olgoo-live/state/route.ts
 - components/HeroSection/HeroSection.tsx
-- components/OlgooLive/OlgooLivePlayer.tsx
 - components/OlgooLive/types.ts
-- context/PlaybackContext.tsx
-- lib/olgoo-live/playback.ts
-- lib/olgoo-live/resolvePlayback.ts
 - lib/olgoo-live/types.ts
 
-Apply by extracting this zip at the project root and overwriting the existing files.
-Make a backup or commit first.
+What this patch changes:
+- adds a 7-second listener heartbeat against /api/olgoo-live/state while Olgoo Live is open
+- stops listener playback when operator stops/deactivates the schedule
+- switches listener playback when operator changes to a different broadcast item or schedule
+- keeps live-state requests non-cacheable
+- starts broadcast audio unmuted by default when user clicks play
+- keeps mute and close available
 
-After extracting:
-1. npm run build
-2. npm run dev
-3. test /api/olgoo-live/state and the main listener screen
+Apply at project root and then run:
+- npm run build

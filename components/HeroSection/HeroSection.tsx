@@ -2,27 +2,24 @@
 
 import React, { useEffect, useState } from "react";
 import OlgooLivePlayer from "@/components/OlgooLive/OlgooLivePlayer";
-import type { OlgooLivePlayerType } from "@/components/OlgooLive/types";
 import { usePlayback } from "@/context/PlaybackContext";
+
+const LIVE_HEARTBEAT_MS = 7_000;
 
 type HeroImageProps = {
   primarySrc: string;
   fallbackSrc?: string;
   alt: string;
-  side?: "left" | "right";
   hoverGlow?: boolean;
   onClick?: () => void;
-  fillContainer?: boolean;
 };
 
 function HeroImage({
   primarySrc,
   fallbackSrc,
   alt,
-  side = "left",
   hoverGlow = false,
   onClick,
-  fillContainer = false,
 }: HeroImageProps) {
   const [src, setSrc] = useState(primarySrc);
   const [triedFallback, setTriedFallback] = useState(false);
@@ -36,26 +33,15 @@ function HeroImage({
       onMouseLeave={() => hoverGlow && setHover(false)}
       style={{
         position: "absolute",
-        top: fillContainer ? 0 : "50%",
-        left: fillContainer ? 0 : side === "left" ? "6%" : undefined,
-        right: fillContainer ? undefined : side === "right" ? "6%" : undefined,
-        width: fillContainer ? "100%" : "38%",
-        height: fillContainer ? "100%" : "72%",
-        transform: fillContainer
-          ? hover
-            ? "scale(1.03)"
-            : "none"
-          : hover
-            ? "translateY(-50%) scale(1.03)"
-            : "translateY(-50%)",
-        transition: "all 0.25s ease",
-        cursor: onClick || hoverGlow ? "pointer" : "default",
-        zIndex: 2,
+        inset: 0,
+        width: "100%",
+        height: "100%",
         border: "none",
         background: "transparent",
         padding: 0,
         margin: 0,
         display: "block",
+        cursor: onClick || hoverGlow ? "pointer" : "default",
       }}
       aria-label={alt}
     >
@@ -74,7 +60,8 @@ function HeroImage({
               ? "drop-shadow(0 0 18px rgba(255,220,120,0.75)) drop-shadow(0 0 40px rgba(255,200,80,0.55))"
               : "none"
             : "none",
-          transition: "filter 0.25s ease",
+          transition: "filter 0.25s ease, transform 0.25s ease",
+          transform: hover ? "scale(1.03)" : "scale(1)",
         }}
         draggable={false}
         onError={() => {
@@ -89,23 +76,68 @@ function HeroImage({
 }
 
 type LiveStateResponse = {
+  ok?: boolean;
+  canPlay?: boolean;
+  clickable?: boolean;
+  playState?: "playing" | "stopped" | "paused";
   mediaUrl?: string;
   url?: string;
   streamUrl?: string;
   playbackUrl?: string;
   offsetSec?: number;
-  playerType?: OlgooLivePlayerType;
+  playerType?: "video" | "iframe" | "audio" | "image";
+  playToken?: string;
   title?: string;
   currentItem?: {
-    url?: string;
     title?: string;
+    url?: string;
   } | null;
 };
 
+type LiveSnapshot = {
+  mediaUrl: string;
+  playerType: "video" | "iframe" | "audio" | "image";
+  offsetSec: number;
+  playToken: string;
+  title: string;
+};
+
+async function fetchLiveState(): Promise<LiveSnapshot | null> {
+  const response = await fetch(`/api/olgoo-live/state?t=${Date.now()}`, {
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch live state (${response.status})`);
+  }
+
+  const data = (await response.json()) as LiveStateResponse;
+  const mediaUrl =
+    data?.currentItem?.url ||
+    data?.mediaUrl ||
+    data?.url ||
+    data?.streamUrl ||
+    data?.playbackUrl ||
+    "";
+
+  const canPlay = Boolean(data?.canPlay ?? data?.clickable ?? data?.playState === "playing");
+  if (!canPlay || !mediaUrl) {
+    return null;
+  }
+
+  return {
+    mediaUrl,
+    playerType: data?.playerType || "video",
+    offsetSec: Math.max(0, Math.floor(Number(data?.offsetSec || 0))),
+    playToken: String(data?.playToken || mediaUrl),
+    title: data?.currentItem?.title || data?.title || "Olgoo Live",
+  };
+}
+
 type LivePlayerOverlayProps = {
   mediaUrl: string;
-  playerType: OlgooLivePlayerType;
-  startAtSec: number;
+  playerType: "video" | "iframe" | "audio" | "image";
+  startAtSec?: number;
   title: string;
   onClose: () => void;
 };
@@ -113,7 +145,7 @@ type LivePlayerOverlayProps = {
 function LivePlayerOverlay({
   mediaUrl,
   playerType,
-  startAtSec,
+  startAtSec = 0,
   title,
   onClose,
 }: LivePlayerOverlayProps) {
@@ -135,7 +167,7 @@ function LivePlayerOverlay({
         liveSync
         autoPlay
         controls={false}
-        muted
+        muted={true}
         className="h-full w-full rounded-none"
       />
 
@@ -150,8 +182,8 @@ function LivePlayerOverlay({
           color: "white",
           border: "none",
           borderRadius: "50%",
-          width: 32,
-          height: 32,
+          width: 36,
+          height: 36,
           fontSize: 18,
           fontWeight: "bold",
           cursor: "pointer",
@@ -172,128 +204,192 @@ function LivePlayerOverlay({
 export default function HeroSection() {
   const [isLivePlaying, setIsLivePlaying] = useState(false);
   const [liveMediaUrl, setLiveMediaUrl] = useState<string | null>(null);
-  const [livePlayerType, setLivePlayerType] = useState<OlgooLivePlayerType>("video");
-  const [liveStartAtSec, setLiveStartAtSec] = useState(0);
+  const [livePlayerType, setLivePlayerType] = useState<"video" | "iframe" | "audio" | "image">("video");
+  const [liveOffsetSec, setLiveOffsetSec] = useState(0);
   const [liveTitle, setLiveTitle] = useState("Olgoo Live");
+  const [livePlayToken, setLivePlayToken] = useState("");
+  const [playerKey, setPlayerKey] = useState(0);
   const { activePlayback, setActivePlayback } = usePlayback();
+
+  const applyLiveSnapshot = (snapshot: LiveSnapshot) => {
+    const changed =
+      snapshot.mediaUrl !== liveMediaUrl ||
+      snapshot.playToken !== livePlayToken ||
+      snapshot.playerType !== livePlayerType;
+
+    setLiveMediaUrl(snapshot.mediaUrl);
+    setLivePlayerType(snapshot.playerType);
+    setLiveOffsetSec(snapshot.offsetSec);
+    setLiveTitle(snapshot.title);
+    setLivePlayToken(snapshot.playToken);
+
+    if (changed) {
+      setPlayerKey((value) => value + 1);
+    }
+  };
+
+  const stopLive = () => {
+    setIsLivePlaying(false);
+    setLiveMediaUrl(null);
+    setLiveOffsetSec(0);
+    setLiveTitle("Olgoo Live");
+    setLivePlayToken("");
+    setActivePlayback(null);
+  };
 
   const handleLiveClick = async () => {
     if (isLivePlaying) return;
 
     try {
-      const response = await fetch(`/api/olgoo-live/state?t=${Date.now()}`, {
-        cache: "no-store",
-      });
+      const snapshot = await fetchLiveState();
+      if (!snapshot) {
+        throw new Error("Live stream not available");
+      }
 
-      if (!response.ok) throw new Error("Failed to fetch live state");
-
-      const data = (await response.json()) as LiveStateResponse;
-
-      const url =
-        data?.currentItem?.url ||
-        data?.mediaUrl ||
-        data?.url ||
-        data?.streamUrl ||
-        data?.playbackUrl ||
-        "";
-
-      if (!url) throw new Error("No live URL available");
-
-      setLiveMediaUrl(url);
-      setLivePlayerType(data?.playerType || "video");
-      setLiveStartAtSec(Math.max(0, Math.floor(Number(data?.offsetSec || 0))));
-      setLiveTitle(data?.currentItem?.title || data?.title || "Olgoo Live");
+      applyLiveSnapshot(snapshot);
       setIsLivePlaying(true);
-      setActivePlayback("olgoo-live", `${url}:${data?.offsetSec || 0}`);
+      setActivePlayback("olgoo-live", snapshot.playToken);
     } catch (err) {
       console.error("Failed to start Olgoo Live:", err);
       alert("پخش زنده در دسترس نیست / Live stream not available");
     }
   };
 
-  const handleCloseLive = () => {
-    setIsLivePlaying(false);
-    setLiveMediaUrl(null);
-    setLiveStartAtSec(0);
-    setActivePlayback(null);
-  };
+  useEffect(() => {
+    if (!isLivePlaying) return;
+
+    let cancelled = false;
+
+    const heartbeat = async () => {
+      try {
+        const snapshot = await fetchLiveState();
+
+        if (cancelled) return;
+
+        if (!snapshot) {
+          stopLive();
+          return;
+        }
+
+        applyLiveSnapshot(snapshot);
+        setActivePlayback("olgoo-live", snapshot.playToken);
+      } catch {
+        // keep current playback on transient network failure
+      }
+    };
+
+    const intervalId = window.setInterval(() => {
+      void heartbeat();
+    }, LIVE_HEARTBEAT_MS);
+
+    const onFocus = () => {
+      void heartbeat();
+    };
+
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") {
+        void heartbeat();
+      }
+    };
+
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [isLivePlaying, liveMediaUrl, livePlayToken, livePlayerType, setActivePlayback]);
 
   useEffect(() => {
     if (activePlayback && activePlayback.source !== "olgoo-live") {
-      setIsLivePlaying(false);
+      stopLive();
     }
   }, [activePlayback]);
+
+  const outerCardStyle: React.CSSProperties = {
+    width: "min(43vw, 760px)",
+    padding: "22px",
+    borderRadius: "28px",
+    background: "#38979a",
+    boxShadow: "0 10px 30px rgba(0,0,0,0.22)",
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "center",
+    flexShrink: 0,
+  };
+
+  const innerMediaStyle: React.CSSProperties = {
+    position: "relative",
+    width: "100%",
+    aspectRatio: "16 / 9",
+    borderRadius: "18px",
+    overflow: "hidden",
+    background: "#000",
+    boxShadow:
+      "0 10px 30px rgba(0,0,0,0.45), 0 0 0 1px rgba(255,255,255,0.03) inset",
+  };
 
   return (
     <section
       style={{
-        position: "relative",
         width: "100%",
-        height: "clamp(280px, 36vw, 430px)",
-        overflow: "hidden",
-        backgroundColor: "#000",
-        padding: "4px 6px",
+        padding: 0,
+        margin: 0,
+        background: "none",
+        border: "none",
+        borderRadius: 0,
+        boxShadow: "none",
       }}
     >
       <div
         style={{
-          position: "relative",
-          width: "100%",
-          height: "100%",
-          borderRadius: "18px",
-          border: "1px solid rgba(197,155,65,0.45)",
-          background: "rgba(10,10,10,0.88)",
-          boxShadow:
-            "0 10px 30px rgba(0,0,0,0.45), 0 0 0 1px rgba(255,255,255,0.03) inset, 0 0 18px rgba(197,155,65,0.10)",
-          overflow: "hidden",
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "stretch",
+          gap: "3vw",
+          flexWrap: "wrap",
+          padding: 0,
+          margin: 0,
+          background: "none",
+          border: "none",
+          borderRadius: 0,
+          boxShadow: "none",
         }}
       >
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            background:
-              "linear-gradient(to bottom, rgba(255,255,255,0.05) 0%, transparent 18%)",
-            pointerEvents: "none",
-          }}
-        />
-
-        <div
-          style={{
-            position: "absolute",
-            top: "50%",
-            left: "6%",
-            width: "38%",
-            height: "72%",
-            transform: "translateY(-50%)",
-            zIndex: 2,
-          }}
-        >
-          <HeroImage
-            primarySrc="/images/PakhsheZendeh3.jpg"
-            alt="Pakhsh-e Zendeh"
-            hoverGlow={true}
-            onClick={handleLiveClick}
-            fillContainer={true}
-          />
-
-          {isLivePlaying && liveMediaUrl && (
-            <LivePlayerOverlay
-              mediaUrl={liveMediaUrl}
-              playerType={livePlayerType}
-              startAtSec={liveStartAtSec}
-              title={liveTitle}
-              onClose={handleCloseLive}
+        <div style={outerCardStyle}>
+          <div style={innerMediaStyle}>
+            <HeroImage
+              primarySrc="/images/PakhsheZendeh3.jpg"
+              alt="Pakhsh-e Zendeh"
+              hoverGlow={true}
+              onClick={handleLiveClick}
             />
-          )}
+
+            {isLivePlaying && liveMediaUrl && (
+              <LivePlayerOverlay
+                key={playerKey}
+                mediaUrl={liveMediaUrl}
+                playerType={livePlayerType}
+                startAtSec={liveOffsetSec}
+                title={liveTitle}
+                onClose={stopLive}
+              />
+            )}
+          </div>
         </div>
 
-        <HeroImage
-          primarySrc="/images/banner3.webp"
-          fallbackSrc="/images/banner3.png"
-          alt="Banner 3"
-          side="right"
-        />
+        <div style={outerCardStyle}>
+          <div style={innerMediaStyle}>
+            <HeroImage
+              primarySrc="/images/banner3.webp"
+              fallbackSrc="/images/banner3.png"
+              alt="Banner 3"
+            />
+          </div>
+        </div>
       </div>
     </section>
   );

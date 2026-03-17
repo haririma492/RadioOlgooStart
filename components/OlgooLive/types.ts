@@ -1,33 +1,31 @@
-export type OlgooLivePlayerType = "video" | "audio" | "image" | "iframe";
+export type OlgooLivePlayerType = "video" | "iframe";
 
-export type CanonicalOlgooLiveItem = {
-  itemIndex: number;
+export type OlgooLiveCurrentItem = {
   title: string;
   url: string;
   durationSec: number;
-  sourceType?: string;
   mediaType?: string;
-  itemStartedAt?: string;
-  versionToken?: string;
+  sourceType?: string;
 };
 
 export type OlgooLiveState = {
   ok: boolean;
   configured: boolean;
-  canPlay: boolean;
-  isLive: boolean;
-  playState: "playing" | "stopped";
-  serverNow: string;
-  startedAt?: string;
-  updatedAt?: string;
+  isConfigured?: boolean;
+  playState: "playing" | "stopped" | "paused";
   title?: string;
   mediaUrl?: string;
   playerType?: OlgooLivePlayerType;
-  offsetSec: number;
-  currentItem?: CanonicalOlgooLiveItem | null;
-  sourceScheduleId?: string;
-  sourcePlaylistId?: string;
-  message?: string;
-  cachePolicy?: "no-store";
-  versionToken?: string;
+  playToken?: string;
+  startedAt?: string;
+  updatedAt?: string;
+  isLive?: boolean;
+  canPlay?: boolean;
+  clickable?: boolean;
+  status?: string;
+  currentItem?: OlgooLiveCurrentItem | null;
+  offsetSec?: number;
+  url?: string;
+  streamUrl?: string;
+  playbackUrl?: string;
 };
