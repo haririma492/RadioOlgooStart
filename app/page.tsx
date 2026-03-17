@@ -72,6 +72,7 @@ function toPersianDigits(value: string | number): string {
   return String(value).replace(/\d/g, (d) => "۰۱۲۳۴۵۶۷۸۹"[Number(d)]);
 }
 
+
 function useLiveNow() {
   const [now, setNow] = useState<Date | null>(null);
 
@@ -754,21 +755,20 @@ function HomePageContent() {
           onFarhangNovinClick={() => setIsFarhangNovinModalOpen(true)}
         />
       </div>
+<div className="relative z-0 bg-transparent">
+  <main className="mx-auto w-full max-w-[1500px] bg-transparent px-4 py-2">
+    <section className="p-0 md:p-0 bg-transparent border-0 shadow-none rounded-none">
+      <HeroSection />
+    </section>
 
-      <div className="relative z-0 bg-transparent">
-      <main className="mx-auto w-full max-w-[1500px] bg-transparent px-4 py-2">
-  <section className={`${panelClass} p-2 md:p-3`} style={{ backgroundColor: BLOCK_BG }}>
-    <HeroSection />
-  </section>
-
-  <section
-    className={`${panelClass} border border-white/10 p-2 md:p-3`}
-    style={{ backgroundColor: BLOCK_BG }}
-  >
-    <div className="overflow-hidden rounded-xl">
-      <LiveBlock />
-    </div>
-  </section>
+    <section
+      className={`${panelClass} border border-white/10 p-2 md:p-3`}
+      style={{ backgroundColor: BLOCK_BG }}
+    >
+      <div className="overflow-hidden rounded-xl">
+        <LiveBlock />
+      </div>
+    </section>
 
   <section
     id="video-hub"

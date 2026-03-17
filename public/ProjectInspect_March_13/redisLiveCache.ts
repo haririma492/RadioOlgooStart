@@ -11,15 +11,8 @@ let client: RedisClientType | null = null;
 
 async function getClient(): Promise<RedisClientType | null> {
   const url = process.env.REDIS_URL;
-
-  if (!url || (!url.startsWith("redis://") && !url.startsWith("rediss://"))) {
-    return null;
-  }
-
-  if (client?.isOpen) {
-    return client;
-  }
-
+  if (!url?.startsWith("redis://")) return null;
+  if (client?.isOpen) return client;
   try {
     client = createClient({ url });
     await client.connect();
@@ -34,10 +27,7 @@ async function getClient(): Promise<RedisClientType | null> {
 export async function redisGet(key: string): Promise<string | null> {
   try {
     const c = await getClient();
-    if (!c) {
-      return null;
-    }
-
+    if (!c) return null;
     const fullKey = KEY_PREFIX + key;
     const value = await c.get(fullKey);
     return typeof value === "string" ? value : null;
@@ -50,10 +40,7 @@ export async function redisGet(key: string): Promise<string | null> {
 export async function redisSet(key: string, value: string, ttlSeconds: number): Promise<void> {
   try {
     const c = await getClient();
-    if (!c) {
-      return;
-    }
-
+    if (!c) return;
     const fullKey = KEY_PREFIX + key;
     await c.set(fullKey, value, { EX: ttlSeconds });
   } catch {

@@ -6,20 +6,16 @@ type HeroImageProps = {
   primarySrc: string;
   fallbackSrc?: string;
   alt: string;
-  side?: "left" | "right";
   hoverGlow?: boolean;
   onClick?: () => void;
-  fillContainer?: boolean;
 };
 
 function HeroImage({
   primarySrc,
   fallbackSrc,
   alt,
-  side = "left",
   hoverGlow = false,
   onClick,
-  fillContainer = false,
 }: HeroImageProps) {
   const [src, setSrc] = useState(primarySrc);
   const [triedFallback, setTriedFallback] = useState(false);
@@ -33,26 +29,15 @@ function HeroImage({
       onMouseLeave={() => hoverGlow && setHover(false)}
       style={{
         position: "absolute",
-        top: fillContainer ? 0 : "50%",
-        left: fillContainer ? 0 : side === "left" ? "6%" : undefined,
-        right: fillContainer ? undefined : side === "right" ? "6%" : undefined,
-        width: fillContainer ? "100%" : "38%",
-        height: fillContainer ? "100%" : "72%",
-        transform: fillContainer
-          ? hover
-            ? "scale(1.03)"
-            : "none"
-          : hover
-            ? "translateY(-50%) scale(1.03)"
-            : "translateY(-50%)",
-        transition: "all 0.25s ease",
-        cursor: onClick || hoverGlow ? "pointer" : "default",
-        zIndex: 2,
+        inset: 0,
+        width: "100%",
+        height: "100%",
         border: "none",
         background: "transparent",
         padding: 0,
         margin: 0,
         display: "block",
+        cursor: onClick || hoverGlow ? "pointer" : "default",
       }}
       aria-label={alt}
     >
@@ -71,7 +56,8 @@ function HeroImage({
               ? "drop-shadow(0 0 18px rgba(255,220,120,0.75)) drop-shadow(0 0 40px rgba(255,200,80,0.55))"
               : "none"
             : "none",
-          transition: "filter 0.25s ease",
+          transition: "filter 0.25s ease, transform 0.25s ease",
+          transform: hover ? "scale(1.03)" : "scale(1)",
         }}
         draggable={false}
         onError={() => {
@@ -100,7 +86,7 @@ function LivePlayerOverlay({
 }: LivePlayerOverlayProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const [isPaused, setIsPaused] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   async function seekTo(el: HTMLVideoElement, targetSec: number) {
@@ -152,7 +138,6 @@ function LivePlayerOverlay({
       const playAtLivePoint = async () => {
         await seekTo(el, liveOffsetSec);
         await el.play();
-        setIsPaused(false);
       };
 
       if (!sameUrl) {
@@ -177,23 +162,19 @@ function LivePlayerOverlay({
       console.error("Failed to resync live playback", error);
       try {
         await el.play();
-        setIsPaused(false);
       } catch {
         // ignore
       }
     }
   }
 
-  async function handlePlayPause() {
+  function handleMuteToggle() {
     const el = videoRef.current;
     if (!el) return;
 
-    if (el.paused) {
-      await resyncAndPlay(el);
-    } else {
-      el.pause();
-      setIsPaused(true);
-    }
+    const nextMuted = !el.muted;
+    el.muted = nextMuted;
+    setIsMuted(nextMuted);
   }
 
   async function handleFullscreenToggle() {
@@ -229,14 +210,15 @@ function LivePlayerOverlay({
         autoPlay
         playsInline
         controls={false}
+        muted={isMuted}
         onLoadedMetadata={(e) => {
           void seekTo(e.currentTarget, startAtSec);
         }}
-        onPause={() => {
-          setIsPaused(true);
+        onCanPlay={(e) => {
+          void resyncAndPlay(e.currentTarget);
         }}
-        onPlay={() => {
-          setIsPaused(false);
+        onVolumeChange={(e) => {
+          setIsMuted(e.currentTarget.muted);
         }}
         style={{
           width: "100%",
@@ -252,21 +234,21 @@ function LivePlayerOverlay({
         Your browser does not support the video tag.
       </video>
 
-<img
-  src="/images/logo_circular.png"
-  alt="Olgoo logo"
-  style={{
-    position: "absolute",
-    top: 10,
-    left: 10,
-    zIndex: 20,
-    width: 64,
-    height: 64,
-    objectFit: "contain",
-    pointerEvents: "none",
-    filter: "drop-shadow(0 4px 12px rgba(0,0,0,0.7))",
-  }}
-/>
+      <img
+        src="/images/logo_circular.png"
+        alt="Olgoo logo"
+        style={{
+          position: "absolute",
+          top: 10,
+          left: 10,
+          zIndex: 20,
+          width: 64,
+          height: 64,
+          objectFit: "contain",
+          pointerEvents: "none",
+          filter: "drop-shadow(0 4px 12px rgba(0,0,0,0.7))",
+        }}
+      />
 
       <div
         style={{
@@ -280,7 +262,7 @@ function LivePlayerOverlay({
         }}
       >
         <button
-          onClick={() => void handlePlayPause()}
+          onClick={handleMuteToggle}
           style={{
             background: "rgba(0,0,0,0.65)",
             color: "white",
@@ -294,9 +276,9 @@ function LivePlayerOverlay({
             cursor: "pointer",
             boxShadow: "0 2px 8px rgba(0,0,0,0.4)",
           }}
-          aria-label={isPaused ? "Play live" : "Pause live"}
+          aria-label={isMuted ? "Unmute live" : "Mute live"}
         >
-          {isPaused ? "Play" : "Pause"}
+          {isMuted ? "Unmute" : "Mute"}
         </button>
 
         <button
@@ -393,74 +375,85 @@ export default function HeroSection() {
     setLiveOffsetSec(0);
   };
 
-  return (
-<section
-  style={{
+  const outerCardStyle: React.CSSProperties = {
+    width: "min(43vw, 760px)",
+    padding: "22px",
+    borderRadius: "28px",
+    background: "#38979a",
+    boxShadow: "0 10px 30px rgba(0,0,0,0.22)",
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "center",
+    flexShrink: 0,
+  };
+
+  const innerMediaStyle: React.CSSProperties = {
     position: "relative",
     width: "100%",
-    height: "clamp(280px, 36vw, 430px)",
-    overflow: "visible",
-    backgroundColor: "transparent",
-    padding: 0,
-  }}
->
-<div
-  style={{
-    position: "relative",
-    width: "100%",
-    height: "100%",
+    aspectRatio: "16 / 9",
     borderRadius: "18px",
-    border: "none",
-    background: "transparent",
-    boxShadow: "none",
     overflow: "hidden",
-  }}
->
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            background:
-              "linear-gradient(to bottom, rgba(255,255,255,0.05) 0%, transparent 18%)",
-            pointerEvents: "none",
-          }}
-        />
+    background: "#000",
+    boxShadow:
+      "0 10px 30px rgba(0,0,0,0.45), 0 0 0 1px rgba(255,255,255,0.03) inset",
+  };
 
-        <div
-          style={{
-            position: "absolute",
-            top: "50%",
-            left: "6%",
-            width: "38%",
-            height: "72%",
-            transform: "translateY(-50%)",
-            zIndex: 2,
-          }}
-        >
-          <HeroImage
-            primarySrc="/images/PakhsheZendeh3.jpg"
-            alt="Pakhsh-e Zendeh"
-            hoverGlow={true}
-            onClick={handleLiveClick}
-            fillContainer={true}
-          />
-
-          {isLivePlaying && liveMediaUrl && (
-            <LivePlayerOverlay
-              mediaUrl={liveMediaUrl}
-              playerType={livePlayerType}
-              startAtSec={liveOffsetSec}
-              onClose={handleCloseLive}
+  return (
+    <section
+      style={{
+        width: "100%",
+        padding: 0,
+        margin: 0,
+        background: "none",
+        border: "none",
+        borderRadius: 0,
+        boxShadow: "none",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "stretch",
+          gap: "3vw",
+          flexWrap: "wrap",
+          padding: 0,
+          margin: 0,
+          background: "none",
+          border: "none",
+          borderRadius: 0,
+          boxShadow: "none",
+        }}
+      >
+        <div style={outerCardStyle}>
+          <div style={innerMediaStyle}>
+            <HeroImage
+              primarySrc="/images/PakhsheZendeh3.jpg"
+              alt="Pakhsh-e Zendeh"
+              hoverGlow={true}
+              onClick={handleLiveClick}
             />
-          )}
+
+            {isLivePlaying && liveMediaUrl && (
+              <LivePlayerOverlay
+                mediaUrl={liveMediaUrl}
+                playerType={livePlayerType}
+                startAtSec={liveOffsetSec}
+                onClose={handleCloseLive}
+              />
+            )}
+          </div>
         </div>
 
-        <HeroImage
-          primarySrc="/images/banner3.webp"
-          fallbackSrc="/images/banner3.png"
-          alt="Banner 3"
-          side="right"
-        />
+        <div style={outerCardStyle}>
+          <div style={innerMediaStyle}>
+            <HeroImage
+              primarySrc="/images/banner3.webp"
+              fallbackSrc="/images/banner3.png"
+              alt="Banner 3"
+            />
+          </div>
+        </div>
       </div>
     </section>
   );
