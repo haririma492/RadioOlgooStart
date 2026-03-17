@@ -1,12 +1,17 @@
 import {
   PLAYLIST_TABLE_NAME,
   SCHEDULE_TABLE_NAME,
+  type PlaybackState,
   getPlaybackState,
   queryByPk,
   scanTable,
   setPlaybackState,
   tableExists,
 } from "./dynamo";
+import { getPlaylist } from "./playlists";
+import { getSchedule } from "./schedules";
+import { resolvePlaybackPosition } from "./resolvePlayback";
+import type { CanonicalPlaybackItem } from "./types";
 
 function normalizeScheduleId(value: string): string {
   return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
@@ -118,4 +123,41 @@ export async function stopPlayback() {
 
 export async function currentPlayback() {
   return await getPlaybackState();
+}
+
+export async function resolveCanonicalPlayback(state?: PlaybackState): Promise<{
+  currentItem: CanonicalPlaybackItem | null;
+  offsetSec: number;
+}> {
+  const playback = state || (await getPlaybackState());
+
+  if (playback.playState !== "playing") {
+    return { currentItem: null, offsetSec: 0 };
+  }
+
+  if (playback.sourceScheduleId) {
+    const schedule = await getSchedule(playback.sourceScheduleId);
+    const firstBlock = schedule?.blocks?.[0];
+
+    if (firstBlock?.blockType === "playlist" && firstBlock.refId) {
+      const playlist = await getPlaylist(firstBlock.refId);
+      if (playlist?.items?.length) {
+        return resolvePlaybackPosition(playlist.items, playback.startedAt);
+      }
+    }
+  }
+
+  if (playback.mediaUrl) {
+    return {
+      currentItem: {
+        itemIndex: 0,
+        title: playback.title || "Olgoo Live",
+        url: playback.mediaUrl,
+        durationSec: 24 * 60 * 60,
+      },
+      offsetSec: 0,
+    };
+  }
+
+  return { currentItem: null, offsetSec: 0 };
 }

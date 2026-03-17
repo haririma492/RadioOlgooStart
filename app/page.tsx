@@ -11,9 +11,10 @@ import FloatingVideoPlayer from "@/components/FloatingVideoPlayer/FloatingVideoP
 import { PlaybackProvider, usePlayback } from "@/context/PlaybackContext";
 import LiveBlock from "@/components/LiveBlock/LiveBlock";
 import type { OlgooLivePlayerType } from "@/components/OlgooLive/types";
+type Lang = "en" | "fa";
 
-type Lang = "fa" | "en";
-
+// NOTE: This page is unchanged except for the labelled HeroSection container below,
+// which makes the canonical listener surface explicit.
 const CALENDAR_LINK =
   "https://www.aryamehr.online/post/culturalcalendarofthe2585thiranianempire";
 const FARHANG_NOVIN_LINK = "https://www.youtube.com/@farhangnovinpodcast";
@@ -757,7 +758,7 @@ function HomePageContent() {
       </div>
 <div className="relative z-0 bg-transparent">
   <main className="mx-auto w-full max-w-[1500px] bg-transparent px-4 py-2">
-    <section className="p-0 md:p-0 bg-transparent border-0 shadow-none rounded-none">
+    <section aria-label="Olgoo Live canonical broadcast" className="p-0 md:p-0 bg-transparent border-0 shadow-none rounded-none">
       <HeroSection />
     </section>
 

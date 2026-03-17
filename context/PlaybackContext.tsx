@@ -2,14 +2,17 @@
 
 import React, { createContext, useCallback, useContext, useState } from "react";
 
+export type PlaybackSource = "olgoo-live" | "floating" | string;
+
 export type ActivePlayback = {
-  source: string;
+  source: PlaybackSource;
   id: string;
 } | null;
 
 type PlaybackContextValue = {
   activePlayback: ActivePlayback;
-  setActivePlayback: (source: string | null, id?: string | null) => void;
+  setActivePlayback: (source: PlaybackSource | null, id?: string | null) => void;
+  clearActivePlayback: () => void;
 };
 
 const PlaybackContext = createContext<PlaybackContextValue | null>(null);
@@ -17,16 +20,21 @@ const PlaybackContext = createContext<PlaybackContextValue | null>(null);
 export function PlaybackProvider({ children }: { children: React.ReactNode }) {
   const [activePlayback, setState] = useState<ActivePlayback>(null);
 
-  const setActivePlayback = useCallback((source: string | null, id?: string | null) => {
+  const setActivePlayback = useCallback((source: PlaybackSource | null, id?: string | null) => {
     if (source === null) {
       setState(null);
-    } else {
-      setState({ source, id: id ?? "" });
+      return;
     }
+
+    setState({ source, id: id ?? "" });
+  }, []);
+
+  const clearActivePlayback = useCallback(() => {
+    setState(null);
   }, []);
 
   return (
-    <PlaybackContext.Provider value={{ activePlayback, setActivePlayback }}>
+    <PlaybackContext.Provider value={{ activePlayback, setActivePlayback, clearActivePlayback }}>
       {children}
     </PlaybackContext.Provider>
   );

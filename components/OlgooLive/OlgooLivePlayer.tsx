@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { OlgooLivePlayerType } from "./types";
 
 type OlgooLivePlayerProps = {
   mediaUrl: string;
@@ -11,18 +12,25 @@ type OlgooLivePlayerProps = {
   className?: string;
   startAtSec?: number;
   liveSync?: boolean;
+  playerType?: OlgooLivePlayerType;
 };
 
-type LiveStateResponse = {
+type CanonicalStateResponse = {
   currentItem?: {
-    title?: string;
     url?: string;
-    durationSec?: number;
-    mediaType?: string;
-    sourceType?: string;
   } | null;
+  mediaUrl?: string;
   offsetSec?: number;
 };
+
+function detectPlayerType(url: string, hinted?: OlgooLivePlayerType): OlgooLivePlayerType {
+  if (hinted) return hinted;
+  const lower = (url || "").toLowerCase();
+  if (/youtube\.com|youtu\.be/.test(lower)) return "iframe";
+  if (/\.(jpg|jpeg|png|webp|gif)(\?|$)/.test(lower)) return "image";
+  if (/\.(mp3|wav|m4a|aac|ogg)(\?|$)/.test(lower)) return "audio";
+  return "video";
+}
 
 function extractYoutubeId(url: string): string | null {
   const patterns = [
@@ -41,272 +49,216 @@ function extractYoutubeId(url: string): string | null {
   return null;
 }
 
-function isImage(url: string): boolean {
-  return /\.(jpg|jpeg|png|webp|gif)$/i.test(url);
-}
+function clampSeek(el: HTMLMediaElement, targetSec: number) {
+  const target = Math.max(0, Math.floor(Number(targetSec || 0)));
+  if (!Number.isFinite(target)) return;
 
-function isHls(url: string): boolean {
-  return /\.m3u8($|\?)/i.test(url);
-}
-
-function isAudio(url: string): boolean {
-  return /\.(mp3|wav|m4a|aac|ogg)($|\?)/i.test(url);
-}
-
-function isVideo(url: string): boolean {
-  return /\.(mp4|mov|webm|m4v|ogv)($|\?)/i.test(url);
+  try {
+    const duration = Number.isFinite(el.duration) ? el.duration : NaN;
+    el.currentTime = Number.isFinite(duration) && duration > 0
+      ? Math.min(target, Math.max(0, duration - 0.25))
+      : target;
+  } catch {
+    // ignore seek errors for streams that do not expose duration
+  }
 }
 
 export default function OlgooLivePlayer({
   mediaUrl,
   title = "Olgoo Live",
   autoPlay = true,
-  controls = true,
-  muted = false,
+  controls = false,
+  muted = true,
   className = "",
   startAtSec = 0,
-  liveSync = false,
+  liveSync = true,
+  playerType,
 }: OlgooLivePlayerProps) {
   const safeUrl = (mediaUrl || "").trim();
+  const resolvedPlayerType = useMemo(() => detectPlayerType(safeUrl, playerType), [safeUrl, playerType]);
   const ytId = extractYoutubeId(safeUrl);
 
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const hasInitialSeekedRef = useRef(false);
-  const isResyncingRef = useRef(false);
-  const lastResyncAtRef = useRef(0);
+  const mediaRef = useRef<HTMLVideoElement | HTMLAudioElement | null>(null);
+  const resyncingRef = useRef(false);
+  const allowPauseRef = useRef(false);
+  const [isMuted, setIsMuted] = useState(muted);
 
   useEffect(() => {
-    hasInitialSeekedRef.current = false;
-  }, [safeUrl, startAtSec]);
+    const media = mediaRef.current;
+    if (!media) return;
+    media.muted = muted;
+    setIsMuted(muted);
+  }, [muted, safeUrl]);
 
-  function seekMedia(el: HTMLMediaElement | null, targetSec: number) {
-    if (!el) return;
-
-    const target = Math.max(0, Math.floor(Number(targetSec || 0)));
-    if (!Number.isFinite(target) || target <= 0) {
-      return;
-    }
-
-    try {
-      const duration = Number.isFinite(el.duration) ? el.duration : NaN;
-
-      if (Number.isFinite(duration) && duration > 0) {
-        el.currentTime = Math.min(target, Math.max(0, duration - 0.25));
-      } else {
-        el.currentTime = target;
-      }
-    } catch (error) {
-      console.error("Failed to seek media", error);
-    }
-  }
-
-  function applyInitialSeek(el: HTMLMediaElement | null) {
-    if (!el || hasInitialSeekedRef.current) return;
-
-    const target = Math.max(0, Math.floor(Number(startAtSec || 0)));
-    if (!Number.isFinite(target) || target <= 0) {
-      hasInitialSeekedRef.current = true;
-      return;
-    }
-
-    const apply = () => {
-      seekMedia(el, target);
-      hasInitialSeekedRef.current = true;
-    };
-
-    if (el.readyState >= 1) {
-      apply();
-      return;
-    }
+  useEffect(() => {
+    const media = mediaRef.current;
+    if (!media) return;
 
     const onLoadedMetadata = () => {
-      apply();
-      el.removeEventListener("loadedmetadata", onLoadedMetadata);
+      clampSeek(media, startAtSec);
     };
 
-    el.addEventListener("loadedmetadata", onLoadedMetadata);
-  }
-
-  async function resyncToLive(el: HTMLMediaElement | null) {
-    if (!liveSync || !el || isResyncingRef.current) return;
-
-    const now = Date.now();
-    if (now - lastResyncAtRef.current < 1500) return;
-
-    isResyncingRef.current = true;
-    lastResyncAtRef.current = now;
-
-    try {
-      const response = await fetch(`/api/olgoo-live/state?t=${Date.now()}`, {
-        cache: "no-store",
-      });
-
-      if (!response.ok) {
-        throw new Error(`Live state fetch failed (${response.status})`);
-      }
-
-      const data = (await response.json()) as LiveStateResponse;
-      const liveUrl = String(data?.currentItem?.url || "").trim();
-      const liveOffsetSec = Math.max(0, Math.floor(Number(data?.offsetSec || 0)));
-
-      if (!liveUrl) return;
-
-      const sameUrl = el.currentSrc.includes(liveUrl) || safeUrl === liveUrl;
-
-      if (!sameUrl) {
-        el.src = liveUrl;
-        el.load();
-
-        const onLoadedMetadata = async () => {
-          seekMedia(el, liveOffsetSec);
-          try {
-            await el.play();
-          } catch {
-            // ignore autoplay restrictions or user-gesture issues
-          }
-          el.removeEventListener("loadedmetadata", onLoadedMetadata);
-        };
-
-        el.addEventListener("loadedmetadata", onLoadedMetadata);
-        return;
-      }
-
-      if (el.readyState >= 1) {
-        seekMedia(el, liveOffsetSec);
-        try {
-          await el.play();
-        } catch {
-          // ignore autoplay restrictions or user-gesture issues
-        }
-      } else {
-        const onLoadedMetadata = async () => {
-          seekMedia(el, liveOffsetSec);
-          try {
-            await el.play();
-          } catch {
-            // ignore autoplay restrictions or user-gesture issues
-          }
-          el.removeEventListener("loadedmetadata", onLoadedMetadata);
-        };
-
-        el.addEventListener("loadedmetadata", onLoadedMetadata);
-      }
-    } catch (error) {
-      console.error("Failed to resync live playback", error);
-    } finally {
-      isResyncingRef.current = false;
-    }
-  }
-
-  useEffect(() => {
-    if (!liveSync) return;
-
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible") {
-        const media = videoRef.current || audioRef.current;
-        if (media && !media.paused) {
-          void resyncToLive(media);
-        }
-      }
+    const onPause = () => {
+      if (allowPauseRef.current) return;
+      void media.play().catch(() => undefined);
     };
 
-    const handleWindowFocus = () => {
-      const media = videoRef.current || audioRef.current;
-      if (media && !media.paused) {
-        void resyncToLive(media);
-      }
-    };
-
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    window.addEventListener("focus", handleWindowFocus);
+    media.addEventListener("loadedmetadata", onLoadedMetadata);
+    media.addEventListener("pause", onPause);
 
     return () => {
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-      window.removeEventListener("focus", handleWindowFocus);
+      media.removeEventListener("loadedmetadata", onLoadedMetadata);
+      media.removeEventListener("pause", onPause);
+    };
+  }, [safeUrl, startAtSec]);
+
+  useEffect(() => {
+    if (!liveSync || !mediaRef.current) return;
+
+    const resync = async () => {
+      const media = mediaRef.current;
+      if (!media || resyncingRef.current) return;
+      resyncingRef.current = true;
+
+      try {
+        const response = await fetch(`/api/olgoo-live/state?t=${Date.now()}`, {
+          cache: "no-store",
+        });
+        if (!response.ok) return;
+
+        const data = (await response.json()) as CanonicalStateResponse;
+        const nextUrl = String(data.currentItem?.url || data.mediaUrl || "").trim();
+        const offsetSec = Math.max(0, Math.floor(Number(data.offsetSec || 0)));
+        if (!nextUrl) return;
+
+        if (!media.currentSrc.includes(nextUrl) && media.getAttribute("src") !== nextUrl) {
+          media.setAttribute("src", nextUrl);
+          media.load();
+        }
+
+        clampSeek(media, offsetSec);
+        await media.play().catch(() => undefined);
+      } finally {
+        resyncingRef.current = false;
+      }
+    };
+
+    const visibilityHandler = () => {
+      if (document.visibilityState === "visible") {
+        void resync();
+      }
+    };
+
+    const focusHandler = () => {
+      void resync();
+    };
+
+    const interval = window.setInterval(() => {
+      void resync();
+    }, 30000);
+
+    document.addEventListener("visibilitychange", visibilityHandler);
+    window.addEventListener("focus", focusHandler);
+
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", visibilityHandler);
+      window.removeEventListener("focus", focusHandler);
     };
   }, [liveSync, safeUrl]);
 
+  useEffect(() => {
+    return () => {
+      allowPauseRef.current = true;
+    };
+  }, []);
+
   if (!safeUrl) {
     return (
-      <div
-        className={`flex aspect-video w-full items-center justify-center overflow-hidden rounded-2xl bg-black text-white/70 ${className}`}
-      >
-        No live media URL provided.
+      <div className={`flex aspect-video w-full items-center justify-center rounded-2xl bg-black text-white/70 ${className}`}>
+        No canonical live media URL provided.
+      </div>
+    );
+  }
+
+  const muteButton = (
+    <button
+      type="button"
+      onClick={() => {
+        const media = mediaRef.current;
+        if (!media) return;
+        const nextMuted = !media.muted;
+        media.muted = nextMuted;
+        setIsMuted(nextMuted);
+      }}
+      className="absolute bottom-3 right-3 z-20 rounded-full bg-black/70 px-4 py-2 text-sm font-semibold text-white"
+    >
+      {isMuted ? "Unmute" : "Mute"}
+    </button>
+  );
+
+  if (resolvedPlayerType === "iframe" && ytId) {
+    return (
+      <div className={`relative aspect-video w-full overflow-hidden rounded-2xl bg-black ${className}`}>
+        <iframe
+          src={`https://www.youtube.com/embed/${ytId}?autoplay=${autoPlay ? 1 : 0}&mute=${isMuted ? 1 : 0}&controls=0&disablekb=1&fs=1&modestbranding=1&playsinline=1&rel=0&start=${Math.max(0, Math.floor(startAtSec || 0))}`}
+          title={title}
+          className="absolute inset-0 h-full w-full border-0"
+          allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+          allowFullScreen
+        />
+        <div className="absolute left-3 top-3 z-20 rounded-full bg-black/70 px-3 py-1 text-xs font-semibold text-white">
+          Live broadcast
+        </div>
+      </div>
+    );
+  }
+
+  if (resolvedPlayerType === "image") {
+    return (
+      <div className={`relative aspect-video w-full overflow-hidden rounded-2xl bg-black ${className}`}>
+        <img src={safeUrl} alt={title} className="absolute inset-0 h-full w-full object-contain" />
+      </div>
+    );
+  }
+
+  if (resolvedPlayerType === "audio") {
+    return (
+      <div className={`relative flex aspect-video w-full items-center justify-center overflow-hidden rounded-2xl bg-black ${className}`}>
+        <audio
+          ref={(node) => {
+            mediaRef.current = node;
+          }}
+          src={safeUrl}
+          autoPlay={autoPlay}
+          controls={controls}
+          muted={muted}
+          preload="auto"
+        />
+        {muteButton}
       </div>
     );
   }
 
   return (
     <div className={`relative aspect-video w-full overflow-hidden rounded-2xl bg-black ${className}`}>
-      {ytId ? (
-        <iframe
-          src={`https://www.youtube.com/embed/${ytId}?autoplay=${autoPlay ? 1 : 0}&mute=${muted ? 1 : 0}&playsinline=1&rel=0&start=${Math.max(0, Math.floor(startAtSec || 0))}`}
-          title={title}
-          className="absolute inset-0 h-full w-full border-0"
-          allow="autoplay; accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-          allowFullScreen
-        />
-      ) : isImage(safeUrl) ? (
-        <img
-          src={safeUrl}
-          alt={title}
-          className="absolute inset-0 h-full w-full object-cover"
-        />
-      ) : isHls(safeUrl) || isVideo(safeUrl) ? (
-        <video
-          ref={videoRef}
-          src={safeUrl}
-          title={title}
-          className="absolute inset-0 h-full w-full object-cover"
-          autoPlay={autoPlay}
-          controls={controls}
-          muted={muted}
-          playsInline
-          onLoadedMetadata={() => applyInitialSeek(videoRef.current)}
-          onPlay={() => {
-            if (liveSync) {
-              const media = videoRef.current;
-              if (media) {
-                void resyncToLive(media);
-              }
-            }
-          }}
-        />
-      ) : isAudio(safeUrl) ? (
-        <div className="flex h-full w-full items-center justify-center bg-black px-6">
-          <audio
-            ref={audioRef}
-            src={safeUrl}
-            autoPlay={autoPlay}
-            controls={controls}
-            className="w-full"
-            onLoadedMetadata={() => applyInitialSeek(audioRef.current)}
-            onPlay={() => {
-              if (liveSync) {
-                const media = audioRef.current;
-                if (media) {
-                  void resyncToLive(media);
-                }
-              }
-            }}
-          />
-        </div>
-      ) : (
-        <iframe
-          src={safeUrl}
-          title={title}
-          className="absolute inset-0 h-full w-full border-0"
-          allow="autoplay; fullscreen"
-          allowFullScreen
-        />
-      )}
-
-      <img
-        src="/images/logo-circular.png"
-        alt="Olgoo logo"
-        className="pointer-events-none absolute bottom-3 left-3 z-20 w-14 opacity-95 drop-shadow-[0_4px_12px_rgba(0,0,0,0.7)] md:bottom-4 md:left-4 md:w-20"
+      <video
+        ref={(node) => {
+          mediaRef.current = node;
+        }}
+        src={safeUrl}
+        title={title}
+        autoPlay={autoPlay}
+        muted={muted}
+        controls={controls}
+        playsInline
+        preload="auto"
+        className="absolute inset-0 h-full w-full object-contain"
       />
+      <div className="absolute left-3 top-3 z-20 rounded-full bg-black/70 px-3 py-1 text-xs font-semibold text-white">
+        Live broadcast
+      </div>
+      {muteButton}
     </div>
   );
 }
