@@ -235,6 +235,7 @@ export default function HeroSection() {
     setLiveOffsetSec(0);
     setLiveTitle("Olgoo Live");
     setLivePlayToken("");
+    setPlayerKey((value) => value + 1);
     setActivePlayback(null);
   };
 

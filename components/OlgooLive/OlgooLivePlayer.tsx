@@ -85,11 +85,26 @@ export default function OlgooLivePlayer({
   const [isMuted, setIsMuted] = useState(muted);
 
   useEffect(() => {
-    const media = mediaRef.current;
-    if (!media) return;
-    media.muted = muted;
-    setIsMuted(muted);
-  }, [muted, safeUrl]);
+    return () => {
+      allowPauseRef.current = true;
+
+      const media = mediaRef.current;
+      if (media) {
+        try {
+          media.pause();
+        } catch {
+          // ignore
+        }
+
+        try {
+          media.removeAttribute("src");
+          media.load();
+        } catch {
+          // ignore
+        }
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const media = mediaRef.current;
