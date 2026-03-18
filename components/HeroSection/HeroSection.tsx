@@ -13,8 +13,6 @@ type HeroImageProps = {
   alt: string;
   hoverGlow?: boolean;
   onClick?: () => void;
-  statusLabel?: string;
-  statusTone?: "on" | "off";
 };
 
 function HeroImage({
@@ -23,8 +21,6 @@ function HeroImage({
   alt,
   hoverGlow = false,
   onClick,
-  statusLabel,
-  statusTone = "off",
 }: HeroImageProps) {
   const [src, setSrc] = useState(primarySrc);
   const [triedFallback, setTriedFallback] = useState(false);
@@ -76,35 +72,6 @@ function HeroImage({
           }
         }}
       />
-
-      {statusLabel ? (
-        <div
-          style={{
-            position: "absolute",
-            top: 14,
-            left: 14,
-            zIndex: 5,
-            padding: "8px 14px",
-            borderRadius: 999,
-            fontSize: 13,
-            fontWeight: 800,
-            letterSpacing: "0.08em",
-            color: "#fff",
-            background:
-              statusTone === "on"
-                ? "linear-gradient(135deg, rgba(205,30,45,0.95), rgba(255,80,80,0.95))"
-                : "linear-gradient(135deg, rgba(60,60,60,0.92), rgba(105,105,105,0.92))",
-            boxShadow:
-              statusTone === "on"
-                ? "0 0 18px rgba(255,60,60,0.45), 0 4px 14px rgba(0,0,0,0.35)"
-                : "0 4px 14px rgba(0,0,0,0.35)",
-            border: "1px solid rgba(255,255,255,0.18)",
-            pointerEvents: "none",
-          }}
-        >
-          {statusLabel}
-        </div>
-      ) : null}
     </button>
   );
 }
@@ -136,7 +103,7 @@ type LiveSnapshot = {
   title: string;
 };
 
-async function fetchLiveState(): Promise<LiveStateResponse> {
+async function fetchLiveState(): Promise<LiveSnapshot | null> {
   const response = await fetch(`/api/olgoo-live/state?t=${Date.now()}`, {
     cache: "no-store",
   });
@@ -145,10 +112,7 @@ async function fetchLiveState(): Promise<LiveStateResponse> {
     throw new Error(`Failed to fetch live state (${response.status})`);
   }
 
-  return (await response.json()) as LiveStateResponse;
-}
-
-function toSnapshot(data: LiveStateResponse): LiveSnapshot | null {
+  const data = (await response.json()) as LiveStateResponse;
   const mediaUrl =
     data?.currentItem?.url ||
     data?.mediaUrl ||
@@ -204,7 +168,7 @@ function LivePlayerOverlay({
         liveSync
         autoPlay
         controls={false}
-        muted={playerType === "iframe" ? false : true}
+        muted={true}
         className="h-full w-full rounded-none"
       />
 
@@ -246,7 +210,6 @@ export default function HeroSection() {
   const [liveTitle, setLiveTitle] = useState("Olgoo Live");
   const [livePlayToken, setLivePlayToken] = useState("");
   const [playerKey, setPlayerKey] = useState(0);
-  const [isOnAir, setIsOnAir] = useState(false);
   const { activePlayback, setActivePlayback } = usePlayback();
 
   const applyLiveSnapshot = (snapshot: LiveSnapshot) => {
@@ -272,33 +235,18 @@ export default function HeroSection() {
     setLiveOffsetSec(0);
     setLiveTitle("Olgoo Live");
     setLivePlayToken("");
-    setPlayerKey((value) => value + 1);
     setActivePlayback(null);
-  };
-
-  const refreshOnAirStatus = async () => {
-    try {
-      const state = await fetchLiveState();
-      const snapshot = toSnapshot(state);
-      setIsOnAir(Boolean(snapshot));
-    } catch {
-      setIsOnAir(false);
-    }
   };
 
   const handleLiveClick = async () => {
     if (isLivePlaying) return;
 
     try {
-      const state = await fetchLiveState();
-      const snapshot = toSnapshot(state);
-
+      const snapshot = await fetchLiveState();
       if (!snapshot) {
-        setIsOnAir(false);
         throw new Error("Live stream not available");
       }
 
-      setIsOnAir(true);
       applyLiveSnapshot(snapshot);
       setIsLivePlaying(true);
       setActivePlayback("olgoo-live", snapshot.playToken);
@@ -309,30 +257,15 @@ export default function HeroSection() {
   };
 
   useEffect(() => {
-    void refreshOnAirStatus();
-
-    const intervalId = window.setInterval(() => {
-      void refreshOnAirStatus();
-    }, LIVE_HEARTBEAT_MS);
-
-    return () => {
-      window.clearInterval(intervalId);
-    };
-  }, []);
-
-  useEffect(() => {
     if (!isLivePlaying) return;
 
     let cancelled = false;
 
     const heartbeat = async () => {
       try {
-        const state = await fetchLiveState();
-        const snapshot = toSnapshot(state);
+        const snapshot = await fetchLiveState();
 
         if (cancelled) return;
-
-        setIsOnAir(Boolean(snapshot));
 
         if (!snapshot) {
           stopLive();
@@ -434,8 +367,6 @@ export default function HeroSection() {
               alt="Pakhsh-e Zendeh"
               hoverGlow={true}
               onClick={handleLiveClick}
-              statusLabel={isOnAir ? "ON AIR" : "OFF AIR"}
-              statusTone={isOnAir ? "on" : "off"}
             />
 
             {isLivePlaying && liveMediaUrl && (

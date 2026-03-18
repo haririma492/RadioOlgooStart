@@ -13,12 +13,11 @@ import LiveBlock from "@/components/LiveBlock/LiveBlock";
 import type { OlgooLivePlayerType } from "@/components/OlgooLive/types";
 type Lang = "en" | "fa";
 
-// NOTE: This page is unchanged except for the labelled HeroSection container below,
-// which makes the canonical listener surface explicit.
 const CALENDAR_LINK =
   "https://www.aryamehr.online/post/culturalcalendarofthe2585thiranianempire";
 const FARHANG_NOVIN_LINK = "https://www.youtube.com/@farhangnovinpodcast";
 const BLOCK_BG = "#338b8b";
+const HORIZONTAL_GAP = "16px";
 
 const translations = {
   fa: {
@@ -72,7 +71,6 @@ type PlayingVideo = {
 function toPersianDigits(value: string | number): string {
   return String(value).replace(/\d/g, (d) => "۰۱۲۳۴۵۶۷۸۹"[Number(d)]);
 }
-
 
 function useLiveNow() {
   const [now, setNow] = useState<Date | null>(null);
@@ -298,10 +296,10 @@ function CalendarModal({
         style={{ backgroundColor: BLOCK_BG }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between gap-3 border-b border-white/10 px-3 py-2 text-white md:px-4 md:py-3">
+        <div className="flex items-center justify-between gap-4 border-b border-white/10 px-3 py-2 text-white md:px-4 md:py-3">
           <div className="text-base font-bold md:text-lg">{t.calendarTitle}</div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-4">
             <a
               href={CALENDAR_LINK}
               target="_blank"
@@ -368,10 +366,10 @@ function FarhangNovinModal({
         style={{ backgroundColor: BLOCK_BG }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between gap-3 border-b border-white/10 px-3 py-2 text-white md:px-4 md:py-3">
+        <div className="flex items-center justify-between gap-4 border-b border-white/10 px-3 py-2 text-white md:px-4 md:py-3">
           <div className="text-base font-bold md:text-lg">{t.farhangNovinTitle}</div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-4">
             <a
               href={FARHANG_NOVIN_LINK}
               target="_blank"
@@ -437,7 +435,7 @@ function TopCalendarBar({
       >
         <div
           className={[
-            "flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between",
+            "flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between",
             isFa ? "lg:flex-row-reverse" : "",
           ].join(" ")}
         >
@@ -484,10 +482,10 @@ function TopCalendarBar({
                     <div
                       className="flex items-center flex-nowrap"
                       style={{
-                        gap: "14px",
+                        gap: HORIZONTAL_GAP,
                         direction: "rtl",
                         justifyContent: "flex-start",
-                        marginRight: "32px",
+                        marginRight: HORIZONTAL_GAP,
                         marginLeft: "auto",
                       }}
                     >
@@ -505,10 +503,10 @@ function TopCalendarBar({
                     <div
                       className="flex items-center flex-nowrap"
                       style={{
-                        gap: "14px",
+                        gap: HORIZONTAL_GAP,
                         direction: "rtl",
                         justifyContent: "flex-start",
-                        marginRight: "32px",
+                        marginRight: HORIZONTAL_GAP,
                         marginLeft: "auto",
                       }}
                     >
@@ -527,7 +525,7 @@ function TopCalendarBar({
               ) : segments.isReady ? (
                 <div
                   className="flex items-center justify-end flex-nowrap"
-                  style={{ gap: "14px", width: "100%" }}
+                  style={{ gap: HORIZONTAL_GAP, width: "100%" }}
                 >
                   <div className={unifiedTextClass} style={unifiedTextStyle}>
                     {t.timeWord}
@@ -545,7 +543,7 @@ function TopCalendarBar({
               ) : (
                 <div
                   className="flex items-center justify-end flex-nowrap"
-                  style={{ gap: "14px", width: "100%" }}
+                  style={{ gap: HORIZONTAL_GAP, width: "100%" }}
                 >
                   <div className={`${unifiedTextClass} invisible`} style={unifiedTextStyle}>
                     {t.timeWord}
@@ -639,7 +637,7 @@ function MediaLinksBlock({
         className="rounded-2xl border border-white/10 px-4 py-4 shadow-[0_8px_30px_rgba(0,0,0,0.28)] md:px-5 md:py-4"
         style={{ backgroundColor: BLOCK_BG }}
       >
-        <div className="flex flex-col items-center justify-center gap-4 md:flex-row md:gap-8">
+        <div className="flex flex-col items-center justify-center gap-4 md:flex-row md:gap-4">
           <button
             type="button"
             onClick={onCalendarClick}
@@ -756,59 +754,62 @@ function HomePageContent() {
           onFarhangNovinClick={() => setIsFarhangNovinModalOpen(true)}
         />
       </div>
-<div className="relative z-0 bg-transparent">
-  <main className="mx-auto w-full max-w-[1500px] bg-transparent px-4 py-2">
-    <section aria-label="Olgoo Live canonical broadcast" className="p-0 md:p-0 bg-transparent border-0 shadow-none rounded-none">
-      <HeroSection />
-    </section>
+      <div className="relative z-0 bg-transparent">
+        <main className="mx-auto w-full max-w-[1500px] bg-transparent px-4 py-2">
+<section
+  aria-label="Olgoo Live canonical broadcast"
+  className="mb-4 rounded-none border-0 bg-transparent p-0 shadow-none md:p-0"
+>
+  <HeroSection />
+</section>
 
-    <section
-      className={`${panelClass} border border-white/10 p-2 md:p-3`}
-      style={{ backgroundColor: BLOCK_BG }}
-    >
-      <div className="overflow-hidden rounded-xl">
-        <LiveBlock />
-      </div>
-    </section>
+          <section
+            className={`${panelClass} border border-white/10 p-2 md:p-3`}
+            style={{ backgroundColor: BLOCK_BG }}
+          >
+            <div className="overflow-hidden rounded-xl">
+              <LiveBlock />
+            </div>
+          </section>
 
-  <section
-    id="video-hub"
-    className={`${panelClass} scroll-mt-24 border border-white/10 p-2 md:p-3`}
-    style={{ backgroundColor: BLOCK_BG }}
-  >
-    <h2 className={sectionTitleClass}>{t.videoHub}</h2>
-    <VideoHub
-      onVideoClick={(video) => {
-        handleVideoPlay({
-          url: video.url,
-          person: video.person || video.personName,
-          title: video.title,
-          timestamp: video.createdAt,
-          playerType: "video",
-          sourceLabel: t.videoHub,
-          isLive: false,
-        });
-      }}
-    />
-  </section>
+          <section
+            id="video-hub"
+            className={`${panelClass} scroll-mt-24 border border-white/10 p-2 md:p-3`}
+            style={{ backgroundColor: BLOCK_BG }}
+          >
+            <h2 className={sectionTitleClass}>{t.videoHub}</h2>
+            <VideoHub
+              onVideoClick={(video) => {
+                handleVideoPlay({
+                  url: video.url,
+                  person: video.person || video.personName,
+                  title: video.title,
+                  timestamp: video.createdAt,
+                  playerType: "video",
+                  sourceLabel: t.videoHub,
+                  isLive: false,
+                });
+              }}
+            />
+          </section>
 
-  <section
-    id="revolutionary-music"
-    className={`${panelClass} scroll-mt-24 border border-white/10 p-2 md:p-3`}
-    style={{ backgroundColor: BLOCK_BG }}
-  >
-    <h2 className={sectionTitleClass}>{t.music}</h2>
-    <AudioHub />
-  </section>
+          <section
+            id="revolutionary-music"
+            className={`${panelClass} scroll-mt-24 border border-white/10 p-2 md:p-3`}
+            style={{ backgroundColor: BLOCK_BG }}
+          >
+            <h2 className={sectionTitleClass}>{t.music}</h2>
+            <AudioHub />
+          </section>
 
-  <section
-    className={`${panelClass} p-2 md:p-3`}
-    style={{ backgroundColor: BLOCK_BG }}
-  >
-    <h2 className={`${sectionTitleClass} text-red-200`}>{t.breakingNews}</h2>
-    <BreakingNewsBanner />
-  </section>
-</main>
+          <section
+            className={`${panelClass} p-2 md:p-3`}
+            style={{ backgroundColor: BLOCK_BG }}
+          >
+            <h2 className={`${sectionTitleClass} text-red-200`}>{t.breakingNews}</h2>
+            <BreakingNewsBanner />
+          </section>
+        </main>
         <div className="bg-transparent">
           <Footer />
         </div>

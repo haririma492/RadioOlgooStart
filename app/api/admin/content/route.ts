@@ -7,6 +7,7 @@ import {
   ScanCommand,
   PutCommand,
   DeleteCommand,
+  GetCommand,
 } from "@aws-sdk/lib-dynamodb";
 
 export const runtime = "nodejs";
@@ -68,7 +69,19 @@ export async function GET(req: Request) {
 }
 
 /**
- * POST - Create or update content item
+ * POST - Create/update one content item OR batch move group
+ *
+ * Single item create/update body:
+ * {
+ *   PK, type, text, ...
+ * }
+ *
+ * Batch group move body:
+ * {
+ *   action: "move-group",
+ *   pks: string[],
+ *   targetGroupId: number
+ * }
  */
 export async function POST(req: Request) {
   const auth = requireAdmin(req);
@@ -79,6 +92,79 @@ export async function POST(req: Request) {
     const body = await req.json().catch(() => null);
     if (!body) return jsonErr("Bad JSON body", 400);
 
+    // -------------------------------------------------------------------------
+    // Batch move items from one group to another
+    // -------------------------------------------------------------------------
+    if (body.action === "move-group") {
+      const pks = Array.isArray(body.pks)
+        ? body.pks
+            .filter((pk: any) => typeof pk === "string")
+            .map((pk: string) => pk.trim())
+            .filter(Boolean)
+        : [];
+
+      const targetGroupId = Number(body.targetGroupId);
+
+      if (pks.length === 0) {
+        return jsonErr("Body must include non-empty pks: string[]", 400);
+      }
+
+      if (!Number.isFinite(targetGroupId)) {
+        return jsonErr("Invalid targetGroupId", 400);
+      }
+
+      const updated: string[] = [];
+      const failed: { pk: string; error: string }[] = [];
+
+      for (const pk of pks) {
+        try {
+          const getRes = await ddb.send(
+            new GetCommand({
+              TableName,
+              Key: { PK: pk },
+            })
+          );
+
+          const item = getRes.Item;
+          if (!item) {
+            failed.push({ pk, error: "Item not found" });
+            continue;
+          }
+
+          const nextItem = {
+            ...item,
+            groupId: targetGroupId,
+            updatedAt: new Date().toISOString(),
+          };
+
+          await ddb.send(
+            new PutCommand({
+              TableName,
+              Item: nextItem,
+            })
+          );
+
+          updated.push(pk);
+        } catch (err: any) {
+          failed.push({ pk, error: err?.message || String(err) });
+        }
+      }
+
+      return jsonOk({
+        ok: true,
+        action: "move-group",
+        targetGroupId,
+        requested: pks.length,
+        updated: updated.length,
+        failed: failed.length,
+        updatedPKs: updated,
+        failedItems: failed,
+      });
+    }
+
+    // -------------------------------------------------------------------------
+    // Single item create/update
+    // -------------------------------------------------------------------------
     const PK = String(body.PK || "").trim();
     if (!PK) return jsonErr("Missing PK", 400);
 
@@ -103,6 +189,14 @@ export async function POST(req: Request) {
       active: body.active !== undefined ? Boolean(body.active) : true,
       updatedAt: new Date().toISOString(),
     };
+
+    // Preserve commonly used optional fields if provided
+    if (body.sectionId !== undefined) {
+      item.sectionId = Number(body.sectionId || 0);
+    }
+    if (body.groupId !== undefined) {
+      item.groupId = Number(body.groupId || 0);
+    }
 
     // Add type-specific fields
     if (type === "header" || type === "footer") {
